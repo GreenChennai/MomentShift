@@ -128,6 +128,7 @@ class ConvertInterface(InterfaceBase):
 
     def retheme(self):
         """Re-apply theme-aware styles (called on every theme change)."""
+        super().retheme()
         self.setStyleSheet(self._content_stylesheet())
         # Guard: at __init__ time these children may not exist yet; the
         # themeChanged signal re-runs retheme() once everything is built.

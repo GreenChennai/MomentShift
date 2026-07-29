@@ -55,6 +55,7 @@ class MainWindow(FluentWindow):
     def _retheme_all(self):
         self.convertInterface.retheme()
         self.settingInterface.retheme()
+        self.aboutInterface.retheme()
 
     def _on_language(self, value):
         translator.set_locale(LocaleKey(value))

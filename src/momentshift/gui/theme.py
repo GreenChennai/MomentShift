@@ -18,6 +18,11 @@ from PyQt6.QtGui import QColor
 LIGHT_BG = QColor(244, 244, 244)
 DARK_BG = QColor(32, 32, 32)
 
+
+def content_bg() -> QColor:
+    """Return the solid background color that should fill a content interface."""
+    return DARK_BG if isDarkTheme() else LIGHT_BG
+
 # Secondary / hint / muted text. Kept readable on both themes: dark greys on
 # light, lighter greys on dark (a plain near-white would look too loud for a hint).
 def sub_text() -> str:

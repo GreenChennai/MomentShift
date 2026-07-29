@@ -16,7 +16,6 @@ from qfluentwidgets import (
 from ..core.config import cfg, config_dir
 from ..i18n.translator import tr, LocaleKey, available_languages
 from .base import InterfaceBase
-from .theme import sub_text
 
 
 class ComboSettingCard(SettingCard):
@@ -123,8 +122,8 @@ class SettingInterface(InterfaceBase):
 
     # -- theme -----------------------------------------------------------
     def retheme(self):
-        # Kept theme-aware for any future sub-text using #cardSub; harmless now.
-        self.setStyleSheet(f"#cardSub{{color: {sub_text()};}}")
+        super().retheme()
+        # Any future setting-page specific theme-aware styles go here.
 
     # -- actions ---------------------------------------------------------
     def _choose_output(self):

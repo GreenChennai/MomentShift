@@ -28,6 +28,7 @@ from momentshift.gui.theme import (
 from momentshift.core.queue import ConversionManager
 from momentshift.core.config import cfg
 from momentshift.gui.convert_interface import ConvertInterface
+from momentshift.gui.base import InterfaceBase
 
 
 def check(cond, msg):
@@ -53,6 +54,19 @@ check(not isDarkTheme(), "isDarkTheme() is False after setTheme(LIGHT)")
 check(sub_text() == "rgba(96, 96, 96, 1)", "sub_text light variant")
 check(hint_text() == "rgba(128, 128, 128, 1)", "hint_text light variant")
 check(muted_text() == "rgba(140, 140, 140, 1)", "muted_text light variant")
+
+# --- InterfaceBase gets a solid theme background ----------------------
+setTheme(Theme.DARK)
+base_dark = InterfaceBase("TestDark", "Title", "Subtitle", None)
+base_dark.show = lambda *a, **k: None
+dark_ss = (base_dark.view.styleSheet() or "").lower()
+check("#202020" in dark_ss, "InterfaceBase view background is dark #202020")
+
+setTheme(Theme.LIGHT)
+base_light = InterfaceBase("TestLight", "Title", "Subtitle", None)
+base_light.show = lambda *a, **k: None
+light_ss = (base_light.view.styleSheet() or "").lower()
+check("#f4f4f4" in light_ss, "InterfaceBase view background is light #f4f4f4")
 
 # --- window bg + mapping sanity ---------------------------------------
 check(hasattr(LIGHT_BG, "rgb") and hasattr(DARK_BG, "rgb"), "LIGHT_BG/DARK_BG are QColors")
