@@ -153,6 +153,8 @@
   "settings.theme.light": "浅色",
   "settings.theme.dark": "深色",
   "settings.restart_hint": "更改语言或主题后需要重启生效",
+  "settings.auto_fold": "自动折叠面板",
+  "settings.auto_fold.hint": "批量任务完成后自动折叠输入与设置面板",
   "settings.open_config": "打开配置文件夹",
   "settings.open_config_btn": "打开",
   "settings.reset": "恢复默认设置",

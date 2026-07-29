@@ -94,6 +94,7 @@ class Config(QConfig):
     theme = OptionsConfigItem(
         "UI", "Theme", "auto", OptionsValidator(["auto", "light", "dark"])
     )
+    autoCollapse = ConfigItem("UI", "AutoCollapse", True)
 
 
 cfg = Config()

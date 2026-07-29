@@ -114,6 +114,98 @@ class ThemedCard(CardWidget):
         return PRESS_DARK if isDarkTheme() else PRESS_LIGHT
 
 
+class CollapsibleCard(ThemedCard):
+    """A ``ThemedCard`` with a toggle button in the title bar.
+
+    The title bar stays visible; the body widget can be collapsed/expanded by
+    clicking the arrow button or via ``setCollapsed(True/False)``.
+
+    Usage pattern (replaces the ``_card()`` / ``panel()`` pattern):
+
+    .. code-block:: python
+
+        card = CollapsibleCard(tr("my.title"), tr("my.sub"))
+        # card.body is a QVBoxLayout – add your content here
+        card.body.addWidget(...)
+        return card, card.body, card.titleLabel
+    """
+
+    def __init__(self, title: str = "", subtitle: str = "",
+                 parent=None, collapsed: bool = False):
+        super().__init__(parent)
+        self._collapsed = collapsed
+
+        # Outer layout – zero margins so the card border-radius applies cleanly.
+        self._outer = QVBoxLayout(self)
+        self._outer.setContentsMargins(0, 0, 0, 0)
+        self._outer.setSpacing(0)
+
+        # ---- title bar (always visible) ----------------------------------
+        self._bar = QWidget()
+        hb = QHBoxLayout(self._bar)
+        hb.setContentsMargins(CARD_MARGIN, 12, 8, 6)
+        hb.setSpacing(6)
+
+        if subtitle:
+            tc = QWidget()
+            tv = QVBoxLayout(tc)
+            tv.setContentsMargins(0, 0, 0, 0)
+            tv.setSpacing(2)
+            self.titleLabel = StrongBodyLabel(title)
+            tv.addWidget(self.titleLabel)
+            self.subtitleLabel = CaptionLabel(subtitle)
+            tv.addWidget(self.subtitleLabel)
+            hb.addWidget(tc, 1)
+        else:
+            self.titleLabel = StrongBodyLabel(title)
+            self.subtitleLabel = None
+            hb.addWidget(self.titleLabel, 1)
+
+        hb.addStretch()
+
+        self._toggleBtn = TransparentPushButton("\u25BC")  # ▼
+        self._toggleBtn.setFixedSize(28, 28)
+        self._toggleBtn.clicked.connect(self.toggle)
+        self._toggleBtn.setToolTip("")
+        hb.addWidget(self._toggleBtn)
+
+        self._outer.addWidget(self._bar)
+
+        # ---- body (collapsible) ------------------------------------------
+        self._body = QWidget()
+        self._body_layout = QVBoxLayout(self._body)
+        self._body_layout.setContentsMargins(CARD_MARGIN, 0, CARD_MARGIN, 14)
+        self._body_layout.setSpacing(10)
+        self._outer.addWidget(self._body)
+
+        if collapsed:
+            self._body.setVisible(False)
+            self._toggleBtn.setText("\u25B6")  # ▶
+
+    # -- public API ---------------------------------------------------------
+
+    @property
+    def body(self) -> QVBoxLayout:
+        """The body layout where card content should be added."""
+        return self._body_layout
+
+    def toggle(self):
+        """Toggle the collapsed state."""
+        self.setCollapsed(not self._collapsed)
+
+    def setCollapsed(self, collapsed: bool):
+        """Programmatically expand or collapse the body."""
+        if self._collapsed == collapsed:
+            return
+        self._collapsed = collapsed
+        self._body.setVisible(not collapsed)
+        self._toggleBtn.setText("\u25B6" if collapsed else "\u25BC")  # ▶ / ▼
+
+    def isCollapsed(self) -> bool:
+        """Return whether the card body is currently hidden."""
+        return self._collapsed
+
+
 # ---------------------------------------------------------------------------
 # Shared composition primitives — every screen builds from these so the look
 # stays coherent.

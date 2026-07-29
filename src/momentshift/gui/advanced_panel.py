@@ -133,11 +133,79 @@ class AdvancedPanel(QWidget):
         adv = advanced.adv["image"]
 
         def build(layout):
+            # Generic quality slider
             q = QSlider(Qt.Orientation.Horizontal)
             q.setRange(1, 100)
             q.setValue(int(adv.get("quality", 100)))
             q.valueChanged.connect(lambda v: adv.__setitem__("quality", v))
             layout.addWidget(field_row(tr("advanced.quality"), q, label_width=80))
+
+            # --- Format-specific quality overrides ---
+            png_ex = ExpandWidget(tr("advanced.png.options"))
+            png_lvl = QSlider(Qt.Orientation.Horizontal)
+            png_lvl.setRange(0, 9)
+            png_val = adv.get("png_quality")
+            png_lvl.setValue(int(png_val) if png_val is not None else 9)
+            png_lvl.valueChanged.connect(lambda v: adv.__setitem__("png_quality", v))
+            png_enable = SwitchButton(tr("advanced.enable"))
+            png_enable.setChecked(png_val is not None)
+            png_enable.checkedChanged.connect(
+                lambda b: adv.__setitem__("png_quality", png_lvl.value() if b else None)
+            )
+            png_lvl.setEnabled(png_val is not None)
+            png_enable.checkedChanged.connect(lambda b: png_lvl.setEnabled(b))
+            png_label = QLabel(f"{png_lvl.value()}")
+            png_lvl.valueChanged.connect(lambda v: png_label.setText(str(v)))
+            png_row = QHBoxLayout()
+            png_row.addWidget(png_label)
+            png_row.addWidget(png_lvl, 1)
+            png_row.addWidget(png_enable)
+            png_ex.body_layout.addWidget(field_row(tr("advanced.png.compression"), png_row, label_width=80))
+            layout.addWidget(png_ex)
+
+            jpg_ex = ExpandWidget(tr("advanced.jpg.options"))
+            jpg_q = QSlider(Qt.Orientation.Horizontal)
+            jpg_q.setRange(1, 100)
+            jpg_val = adv.get("jpg_quality")
+            jpg_q.setValue(int(jpg_val) if jpg_val is not None else 95)
+            jpg_q.valueChanged.connect(lambda v: adv.__setitem__("jpg_quality", v))
+            jpg_enable = SwitchButton(tr("advanced.enable"))
+            jpg_enable.setChecked(jpg_val is not None)
+            jpg_enable.checkedChanged.connect(
+                lambda b: adv.__setitem__("jpg_quality", jpg_q.value() if b else None)
+            )
+            jpg_q.setEnabled(jpg_val is not None)
+            jpg_enable.checkedChanged.connect(lambda b: jpg_q.setEnabled(b))
+            jpg_labelx = QLabel(f"{jpg_q.value()}")
+            jpg_q.valueChanged.connect(lambda v: jpg_labelx.setText(str(v)))
+            jpg_row = QHBoxLayout()
+            jpg_row.addWidget(jpg_labelx)
+            jpg_row.addWidget(jpg_q, 1)
+            jpg_row.addWidget(jpg_enable)
+            jpg_ex.body_layout.addWidget(field_row(tr("advanced.jpg.quality"), jpg_row, label_width=80))
+            layout.addWidget(jpg_ex)
+
+            webp_ex = ExpandWidget(tr("advanced.webp.options"))
+            webp_q = QSlider(Qt.Orientation.Horizontal)
+            webp_q.setRange(1, 100)
+            webp_val = adv.get("webp_quality")
+            webp_q.setValue(int(webp_val) if webp_val is not None else 90)
+            webp_q.valueChanged.connect(lambda v: adv.__setitem__("webp_quality", v))
+            webp_enable = SwitchButton(tr("advanced.enable"))
+            webp_enable.setChecked(webp_val is not None)
+            webp_enable.checkedChanged.connect(
+                lambda b: adv.__setitem__("webp_quality", webp_q.value() if b else None)
+            )
+            webp_q.setEnabled(webp_val is not None)
+            webp_enable.checkedChanged.connect(lambda b: webp_q.setEnabled(b))
+            webp_labelx = QLabel(f"{webp_q.value()}")
+            webp_q.valueChanged.connect(lambda v: webp_labelx.setText(str(v)))
+            webp_row = QHBoxLayout()
+            webp_row.addWidget(webp_labelx)
+            webp_row.addWidget(webp_q, 1)
+            webp_row.addWidget(webp_enable)
+            webp_ex.body_layout.addWidget(field_row(tr("advanced.webp.quality"), webp_row, label_width=80))
+            layout.addWidget(webp_ex)
 
             comp = SwitchButton(tr("advanced.compress"))
             comp.setChecked(bool(adv.get("compress", True)))
@@ -240,6 +308,13 @@ class AdvancedPanel(QWidget):
                         adv.get("bitrate", "original"),
                         lambda v: adv.__setitem__("bitrate", v))
             layout.addWidget(field_row(tr("advanced.bitrate"), br, label_width=80))
+            codec = _combo(
+                [(tr("advanced.original"), "original"),
+                 ("H.264", "H.264"), ("H.265", "H.265"), ("copy", "copy")],
+                adv.get("codec", "original"),
+                lambda v: adv.__setitem__("codec", v),
+            )
+            layout.addWidget(field_row(tr("advanced.codec"), codec, label_width=80))
             merge = SwitchButton(tr("advanced.merge"))
             merge.setChecked(bool(adv.get("merge", False)))
             merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
@@ -255,6 +330,18 @@ class AdvancedPanel(QWidget):
                         adv.get("bitrate", "original"),
                         lambda v: adv.__setitem__("bitrate", v))
             layout.addWidget(field_row(tr("advanced.bitrate"), br, label_width=80))
+            sr = _combo(_opt_list(advanced.SAMPLE_RATES),
+                        adv.get("sample_rate", "original"),
+                        lambda v: adv.__setitem__("sample_rate", v))
+            layout.addWidget(field_row(tr("advanced.sample_rate"), sr, label_width=80))
+            ch = _combo(
+                [(tr("advanced.original"), "original"),
+                 (tr("advanced.channels.stereo"), "stereo"),
+                 (tr("advanced.channels.mono"), "mono")],
+                adv.get("channels", "original"),
+                lambda v: adv.__setitem__("channels", v),
+            )
+            layout.addWidget(field_row(tr("advanced.channels"), ch, label_width=80))
             merge = SwitchButton(tr("advanced.merge"))
             merge.setChecked(bool(adv.get("merge", False)))
             merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
@@ -263,6 +350,10 @@ class AdvancedPanel(QWidget):
         return self._add_expander("advanced.audio.title", build)
 
     # -- updates ----------------------------------------------------------
+    def get_args(self, category: str, target: str = "") -> list[str]:
+        """Return ffmpeg CLI args for ``category`` based on current panel state."""
+        return advanced.build_advanced_args(category, target, advanced.get(category))
+
     def retranslate(self):
         self.refresh(self._categories)
 

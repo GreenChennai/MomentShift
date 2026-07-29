@@ -12,7 +12,7 @@ public API consumed by ``convert_interface`` is preserved:
 from __future__ import annotations
 
 from PyQt6.QtGui import QColor, QPainter, QPen, QFont, QBrush
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 
 from qfluentwidgets import FlowLayout, isDarkTheme
@@ -43,29 +43,30 @@ class FormatCard(QWidget):
     def _colors(self):
         if self._selected:
             accent = accent_color()
-            return accent, "#ffffff" if not isDarkTheme() else "#ffffff"
+            # Semi-transparent accent fill + white text on top so the
+            # format label remains readable (not a solid blue block).
+            accent.setAlpha(180)
+            return accent, QColor(255, 255, 255)
         border = QColor(200, 200, 200) if not isDarkTheme() else QColor(80, 80, 80)
         text = QColor(90, 90, 90) if not isDarkTheme() else QColor(180, 180, 180)
         return border, text
 
     def paintEvent(self, event):
-        from PyQt6.QtCore import QRect
-
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
-        border, text = self._colors()
+        fill, text = self._colors()
         if self._selected:
-            painter.setBrush(QBrush(border))
-            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(fill))
+            painter.setPen(QPen(accent_color(), 2))
         else:
             painter.setBrush(QBrush(component_bg()))
-            painter.setPen(QPen(border, 1.5))
+            painter.setPen(QPen(fill, 1.5))
         painter.drawRoundedRect(QRect(1, 1, w - 2, h - 2), RADIUS, RADIUS)
 
         painter.setPen(text)
         font = QFont()
-        font.setPointSize(14)
+        font.setPointSize(13)
         font.setBold(True)
         painter.setFont(font)
         # Display as ".Png" (dot prefix, title case) for visual clarity

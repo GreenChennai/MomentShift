@@ -153,6 +153,8 @@
   "settings.theme.light": "Light",
   "settings.theme.dark": "Dark",
   "settings.restart_hint": "Restart required after changing language or theme",
+  "settings.auto_fold": "Auto-collapse panels",
+  "settings.auto_fold.hint": "Collapse input/settings panels when a batch task completes",
   "settings.open_config": "Open config folder",
   "settings.open_config_btn": "Open",
   "settings.reset": "Reset to defaults",

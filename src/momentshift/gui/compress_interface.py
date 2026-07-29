@@ -23,7 +23,7 @@ from ..core.qt_compat import Signal, QObject, QRunnable, QThreadPool
 from ..core.tools_download import ToolsDownloadAllWorker
 from ..i18n.translator import tr
 from .theme import (
-    ThemedCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
+    ThemedCard, CollapsibleCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
     muted_text, sub_text, CARD_MARGIN, scrollbar_qss,
 )
 from .base import InterfaceBase
@@ -231,6 +231,7 @@ class CompressInterface(InterfaceBase):
         tools.addWidget(self.addFolderBtn)
         vb.addLayout(tools)
         self.vbox.addWidget(card)
+        self._inputCard = card
 
         # --- settings -----------------------------------------------------
         scard, svb, self.tSettings = self._card("compress.settings.title")
@@ -270,7 +271,7 @@ class CompressInterface(InterfaceBase):
         svb.addWidget(self.folderRow)
         self._apply_output_mode()
 
-        self.toolsBtn = ghost_btn(tr("compress.tools.download"), icon=FIF.DOWNLOAD)
+        self.toolsBtn = primary_btn(tr("compress.tools.download"), icon=FIF.DOWNLOAD)
         self.toolsBtn.clicked.connect(self._on_download_tools)
         self.toolsStatus = CaptionLabel()
         self.toolsStatus.setStyleSheet(f"color: {muted_text()};")
@@ -290,7 +291,7 @@ class CompressInterface(InterfaceBase):
         )
         self.queueScroll.viewport().setStyleSheet("background:transparent;")
         self.queueScroll.setWidget(self.listWidget)
-        self.queueScroll.setMaximumHeight(600)
+        self.queueScroll.setMaximumHeight(1200)
         qvb.addWidget(self.queueScroll)
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("compress.start"), icon=FIF.PLAY)
@@ -305,6 +306,9 @@ class CompressInterface(InterfaceBase):
         qvb.addLayout(ctrl)
         self.vbox.addWidget(qcard)
 
+        # Cards that auto-collapse when a batch finishes (queue stays open).
+        self._auto_fold = [self._inputCard, scard]
+
         # Populate backends lazily on first show: constructing the combo items
         # here triggers an offscreen paint in headless CI/sandbox; deferring also
         # means newly installed compression tools are detected when the tab opens.
@@ -313,15 +317,10 @@ class CompressInterface(InterfaceBase):
 
     # -- helpers ----------------------------------------------------------
     def _card(self, title_key, subtitle_key=None):
-        card = ThemedCard(self)
-        vb = QVBoxLayout(card)
-        vb.setContentsMargins(CARD_MARGIN, 14, CARD_MARGIN, 14)
-        vb.setSpacing(10)
-        titleLbl = StrongBodyLabel(tr(title_key))
-        vb.addWidget(titleLbl)
-        if subtitle_key:
-            vb.addWidget(CaptionLabel(tr(subtitle_key)))
-        return card, vb, titleLbl
+        title_text = tr(title_key)
+        sub_text = tr(subtitle_key) if subtitle_key else ""
+        card = CollapsibleCard(title_text, sub_text, self)
+        return card, card.body, card.titleLabel
 
     def _opt_combo(self, mapping, current, on_change) -> ComboBox:
         combo = ComboBox()
@@ -334,6 +333,21 @@ class CompressInterface(InterfaceBase):
         combo._mapping = dict(mapping)
         combo.currentTextChanged.connect(lambda t: on_change(combo._mapping.get(t, t)))
         return combo
+
+    def _repopulate_combo(self, combo: ComboBox, mapping: list):
+        """Repopulate a combo created by ``_opt_combo`` with translated strings.
+        Preserves the current value (by key, not by text position)."""
+        current_val = combo._mapping.get(combo.currentText(), combo.currentText())
+        combo.blockSignals(True)
+        combo.clear()
+        combo._mapping = dict(mapping)
+        for disp, val in mapping:
+            combo.addItem(disp)
+        for i, (disp, val) in enumerate(mapping):
+            if val == current_val:
+                combo.setCurrentIndex(i)
+                break
+        combo.blockSignals(False)
 
     def _expand(self, paths):
         out = []
@@ -374,6 +388,7 @@ class CompressInterface(InterfaceBase):
             return
         self._items[src] = {"src": src, "status": "pending", "saved": 0}
         self.listWidget.add_item(src, src)
+        self._auto_expand_cards()
 
     # -- settings --------------------------------------------------------
     def _fill_backends(self):
@@ -476,6 +491,7 @@ class CompressInterface(InterfaceBase):
             self._launch_next()
         if not self._pending and not self._active:
             self._running = False
+            self._auto_collapse_cards()
         self._update_controls()
 
     def _on_pause(self):
@@ -510,6 +526,21 @@ class CompressInterface(InterfaceBase):
         self.pauseBtn.setText(tr("compress.resume") if (self._running and self._paused)
                               else tr("compress.pause"))
 
+    # -- auto-collapse / expand -------------------------------------------
+    def _auto_collapse_cards(self):
+        """Collapse input/settings cards when a batch finishes (if enabled)."""
+        if not cfg.autoCollapse.value:
+            return
+        for c in self._auto_fold:
+            c.setCollapsed(True)
+
+    def _auto_expand_cards(self):
+        """Expand all cards when user adds new files (if enabled)."""
+        if not cfg.autoCollapse.value:
+            return
+        for c in self._auto_fold:
+            c.setCollapsed(False)
+
     # -- theme / i18n ----------------------------------------------------
     def retheme(self):
         super().retheme()
@@ -527,6 +558,18 @@ class CompressInterface(InterfaceBase):
         self.addFolderBtn.setText(tr("compress.add.folder"))
         self.toolsBtn.setText(tr("compress.tools.download"))
         self._fill_backends()
+        # Repopulate combos with translated strings (they're created in
+        # __init__ with the startup language; retranslate without repopulation
+        # would leave them showing the old language).
+        self._repopulate_combo(self.modeCombo, [
+            (tr("compress.mode.lossless"), "lossless"),
+            (tr("compress.mode.lossy"), "lossy"),
+        ])
+        self._repopulate_combo(self.targetCombo, [
+            (tr("compress.target.same"), "same"),
+            ("PNG", "png"), ("JPG", "jpg"),
+            ("WebP", "webp"), ("BMP", "bmp"), ("TIFF", "tiff"),
+        ])
         self._apply_output_mode()
         self.listWidget.retranslate()
         self.startBtn.setText(tr("compress.start"))

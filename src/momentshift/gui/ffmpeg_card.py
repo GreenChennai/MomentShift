@@ -64,10 +64,16 @@ class FfmpegCard(ThemedCard):
             )
             self.statusLbl.setStyleSheet("color:#10893e;")
             self.dot.setStyleSheet("background:#10893e; border-radius:5px;")
+            # Collapse download / link buttons when ffmpeg is ready
+            self.linkBtn.hide()
+            self.dlBtn.hide()
+            self.prog.hide()
         else:
             self.statusLbl.setText(tr("ffmpeg.missing"))
             self.statusLbl.setStyleSheet(f"color:{sub_text()};")
             self.dot.setStyleSheet("background:#e81123; border-radius:5px;")
+            self.linkBtn.show()
+            self.dlBtn.show()
 
     def _download(self):
         self.dlBtn.setEnabled(False)

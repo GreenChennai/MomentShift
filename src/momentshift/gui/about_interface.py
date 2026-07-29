@@ -46,6 +46,7 @@ class AboutInterface(InterfaceBase):
         cv.addSpacing(6)
 
         self.tagLabel = BodyLabel(tr("about.description"))
+        self.tagLabel.setWordWrap(True)
         self.verLabel = StrongBodyLabel(f"{tr('about.version')}: {VERSION}")
         self.authorLabel = BodyLabel(f"{tr('about.author')}: {AUTHOR}")
         cv.addWidget(self.tagLabel)
@@ -53,7 +54,10 @@ class AboutInterface(InterfaceBase):
         cv.addWidget(self.authorLabel)
 
         cv.addSpacing(8)
-        self.repoCard = HyperlinkCard(REPO_URL, REPO_URL, FIF.GITHUB, tr("about.repo"))
+        # Use a compact URL text so it fits in 450px-wide window
+        self.repoCard = HyperlinkCard(
+            "github.com/GreenChennai/MomentShift", REPO_URL,
+            FIF.GITHUB, tr("about.repo"))
         cv.addWidget(self.repoCard)
 
         cv.addSpacing(8)
@@ -61,6 +65,7 @@ class AboutInterface(InterfaceBase):
         self.licenseLabel = CaptionLabel(tr("about.license"))
         self.disclaimerLabel = CaptionLabel(tr("about.disclaimer"))
         for lbl in (self.techLabel, self.licenseLabel, self.disclaimerLabel):
+            lbl.setWordWrap(True)
             lbl.setStyleSheet(f"color: {muted_text()};")
             cv.addWidget(lbl)
 

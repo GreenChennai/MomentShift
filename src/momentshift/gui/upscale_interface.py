@@ -27,7 +27,7 @@ from ..core import upscaler
 from ..core.qt_compat import Signal, QObject, QRunnable, QThreadPool
 from ..i18n.translator import tr
 from .theme import (
-    ThemedCard, field_row, primary_btn, ghost_btn, icon_btn,
+    ThemedCard, CollapsibleCard, field_row, primary_btn, ghost_btn, icon_btn,
     muted_text, sub_text, CARD_MARGIN, scrollbar_qss,
 )
 from .base import InterfaceBase
@@ -89,10 +89,16 @@ class EngineCard(ThemedCard):
             self.statusLbl.setText(tr("upscale.engine.ok", n=n))
             self.statusLbl.setStyleSheet("color:#10893e;")
             self.dot.setStyleSheet("background:#10893e; border-radius:5px;")
+            # Collapse download / link when engine is ready
+            self.linkBtn.hide()
+            self.dlBtn.hide()
+            self.prog.hide()
         else:
             self.statusLbl.setText(tr("upscale.engine.missing"))
             self.statusLbl.setStyleSheet(f"color:{sub_text()};")
             self.dot.setStyleSheet("background:#e81123; border-radius:5px;")
+            self.linkBtn.show()
+            self.dlBtn.show()
 
     def _download(self):
         self.dlBtn.setEnabled(False)
@@ -331,6 +337,7 @@ class UpscaleInterface(InterfaceBase):
         tools.addWidget(self.addFolderBtn)
         vb.addLayout(tools)
         self.vbox.addWidget(card)
+        self._inputCard = card
 
         # --- staging ------------------------------------------------------
         scap, svb, self.tStage = self._card("upscale.staging.title")
@@ -344,7 +351,7 @@ class UpscaleInterface(InterfaceBase):
         self.stagingLayout.setSpacing(6)
         self.stagingLayout.addStretch(1)
         self.stagingScroll.setWidget(self.stagingList)
-        self.stagingScroll.setMaximumHeight(340)
+        self.stagingScroll.setMaximumHeight(680)
         svb.addWidget(self.stagingScroll)
         sctrl = QHBoxLayout()
         self.stageAddBtn = primary_btn(tr("upscale.staging.add", n=0), icon=FIF.UP)
@@ -415,7 +422,7 @@ class UpscaleInterface(InterfaceBase):
         self.listWidget.compareRequested.connect(self._on_compare)
         self.queueScroll = self._scroll()
         self.queueScroll.setWidget(self.listWidget)
-        self.queueScroll.setMaximumHeight(640)
+        self.queueScroll.setMaximumHeight(1280)
         qvb.addWidget(self.queueScroll)
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
@@ -430,6 +437,9 @@ class UpscaleInterface(InterfaceBase):
         qvb.addLayout(ctrl)
         self.vbox.addWidget(qcard)
 
+        # Cards that auto-collapse when a batch finishes (queue stays open).
+        self._auto_fold = [self._inputCard, scap, setc]
+
         # --- compare ------------------------------------------------------
         self.compareWidget = CompareWidget(self)
         self.vbox.addWidget(self.compareWidget)
@@ -440,14 +450,10 @@ class UpscaleInterface(InterfaceBase):
 
     # -- helpers ----------------------------------------------------------
     def _card(self, title_key, subtitle_key=None):
-        card = ThemedCard(self)
-        vb = QVBoxLayout(card)
-        vb.setContentsMargins(CARD_MARGIN, 14, CARD_MARGIN, 14)
-        vb.setSpacing(10)
-        vb.addWidget(StrongBodyLabel(tr(title_key)))
-        if subtitle_key:
-            vb.addWidget(CaptionLabel(tr(subtitle_key)))
-        return card, vb, vb.itemAt(0).widget()
+        title_text = tr(title_key)
+        sub_text = tr(subtitle_key) if subtitle_key else ""
+        card = CollapsibleCard(title_text, sub_text, self)
+        return card, card.body, card.titleLabel
 
     def _scroll(self) -> QScrollArea:
         s = QScrollArea()
@@ -513,6 +519,7 @@ class UpscaleInterface(InterfaceBase):
             if p not in self._staged:
                 self._staged.append(p)
         self._render_staging()
+        self._auto_expand_cards()
 
     def _render_staging(self):
         while self.stagingLayout.count():
@@ -651,6 +658,7 @@ class UpscaleInterface(InterfaceBase):
             self._launch_next()
         if not self._pending and not self._active:
             self._running = False
+            self._auto_collapse_cards()
         self._update_controls()
 
     def _on_pause(self):
@@ -686,6 +694,21 @@ class UpscaleInterface(InterfaceBase):
         self.clearBtn.setEnabled(bool(self._items))
         self.pauseBtn.setText(tr("convert.resume") if (self._running and self._paused)
                               else tr("convert.pause"))
+
+    # -- auto-collapse / expand -------------------------------------------
+    def _auto_collapse_cards(self):
+        """Collapse input/settings cards when a batch finishes (if enabled)."""
+        if not cfg.autoCollapse.value:
+            return
+        for c in self._auto_fold:
+            c.setCollapsed(True)
+
+    def _auto_expand_cards(self):
+        """Expand all cards when user stages new files (if enabled)."""
+        if not cfg.autoCollapse.value:
+            return
+        for c in self._auto_fold:
+            c.setCollapsed(False)
 
     # -- theme / i18n ----------------------------------------------------
     def retheme(self):

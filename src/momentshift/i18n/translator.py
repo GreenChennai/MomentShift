@@ -81,6 +81,18 @@ class Translator:
             locale = detect_system_locale()
         if locale in SUPPORTED_LOCALES:
             self._locale = locale
+            # Sync Qt's native dialog language (QFileDialog, QMessageBox)
+            # with the app's chosen language so buttons like "打开"/"重置"
+            # match the user's selection.
+            from PyQt6.QtCore import QLocale
+            _map = {
+                LocaleKey.ZH_CN: QLocale(QLocale.Language.Chinese, QLocale.Country.China),
+                LocaleKey.ZH_TW: QLocale(QLocale.Language.Chinese, QLocale.Country.Taiwan),
+                LocaleKey.EN_US: QLocale(QLocale.Language.English, QLocale.Country.UnitedStates),
+            }
+            qloc = _map.get(locale)
+            if qloc:
+                QLocale.setDefault(qloc)
 
     @property
     def locale(self) -> LocaleKey:

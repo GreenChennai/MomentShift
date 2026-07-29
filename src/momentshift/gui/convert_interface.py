@@ -21,7 +21,7 @@ from ..core.presets import TARGET_GROUPS, guess_category, IMAGE_EXTS, AUDIO_EXTS
 from ..core.models import Task
 from ..i18n.translator import tr
 from .theme import (
-    ThemedCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
+    ThemedCard, CollapsibleCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
     muted_text, sub_text, CARD_MARGIN, scrollbar_qss,
 )
 from .base import InterfaceBase
@@ -71,13 +71,14 @@ class ConvertInterface(InterfaceBase):
         self.stagingLayout.setSpacing(6)
         self.stagingLayout.addStretch(1)
         self.stagingScroll.setWidget(self.stagingList)
-        self.stagingScroll.setMaximumHeight(340)
+        self.stagingScroll.setMaximumHeight(680)
         vb.addWidget(self.stagingScroll)
 
         self.addQueueBtn = primary_btn(tr("convert.queue.add", n=0), icon=FIF.UP)
         self.addQueueBtn.clicked.connect(self._on_add_to_queue)
         vb.addWidget(self.addQueueBtn)
         self.vbox.addWidget(card)
+        self._inputCard = card
 
         # --- output location ---------------------------------------------
         ocard, ovb, self.tOutput = self._card("convert.output.title")
@@ -91,7 +92,9 @@ class ConvertInterface(InterfaceBase):
         ovb.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(cfg.outputFolder.value)
         self.folderEdit.setReadOnly(True)
-        self.browseBtn = icon_btn(FIF.FOLDER, tr("convert.output.browse"))
+        self.browseBtn = PushButton(FIF.FOLDER, "")
+        self.browseBtn.setToolTip(tr("convert.output.browse"))
+        self.browseBtn.setFixedWidth(38)
         self.browseBtn.clicked.connect(self._pick_output)
         frow = QHBoxLayout()
         frow.addWidget(self.folderEdit, 1)
@@ -126,7 +129,7 @@ class ConvertInterface(InterfaceBase):
         self.queueList.formatChanged.connect(self._on_row_format)
         self.queueScroll = self._scroll()
         self.queueScroll.setWidget(self.queueList)
-        self.queueScroll.setMaximumHeight(640)
+        self.queueScroll.setMaximumHeight(1280)
         qvb.addWidget(self.queueScroll)
 
         ctrl = QHBoxLayout()
@@ -142,6 +145,9 @@ class ConvertInterface(InterfaceBase):
         qvb.addLayout(ctrl)
         self.vbox.addWidget(qcard)
 
+        # Cards that auto-collapse when a batch finishes (queue stays open).
+        self._auto_fold = [self._inputCard, ocard, self.fcard, self.acard]
+
         # --- manager wiring ----------------------------------------------
         self.manager.queue_changed.connect(self._sync_queue)
         self.manager.progress_updated.connect(self.queueList.update_progress)
@@ -155,15 +161,10 @@ class ConvertInterface(InterfaceBase):
 
     # -- helpers ----------------------------------------------------------
     def _card(self, title_key, subtitle_key=None):
-        card = ThemedCard(self)
-        vb = QVBoxLayout(card)
-        vb.setContentsMargins(CARD_MARGIN, 14, CARD_MARGIN, 14)
-        vb.setSpacing(10)
-        titleLbl = StrongBodyLabel(tr(title_key))
-        vb.addWidget(titleLbl)
-        if subtitle_key:
-            vb.addWidget(CaptionLabel(tr(subtitle_key)))
-        return card, vb, titleLbl
+        title_text = tr(title_key)
+        sub_text = tr(subtitle_key) if subtitle_key else ""
+        card = CollapsibleCard(title_text, sub_text, self)
+        return card, card.body, card.titleLabel
 
     def _scroll(self) -> QScrollArea:
         s = QScrollArea()
@@ -217,6 +218,7 @@ class ConvertInterface(InterfaceBase):
         self._staged.extend(paths)
         self._render_staging()
         self._refresh_format_grid()
+        self._auto_expand_cards()
 
     def _render_staging(self):
         while self.stagingLayout.count():
@@ -260,6 +262,7 @@ class ConvertInterface(InterfaceBase):
     def _refresh_format_grid(self):
         cats = sorted({guess_category(p) for p in self._staged if guess_category(p)})
         self.formatGrid.setup(cats, self._selection)
+        self.advancedPanel.refresh(cats)
 
     def _on_selection(self, selection: dict):
         self._selection.update(selection)
@@ -331,6 +334,8 @@ class ConvertInterface(InterfaceBase):
     def _on_state_changed(self):
         self._update_controls()
         self._update_count()
+        if not self.manager.is_running and self.manager.tasks:
+            self._auto_collapse_cards()
 
     def _update_count(self):
         pass  # queueList owns its own stats; nothing extra needed here
@@ -345,6 +350,21 @@ class ConvertInterface(InterfaceBase):
             self.pauseBtn.setText(tr("convert.resume"))
         else:
             self.pauseBtn.setText(tr("convert.pause"))
+
+    # -- auto-collapse / expand -------------------------------------------
+    def _auto_collapse_cards(self):
+        """Collapse input/settings cards when a batch finishes (if enabled)."""
+        if not cfg.autoCollapse.value:
+            return
+        for c in self._auto_fold:
+            c.setCollapsed(True)
+
+    def _auto_expand_cards(self):
+        """Expand all cards when user starts staging new files (if enabled)."""
+        if not cfg.autoCollapse.value:
+            return
+        for c in self._auto_fold:
+            c.setCollapsed(False)
 
     def _on_start(self):
         if not self.manager.has_ffmpeg:

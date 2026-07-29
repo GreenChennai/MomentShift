@@ -12,6 +12,7 @@ from qfluentwidgets import (
     SettingCardGroup,
     RangeSettingCard,
     PushSettingCard,
+    SwitchSettingCard,
     ComboBox,
     FluentIcon as FIF,
     InfoBar,
@@ -82,7 +83,10 @@ class SettingInterface(InterfaceBase):
             cfg.outputFolder.value or tr("settings.output.fixed_hint"),
             FIF.FOLDER, tr("settings.output"), tr("settings.output.hint"))
         self.outCard.button.clicked.connect(self._choose_output)
-        for c in (self.langCard, self.themeCard, self.outCard):
+        self.autoFoldCard = SwitchSettingCard(
+            FIF.HIDE, tr("settings.auto_fold"), tr("settings.auto_fold.hint"),
+            cfg.autoCollapse)
+        for c in (self.langCard, self.themeCard, self.outCard, self.autoFoldCard):
             self.g_general.addSettingCard(c)
         self.vbox.addWidget(self.g_general)
 
@@ -158,6 +162,8 @@ class SettingInterface(InterfaceBase):
         self.themeCard.setContent(tr("settings.restart_hint"))
         self.outCard.setTitle(tr("settings.output"))
         self.outCard.setContent(tr("settings.output.hint"))
+        self.autoFoldCard.setTitle(tr("settings.auto_fold"))
+        self.autoFoldCard.setContent(tr("settings.auto_fold.hint"))
         self.hwCard.setTitle(tr("settings.hardware"))
         self.threadsCard.setTitle(tr("settings.threads"))
         self.threadsCard.setContent(tr("settings.threads.hint"))
