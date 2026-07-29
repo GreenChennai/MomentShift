@@ -18,6 +18,7 @@ from .models import Task
 from .presets import PROFILES, TARGET_GROUPS, build_args, guess_category
 from .converter import run_conversion
 from .ffmpeg import find_ffmpeg
+from .config import cfg
 from .hardware import detect_hw_accel
 
 
@@ -74,7 +75,7 @@ class ConversionManager(QObject):
         self._events: dict[str, threading.Event] = {}
         self._pool = QThreadPool.globalInstance()
         self._max = 4
-        self.ffmpeg_path = ffmpeg_path or find_ffmpeg()
+        self.ffmpeg_path = ffmpeg_path or find_ffmpeg(cfg.ffmpegSource.value)
         self.hw = detect_hw_accel(self.ffmpeg_path) if self.ffmpeg_path else {}
         self._running = False
         self._paused = False
@@ -83,6 +84,12 @@ class ConversionManager(QObject):
     @property
     def has_ffmpeg(self) -> bool:
         return bool(self.ffmpeg_path)
+
+    def refresh_ffmpeg(self) -> None:
+        """Re-detect ffmpeg after the user installs it (e.g. one-click download)."""
+        self.ffmpeg_path = find_ffmpeg(cfg.ffmpegSource.value)
+        self.hw = detect_hw_accel(self.ffmpeg_path) if self.ffmpeg_path else {}
+        self.state_changed.emit()
 
     @property
     def is_running(self) -> bool:

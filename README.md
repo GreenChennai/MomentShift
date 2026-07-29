@@ -1,5 +1,7 @@
 # MomentShift · 瞬变工坊
 
+> ⚠️ **声明：本项目全部代码由 AI（人工智能）编写**，用于团队技术能力提升与学习交流，并非由人工逐行手写。如有问题或改进建议，欢迎提 Issue / PR。
+
 > 傻瓜式 ffmpeg 多媒体格式转换工具 —— 拖进去，选格式，批量转。
 
 MomentShift（中文名 **瞬变工坊**）是一个基于 [ffmpeg](https://ffmpeg.org/) 的跨平台多媒体格式转换工具。
@@ -68,10 +70,14 @@ git push origin v0.1.0
 
 CI 会：
 
-1. 拉取对应平台的 ffmpeg 静态二进制（`tools/download_ffmpeg.py`）；
-2. 用 PyInstaller（`build.spec`）打包为单目录可执行程序；
-3. 将 ffmpeg 一并放入产物目录；
-4. 在 GitHub Release 上传压缩包。
+1. 用 PyInstaller（`build.spec`）打包为单目录可执行程序（**不含 ffmpeg**，以保证安装包小巧）；
+2. 在 GitHub Release 上传压缩包。
+
+> **关于 ffmpeg**：本软件不内置 ffmpeg。首次使用时，开始界面会检测 ffmpeg 是否存在：
+> - 已放置 `ffmpeg.exe` / `ffprobe.exe` 到软件安装根目录 → 直接使用；
+> - 未检测到 → 可点击界面上的「一键下载并安装」按钮，或前往
+>   [ffmpeg 官网下载页](https://ffmpeg.org/download.html) 手动下载后放到安装根目录。
+> 也可在「设置 → ffmpeg 来源」中选择仅使用系统 `PATH` 中的 ffmpeg。
 
 ---
 
@@ -118,6 +124,27 @@ MomentShift/
 > 因此**分发二进制成品时必须遵循 GPLv3**。若未来需要闭源 / 商业发行，
 > 可考虑迁移到 LGPL 的 **PySide6 + PySide6-Fluent-Widgets**（API 基本一致，
 > 本项目已将全部 Qt 导入集中在 `core/qt_compat.py`，便于切换）。
+
+---
+
+## 🙏 致谢 / Acknowledgements
+
+本项目在开发与设计中参考、使用了以下优秀的开源项目与资源，在此表示衷心感谢：
+
+| 项目 | 作者 / 维护者 | 官网 / 仓库 | 用途 |
+| --- | --- | --- | --- |
+| **ffmpeg** | FFmpeg 团队 | https://ffmpeg.org/ | 多媒体转码核心引擎 |
+| **PyQt6** | Riverbank Computing | https://www.riverbankcomputing.com/ | Python GUI 框架 |
+| **PyQt6-Fluent-Widgets** (`qfluentwidgets`) | zhiyiYo | https://github.com/zhiyiYo/PyQt-Fluent-Widgets | Fluent 风格 UI 组件库 |
+| **FFmpegFreeUI**（参考） | 1059 Studio (Lake1059) | https://github.com/Lake1059/FFmpegFreeUI | ffmpeg 调用参数与交互设计的参考（MIT） |
+
+特别感谢以下 **ffmpeg 静态构建下载源**，本软件的「一键下载」功能即从中获取对应平台的二进制：
+
+- Windows：[gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
+- macOS：[evermeet.cx](https://evermeet.cx/ffmpeg/)
+- Linux：[johnvansickle.com](https://johnvansickle.com/ffmpeg/)
+
+> ffmpeg 及其静态构建由第三方提供，遵循各自的开源许可；本软件仅对其作调用封装，相关权利归原作者所有。
 
 ---
 

@@ -18,14 +18,12 @@ APP_NAME = "MomentShift"
 # for a direct `python build.spec` run. In CI this resolves to the repo root.
 REPO_ROOT = globals().get("SPECPATH") or os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(REPO_ROOT, "src")
-FFMPEG_DIR = os.path.join(REPO_ROOT, "tools", "ffmpeg_bin")
 SCRIPT = os.path.join(SRC_DIR, "momentshift", "__main__.py")
 
-# Bundle ffmpeg if present (CI places it here before building).
+# NOTE: ffmpeg is intentionally NOT bundled — it would bloat the installer.
+# Users download it themselves (or via the in-app one-click button) and place
+# ffmpeg.exe / ffprobe.exe next to the executable. See FfmpegCard.
 binaries = []
-if os.path.isdir(FFMPEG_DIR):
-    for fn in os.listdir(FFMPEG_DIR):
-        binaries.append((os.path.join(FFMPEG_DIR, fn), "."))
 
 datas = [
     (os.path.join(SRC_DIR, "momentshift", "i18n", "locales"), "momentshift/i18n/locales"),

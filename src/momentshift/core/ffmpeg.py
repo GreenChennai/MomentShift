@@ -1,9 +1,8 @@
 """ffmpeg discovery, version and capability probing.
 
-MomentShift *bundles* ffmpeg next to the executable for distribution (the CI
-downloads the right static build per platform and PyInstaller drops it in the
-bundle). We therefore look in several places, in priority order, before falling
-back to the system ``PATH``.
+MomentShift does **not** bundle ffmpeg (that would bloat the installer). Users
+either drop ``ffmpeg``/``ffprobe`` next to the executable (the install root) or
+have it on their ``PATH``. We look in those places, in priority order.
 """
 
 from __future__ import annotations
@@ -23,7 +22,11 @@ def _binary_names() -> tuple[str, str]:
 
 
 def bundled_locations() -> list[Path]:
-    """Directories that may contain a bundled ffmpeg/ffprobe binary."""
+    """Directories that may contain a local ffmpeg/ffprobe binary.
+
+    In a frozen build this is the install root (next to the executable). In dev
+    it falls back to ``tools/ffmpeg_bin`` / a sibling folder for convenience.
+    """
     locations: list[Path] = []
     if getattr(sys, "frozen", False):
         # PyInstaller one-folder build: binaries sit next to the executable.
@@ -38,30 +41,33 @@ def bundled_locations() -> list[Path]:
     return locations
 
 
-def find_ffmpeg(prefer_bundled: bool = True) -> str | None:
-    """Locate the ffmpeg executable. Returns an absolute path or ``None``."""
+def ffmpeg_install_dir() -> Path:
+    """Directory where a one-click download should place ffmpeg/ffprobe.
+
+    This is the first location :func:`find_ffmpeg` searches, so a download
+    placed here is picked up automatically on next check.
+    """
+    return bundled_locations()[0]
+
+
+def find_ffmpeg(mode: str = "auto") -> str | None:
+    """Locate the ffmpeg executable. Returns an absolute path or ``None``.
+
+    ``mode``:
+      * ``"auto"`` — look next to the executable (install root) first, then PATH.
+      * ``"path"`` — only search the system ``PATH``.
+    """
     ffmpeg_name, _ = _binary_names()
-    bundled = [p / ffmpeg_name for p in bundled_locations()]
+    local = [p / ffmpeg_name for p in bundled_locations()]
 
-    if prefer_bundled:
-        for p in bundled:
-            if p.exists():
-                return str(p)
-        path_version = shutil.which(ffmpeg_name)
-        if path_version:
-            return path_version
-        for p in bundled:  # last resort: bundled even if we preferred path
-            if p.exists():
-                return str(p)
-        return None
+    if mode == "path":
+        return shutil.which(ffmpeg_name)
 
-    path_version = shutil.which(ffmpeg_name)
-    if path_version:
-        return path_version
-    for p in bundled:
+    # auto: install root first, then PATH
+    for p in local:
         if p.exists():
             return str(p)
-    return None
+    return shutil.which(ffmpeg_name)
 
 
 def find_ffprobe() -> str | None:

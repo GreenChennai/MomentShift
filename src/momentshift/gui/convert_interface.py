@@ -24,6 +24,7 @@ from ..i18n.translator import tr
 from .base import InterfaceBase
 from .drop_area import DropArea
 from .queue_widget import QueueListWidget
+from .ffmpeg_card import FfmpegCard
 
 ALL_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
 
@@ -47,6 +48,10 @@ class ConvertInterface(InterfaceBase):
             #queueStatus { color: rgba(128,128,128,1); }
             """
         )
+
+        # ---- ffmpeg status / acquisition card (start screen) ----
+        self.ffmpegCard = FfmpegCard()
+        self.vbox.addWidget(self.ffmpegCard)
 
         # ---- drop area ----
         self.drop = DropArea()
@@ -141,6 +146,7 @@ class ConvertInterface(InterfaceBase):
         self.manager.progress_updated.connect(self.queueList.update_progress)
         self.manager.task_finished.connect(self._on_finished)
         self.manager.state_changed.connect(self._on_state_changed)
+        self.ffmpegCard.ffmpeg_ready.connect(self._on_ffmpeg_ready)
 
     # ================================================================== #
     # Format selection
@@ -328,6 +334,9 @@ class ConvertInterface(InterfaceBase):
     # ================================================================== #
     # Manager signal handlers
     # ================================================================== #
+    def _on_ffmpeg_ready(self):
+        self.manager.refresh_ffmpeg()
+
     def _sync_queue(self):
         self.queueList.sync(self.manager.tasks)
         self._update_count()
@@ -376,6 +385,7 @@ class ConvertInterface(InterfaceBase):
     def retranslateUi(self):
         self.retranslate(tr("nav.convert"), tr("app.tagline"))
         self.drop.retranslate()
+        self.ffmpegCard.retranslateUi()
         self.targetLabel.setText(tr("convert.target.label"))
         self.outputLabel.setText(tr("convert.output.label"))
         self.outputLine.setPlaceholderText(tr("convert.output.same_dir"))

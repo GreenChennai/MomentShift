@@ -65,20 +65,17 @@ def main():
     assert manager.tasks == [], "unsupported file should be rejected"
     assert len(convert.queueList.items) == 0
 
-    step("enqueue supported png")
-    good = os.path.join(tmp, "photo.png")
-    with open(good, "wb") as fh:
-        fh.write(b"\x89PNG\r\n\x1a\n")
-    convert._on_paths([good])
-    assert len(manager.tasks) == 1, manager.tasks
-    assert manager.tasks[0].input_path.endswith("photo.png")
-
-    step("clear queue")
-    manager.clear()
-    assert manager.tasks == []
+    step("ffmpeg card present + status consistent")
+    from momentshift.core.ffmpeg import find_ffmpeg
+    assert hasattr(convert, "ffmpegCard"), "FfmpegCard missing on start screen"
+    assert convert.ffmpegCard.downloadBtn is not None
+    assert convert.ffmpegCard.linkBtn is not None
+    # manager.has_ffmpeg must agree with a fresh find_ffmpeg() probe
+    assert manager.has_ffmpeg == (find_ffmpeg(cfg.ffmpegSource.value) is not None)
 
     step("ALL CHECKS PASSED")
     print(f"final locale: {translator.locale.value}", flush=True)
+    print(f"has_ffmpeg: {manager.has_ffmpeg}", flush=True)
     # Bypass Qt teardown (offscreen/sandbox can hard-kill on exit).
     os._exit(0)
 

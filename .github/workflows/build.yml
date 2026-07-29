@@ -31,9 +31,6 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Download ffmpeg (bundled)
-        run: python tools/download_ffmpeg.py tools/ffmpeg_bin
-
       - name: Build with PyInstaller
         run: pyinstaller build.spec
 

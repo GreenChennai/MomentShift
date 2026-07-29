@@ -80,7 +80,7 @@ class SettingInterface(InterfaceBase):
         )
         ff_options = [
             (tr("settings.ffmpeg.auto"), "auto"),
-            (tr("settings.ffmpeg.bundled"), "bundled"),
+            (tr("settings.ffmpeg.path"), "path"),
         ]
         self.ffCard = ComboSettingCard(
             cfg.ffmpegSource, FIF.ROBOT, tr("settings.ffmpeg"), "", ff_options

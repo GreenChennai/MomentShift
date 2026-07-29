@@ -54,7 +54,7 @@ class Config(QConfig):
     )
     maxThreads = RangeConfigItem("Convert", "MaxThreads", 4, RangeValidator(1, 16))
     ffmpegSource = OptionsConfigItem(
-        "Convert", "FFmpegSource", "auto", OptionsValidator(["auto", "bundled"])
+        "Convert", "FFmpegSource", "auto", OptionsValidator(["auto", "path"])
     )
 
     # UI preferences.

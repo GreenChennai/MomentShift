@@ -20,7 +20,10 @@ def main():
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps)
+    # AA_UseHighDpiPixmaps was removed in Qt6 (high-DPI pixmaps are automatic),
+    # so guard it to stay compatible across PyQt6 versions.
+    if hasattr(Qt.ApplicationAttribute, "AA_UseHighDpiPixmaps"):
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps)
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
