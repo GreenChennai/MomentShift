@@ -8,6 +8,7 @@
   worker -> signal -> manager flow does not raise.
 """
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -63,7 +64,8 @@ def test_converter_parse():
     from momentshift.core.converter import run_conversion
 
     task = Task(
-        id="t1", input_path="in.png", output_path="out.jpg",
+        id="t1", input_path="in.png",
+        output_path=os.path.join(tempfile.mkdtemp(), "out.jpg"),
         target_format="jpg", category="image", use_gpu=False,
     )
     logs = []
