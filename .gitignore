@@ -1,0 +1,31 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# ---- Packaging / PyInstaller ----
+build/
+dist/
+release/
+*.manifest
+*.spec.bak
+
+# ---- Downloaded ffmpeg assets (fetched by CI / tools) ----
+tools/ffmpeg_bin/
+dist_assets/
+
+# ---- Editors / OS ----
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
+
+# ---- Local config (user settings are stored in OS config dir) ----
+config.json

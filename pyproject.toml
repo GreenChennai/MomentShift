@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "momentshift"
+version = "0.1.0"
+description = "瞬变工坊 - 傻瓜式 ffmpeg 多媒体格式转换工具"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "GreenChennai" }]
+keywords = ["ffmpeg", "converter", "gui", "multimedia", "pyqt"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Win32 (Microsoft Windows)",
+    "Environment :: MacOS",
+    "Environment :: X11 Applications",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Utilities",
+]
+
+dependencies = [
+    "PyQt6>=6.6.0",
+    "PyQt6-Fluent-Widgets>=1.6.0",
+]
+
+[project.scripts]
+momentshift = "momentshift.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/GreenChennai/MomentShift"
+Repository = "https://github.com/GreenChennai/MomentShift"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+momentshift = ["i18n/locales/*.json"]

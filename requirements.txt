@@ -1,0 +1,4 @@
+# Runtime dependencies for MomentShift (瞬变工坊)
+# GUI toolkit: PyQt6 + PyQt6-Fluent-Widgets (package name is `qfluentwidgets`)
+PyQt6>=6.6.0
+PyQt6-Fluent-Widgets>=1.6.0

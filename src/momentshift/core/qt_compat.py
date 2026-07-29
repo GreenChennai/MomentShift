@@ -1,0 +1,102 @@
+"""Centralized Qt binding imports for MomentShift.
+
+All GUI / signal code imports Qt classes from this module instead of directly
+from PyQt6. This keeps the project *forward-looking*: switching to PySide6
+(LGPL — better for proprietary distribution, see README "授权 License") becomes
+a single-file change here, rather than touching every widget.
+
+We standardize on **PyQt6** (best Python 3.13 support, actively maintained).
+"""
+
+from PyQt6.QtCore import (
+    QObject,
+    QThread,
+    QRunnable,
+    QThreadPool,
+    QTimer,
+    QSize,
+    QUrl,
+    QRect,
+    QPoint,
+    QEvent,
+    QMetaObject,
+    Q_ARG,
+    Qt,
+    QStandardPaths,
+    QDir,
+    QFileInfo,
+    QSettings,
+    QTranslator,
+    QLocale,
+    QCoreApplication,
+    QAbstractItemModel,
+    QModelIndex,
+    QItemSelectionModel,
+    pyqtSignal as Signal,
+    pyqtSlot as Slot,
+)
+from PyQt6.QtGui import (
+    QIcon,
+    QFont,
+    QColor,
+    QAction,
+    QDragEnterEvent,
+    QDropEvent,
+    QDesktopServices,
+    QPixmap,
+    QPainter,
+    QPen,
+    QBrush,
+    QKeySequence,
+    QCloseEvent,
+    QResizeEvent,
+    QWheelEvent,
+)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QWidget,
+    QMainWindow,
+    QFileDialog,
+    QMessageBox,
+    QListWidget,
+    QListWidgetItem,
+    QHBoxLayout,
+    QVBoxLayout,
+    QFrame,
+    QLabel,
+    QProgressBar,
+    QComboBox,
+    QLineEdit,
+    QPushButton,
+    QAbstractItemView,
+    QSizePolicy,
+    QSpacerItem,
+    QStackedWidget,
+    QScrollArea,
+    QGroupBox,
+    QCheckBox,
+    QRadioButton,
+    QSlider,
+    QTabWidget,
+    QTableWidget,
+    QHeaderView,
+    QFormLayout,
+    QToolButton,
+    QMenu,
+)
+
+__all__ = [
+    "QObject", "QThread", "QRunnable", "QThreadPool", "QTimer", "QSize", "QUrl",
+    "QRect", "QPoint", "QEvent", "QMetaObject", "Q_ARG", "Qt", "QStandardPaths",
+    "QDir", "QFileInfo", "QSettings", "QTranslator", "QLocale", "QCoreApplication",
+    "QAbstractItemModel", "QModelIndex", "QItemSelectionModel", "Signal", "Slot",
+    "QIcon", "QFont", "QColor", "QAction", "QDragEnterEvent", "QDropEvent",
+    "QDesktopServices", "QPixmap", "QPainter", "QPen", "QBrush", "QKeySequence",
+    "QCloseEvent", "QResizeEvent", "QWheelEvent", "QApplication", "QWidget",
+    "QMainWindow", "QFileDialog", "QMessageBox", "QListWidget", "QListWidgetItem",
+    "QHBoxLayout", "QVBoxLayout", "QFrame", "QLabel", "QProgressBar", "QComboBox",
+    "QLineEdit", "QPushButton", "QAbstractItemView", "QSizePolicy", "QSpacerItem",
+    "QStackedWidget", "QScrollArea", "QGroupBox", "QCheckBox", "QRadioButton",
+    "QSlider", "QTabWidget", "QTableWidget", "QHeaderView", "QFormLayout",
+    "QToolButton", "QMenu",
+]
