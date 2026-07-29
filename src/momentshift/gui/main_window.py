@@ -91,6 +91,10 @@ class MainWindow(FluentWindow):
     def initWindow(self):
         self.resize(1000, 720)
         self.setMinimumWidth(820)
+        # Disable Mica: it makes the window background transparent on Win11 and
+        # the content area inherits a grey-ish Mica material instead of the dark
+        # theme color. With Mica off, FluentWindow paints the solid custom bg.
+        self.setMicaEffectEnabled(False)
         # Give the window (and the content area behind transparent scroll
         # views) a deterministic theme background instead of relying on the
         # default, which left the inner frame grey in dark mode.
