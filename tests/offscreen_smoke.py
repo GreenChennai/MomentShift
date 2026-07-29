@@ -73,6 +73,19 @@ def main():
     # manager.has_ffmpeg must agree with a fresh find_ffmpeg() probe
     assert manager.has_ffmpeg == (find_ffmpeg(cfg.ffmpegSource.value) is not None)
 
+    step("format dialogs build + return correct values")
+    from momentshift.gui.format_dialog import FormatChoiceDialog, BatchFormatDialog
+    from momentshift.core.models import Task
+    d1 = FormatChoiceDialog("image", parent=window)
+    assert d1.get_format() in ("jpg", "png", "webp", "bmp", "tiff", "gif")
+    d1.deleteLater()
+    t = Task(id="x", input_path="a.png", output_path="a.jpg",
+             target_format="jpg", category="image", use_gpu=False)
+    d2 = BatchFormatDialog([t], parent=window)
+    assert d2.get_targets() == {"image": "jpg"}, d2.get_targets()
+    d2.deleteLater()
+    print("dialogs OK", flush=True)
+
     step("ALL CHECKS PASSED")
     print(f"final locale: {translator.locale.value}", flush=True)
     print(f"has_ffmpeg: {manager.has_ffmpeg}", flush=True)

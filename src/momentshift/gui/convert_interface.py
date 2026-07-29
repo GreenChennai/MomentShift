@@ -25,6 +25,7 @@ from .base import InterfaceBase
 from .drop_area import DropArea
 from .queue_widget import QueueListWidget
 from .ffmpeg_card import FfmpegCard
+from .format_dialog import FormatChoiceDialog, BatchFormatDialog
 
 ALL_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
 
@@ -251,17 +252,50 @@ class ConvertInterface(InterfaceBase):
                 duration=2000, position=InfoBarPosition.TOP_RIGHT,
             )
             return
-        cats = {guess_category(p) for p in expanded}
-        cats.discard(None)
-        if not cats:
-            return
-        chosen = self._current_category if self._current_category in cats else sorted(cats)[0]
-        self._set_category(chosen)
+        # Single file -> pick its target format from a same-category popup.
+        if len(expanded) == 1 and Path(expanded[0]).is_file():
+            self._choose_single(expanded[0])
+        else:
+            self._add_multiple(expanded)
 
-        matched = [p for p in expanded if guess_category(p) == chosen]
-        out_dir = cfg.outputFolder.value or None
+    def _choose_single(self, path: str):
+        category = guess_category(path)
+        if not category:
+            return
+        dlg = FormatChoiceDialog(category, parent=self.window())
+        if dlg.exec():
+            self._add_files([path], dlg.get_format())
+
+    def _add_multiple(self, paths):
+        groups: dict[str, list[str]] = {}
+        for p in paths:
+            c = guess_category(p)
+            if c:
+                groups.setdefault(c, []).append(p)
+        added_total = 0
+        skipped_total: list[str] = []
+        for cat, ps in groups.items():
+            fmt = TARGET_GROUPS[cat][0]
+            added, skipped = self.manager.add_files(
+                ps, fmt, cfg.outputFolder.value or None, self._gpu_enabled()
+            )
+            added_total += len(added)
+            skipped_total += skipped
+        if added_total:
+            InfoBar.success(
+                tr("convert.toast.added", n=added_total), "", parent=self.window(),
+                duration=2000, position=InfoBarPosition.TOP_RIGHT,
+            )
+        if skipped_total:
+            names = ", ".join(skipped_total[:3])
+            InfoBar.warning(
+                tr("convert.warn.same_format", name=names), "", parent=self.window(),
+                duration=3000, position=InfoBarPosition.TOP_RIGHT,
+            )
+
+    def _add_files(self, paths, fmt: str):
         added, skipped = self.manager.add_files(
-            matched, self._target_format, out_dir, self._gpu_enabled()
+            paths, fmt, cfg.outputFolder.value or None, self._gpu_enabled()
         )
         if added:
             InfoBar.success(
@@ -306,6 +340,15 @@ class ConvertInterface(InterfaceBase):
                 duration=2000, position=InfoBarPosition.TOP_RIGHT,
             )
             return
+        # For a batched queue, let the user pick a target format per media
+        # category before starting the conversion.
+        pending = [t for t in self.manager.tasks if t.status == Task.PENDING]
+        if pending:
+            dlg = BatchFormatDialog(self.manager.tasks, parent=self.window())
+            if dlg.exec():
+                self.manager.set_targets_by_category(dlg.get_targets())
+            else:
+                return  # user canceled the format picker
         self._run_active = True
         self.manager.start()
 
@@ -321,15 +364,7 @@ class ConvertInterface(InterfaceBase):
             self.manager.clear()
 
     def _on_row_format(self, task_id: str, fmt: str):
-        task = self.manager.get_task(task_id)
-        if not task:
-            return
-        task.target_format = fmt
-        if task.status in (Task.DONE, Task.FAILED, Task.CANCELED):
-            task.status = Task.PENDING
-            task.progress = 0
-            self.queueList.update_status(task_id, Task.PENDING)
-            self._update_count()
+        self.manager.set_task_target(task_id, fmt)
 
     # ================================================================== #
     # Manager signal handlers

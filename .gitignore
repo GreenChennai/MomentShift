@@ -29,3 +29,6 @@ Thumbs.db
 
 # ---- Local config (user settings are stored in OS config dir) ----
 config.json
+
+# ---- Runtime logs (written next to the executable) ----
+logs/

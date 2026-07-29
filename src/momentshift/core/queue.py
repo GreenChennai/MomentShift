@@ -20,6 +20,9 @@ from .converter import run_conversion
 from .ffmpeg import find_ffmpeg
 from .config import cfg
 from .hardware import detect_hw_accel
+from .logger import get_logger
+
+log = get_logger("queue")
 
 
 class WorkerSignals(QObject):
@@ -43,20 +46,28 @@ class ConversionWorker(QRunnable):
         self.signals = WorkerSignals()
 
     def run(self) -> None:
-        self.signals.started.emit(self.task.id)
+        try:
+            self.signals.started.emit(self.task.id)
 
-        def on_progress(pct: int) -> None:
-            self.signals.progress.emit(self.task.id, pct)
+            def on_progress(pct: int) -> None:
+                self.signals.progress.emit(self.task.id, pct)
 
-        returncode, log = run_conversion(
-            self.task,
-            self.ffmpeg_path,
-            self.hw,
-            on_progress=on_progress,
-            cancel_event=self.cancel_event,
-        )
-        ok = returncode == 0
-        self.signals.finished.emit(self.task.id, ok, (log or "") if not ok else "")
+            def on_log(line: str) -> None:
+                get_logger("ffmpeg").info("%s", line)
+
+            returncode, err = run_conversion(
+                self.task,
+                self.ffmpeg_path,
+                self.hw,
+                on_progress=on_progress,
+                on_log=on_log,
+                cancel_event=self.cancel_event,
+            )
+            ok = returncode == 0
+            self.signals.finished.emit(self.task.id, ok, (err or "") if not ok else "")
+        except Exception:
+            get_logger("queue").exception("Worker crashed for task %s", self.task.id)
+            self.signals.finished.emit(self.task.id, False, "internal worker error (see log)")
 
 
 class ConversionManager(QObject):
@@ -147,12 +158,47 @@ class ConversionManager(QObject):
                 category=category,
                 use_gpu=bool(use_gpu and profile["category"] == "video"),
             )
+            try:
+                task.src_size = src.stat().st_size
+            except OSError:
+                task.src_size = 0
             self.tasks.append(task)
             added.append(task)
             self.task_added.emit(task)
 
         self.queue_changed.emit()
         return added, skipped
+
+    # -- target (re)assignment ------------------------------------------
+    def set_task_target(self, task_id: str, fmt: str) -> None:
+        """Change a task's target format and recompute its output path."""
+        task = self.get_task(task_id)
+        if not task or task.target_format == fmt:
+            return
+        profile = PROFILES.get(fmt)
+        if not profile:
+            return
+        task.target_format = fmt
+        out_dir = Path(task.output_path).parent
+        new_ext = profile["ext"]
+        task.output_path = str(
+            self._unique_path(out_dir / (Path(task.input_path).stem + new_ext))
+        )
+        if task.status in (Task.DONE, Task.FAILED, Task.CANCELED):
+            task.status = Task.PENDING
+            task.progress = 0
+            task.error = ""
+        self.queue_changed.emit()
+
+    def set_targets_by_category(self, targets: dict[str, str]) -> None:
+        """Apply a per-category target format to queued tasks (skip running)."""
+        for t in self.tasks:
+            if t.status == Task.RUNNING:
+                continue
+            fmt = targets.get(t.category)
+            if fmt:
+                self.set_task_target(t.id, fmt)
+        self.queue_changed.emit()
 
     @staticmethod
     def _unique_path(path: Path) -> Path:
@@ -277,6 +323,7 @@ class ConversionManager(QObject):
             task.progress = 100 if ok else task.progress
             task.error = log
         self._events.pop(task_id, None)
+        get_logger("queue").info("Task %s %s", task_id, "done" if ok else "failed")
         self.task_finished.emit(task_id, ok, log)
 
         if not self._paused:

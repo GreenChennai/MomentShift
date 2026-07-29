@@ -30,3 +30,5 @@ class Task:
     progress: int = 0    # 0..100
     error: str = ""
     duration_ms: int = 0
+    src_size: int = 0    # source file size in bytes (filled at enqueue)
+    dst_size: int = 0    # output file size in bytes (filled after conversion)
