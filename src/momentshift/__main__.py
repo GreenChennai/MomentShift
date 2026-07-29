@@ -2,13 +2,17 @@
 
 import sys
 
-from .core.qt_compat import QApplication, Qt
+# NOTE: use ABSOLUTE imports here. PyInstaller freezes this file as the
+# top-level script ``__main__`` (no parent package context), so relative
+# imports (``from .core ...``) raise "attempted relative import with no known
+# parent package". Absolute imports work both frozen and via ``python -m momentshift``.
+from momentshift.core.qt_compat import QApplication, Qt
 from qfluentwidgets import setTheme, Theme
-from .core.config import cfg
-from .i18n.translator import translator, LocaleKey
-from .core.queue import ConversionManager
-from .gui.main_window import MainWindow
-from .metadata import APP_NAME, VERSION
+from momentshift.core.config import cfg
+from momentshift.i18n.translator import translator, LocaleKey
+from momentshift.core.queue import ConversionManager
+from momentshift.gui.main_window import MainWindow
+from momentshift.metadata import APP_NAME, VERSION
 
 
 def main():
