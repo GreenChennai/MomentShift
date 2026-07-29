@@ -44,7 +44,7 @@ hiddenimports = [
     "momentshift.core.logger",
     "momentshift.gui",
     "momentshift.gui.ffmpeg_card",
-    "momentshift.gui.format_dialog",
+    "momentshift.gui.format_grid",
     "momentshift.gui.base",
     "momentshift.gui.drop_area",
     "momentshift.gui.queue_widget",

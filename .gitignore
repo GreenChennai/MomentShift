@@ -12,6 +12,7 @@ venv/
 # ---- Packaging / PyInstaller ----
 build/
 dist/
+dist_build/
 release/
 *.manifest
 *.spec.bak

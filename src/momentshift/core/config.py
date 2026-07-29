@@ -48,6 +48,13 @@ class Config(QConfig):
     # Default output folder (empty => next to source file).
     outputFolder = ConfigItem("Folder", "Output", "", FolderValidator())
 
+    # Output location strategy: "fixed" => use outputFolder; "same" => next to
+    # the source file with a custom suffix appended to the stem.
+    outputMode = OptionsConfigItem(
+        "Folder", "OutputMode", "fixed", OptionsValidator(["fixed", "same"])
+    )
+    outputSuffix = ConfigItem("Folder", "OutputSuffix", "_converted")
+
     # Conversion behaviour.
     hardware = OptionsConfigItem(
         "Convert", "Hardware", "auto", OptionsValidator(["auto", "cpu", "gpu"])

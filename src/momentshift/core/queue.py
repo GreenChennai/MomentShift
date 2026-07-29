@@ -120,6 +120,21 @@ class ConversionManager(QObject):
             out[t.status] = out.get(t.status, 0) + 1
         return out
 
+    def pending_same_format(self) -> list[Task]:
+        """Return pending tasks whose source extension equals the target ext.
+
+        Same-format conversions are allowed but the caller should warn before
+        starting the run (e.g. png -> png).
+        """
+        out = []
+        for t in self.tasks:
+            if t.status != Task.PENDING:
+                continue
+            ext = Path(t.input_path).suffix.lower()
+            if ext and ext == PROFILES[t.target_format]["ext"]:
+                out.append(t)
+        return out
+
     # -- adding -----------------------------------------------------------
     def add_files(
         self,
@@ -127,11 +142,20 @@ class ConversionManager(QObject):
         target_format: str,
         output_dir: Optional[str],
         use_gpu: bool,
+        output_mode: str = "fixed",
+        suffix: str = "",
     ) -> tuple[list[Task], list[str]]:
-        """Add files as pending tasks. Returns (added_tasks, skipped_names)."""
+        """Add files as pending tasks. Returns (added_tasks, skipped_names).
+
+        ``output_mode`` is either ``"fixed"`` (use ``output_dir``) or
+        ``"same"`` (place the output next to the source file, appending
+        ``suffix`` to the file stem to avoid clobbering the original).
+        Same-format conversions (e.g. png -> png) are allowed; the caller is
+        responsible for warning the user before starting.
+        """
         added: list[Task] = []
         skipped: list[str] = []
-        default_out = Path(output_dir) if output_dir else None
+        default_out = Path(output_dir) if (output_dir and output_mode == "fixed") else None
 
         for raw in paths:
             src = Path(raw)
@@ -142,13 +166,15 @@ class ConversionManager(QObject):
                 skipped.append(src.name)
                 continue
             profile = PROFILES[target_format]
-            if src.suffix.lower() == profile["ext"]:
-                skipped.append(src.name)
-                continue
 
-            out_dir = default_out or src.parent
+            if output_mode == "same":
+                out_dir = src.parent
+                stem = src.stem + (suffix or "")
+            else:
+                out_dir = default_out or src.parent
+                stem = src.stem
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = self._unique_path(out_dir / (src.stem + profile["ext"]))
+            out_path = self._unique_path(out_dir / (stem + profile["ext"]))
 
             task = Task(
                 id=uuid.uuid4().hex[:12],

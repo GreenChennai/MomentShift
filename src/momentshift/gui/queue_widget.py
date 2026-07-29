@@ -130,19 +130,19 @@ class QueueItemWidget(CardWidget):
         self.statusLabel.setObjectName("queueStatus")
 
         # actions
-        self.retryBtn = TransparentPushButton(icon=FIF.SYNC)
+        self.retryBtn = TransparentPushButton(FIF.SYNC, "")
         self.retryBtn.setToolTip(tr("convert.action.retry"))
         self.retryBtn.setFixedSize(32, 32)
         self.retryBtn.setVisible(task.status == Task.FAILED)
         self.retryBtn.clicked.connect(lambda: self.retryRequested.emit(task.id))
 
-        self.copyBtn = TransparentPushButton(icon=FIF.COPY)
+        self.copyBtn = TransparentPushButton(FIF.COPY, "")
         self.copyBtn.setToolTip(tr("convert.result.copy"))
         self.copyBtn.setFixedSize(32, 32)
         self.copyBtn.setVisible(task.status == Task.DONE)
         self.copyBtn.clicked.connect(self._copy)
 
-        self.removeBtn = TransparentPushButton(icon=FIF.DELETE)
+        self.removeBtn = TransparentPushButton(FIF.DELETE, "")
         self.removeBtn.setToolTip(tr("convert.action.remove"))
         self.removeBtn.setFixedSize(32, 32)
         self.removeBtn.clicked.connect(lambda: self.removeRequested.emit(task.id))
@@ -150,7 +150,7 @@ class QueueItemWidget(CardWidget):
         main.addWidget(self.iconLabel)
         main.addWidget(textWidget, 1)
         main.addWidget(self.formatCombo)
-        main.addWidget(progCol)
+        main.addLayout(progCol)
         main.addWidget(self.statusLabel)
         main.addWidget(self.retryBtn)
         main.addWidget(self.copyBtn)
