@@ -13,7 +13,10 @@ is exactly where :mod:`momentshift.core.ffmpeg` looks for them.
 import os
 
 APP_NAME = "MomentShift"
-REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+# PyInstaller executes this spec via exec() and defines SPECPATH (the directory
+# containing the spec file) but does NOT define __file__. Fall back to __file__
+# for a direct `python build.spec` run. In CI this resolves to the repo root.
+REPO_ROOT = globals().get("SPECPATH") or os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(REPO_ROOT, "src")
 FFMPEG_DIR = os.path.join(REPO_ROOT, "tools", "ffmpeg_bin")
 SCRIPT = os.path.join(SRC_DIR, "momentshift", "__main__.py")
