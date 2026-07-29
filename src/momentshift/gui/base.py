@@ -14,6 +14,10 @@ class InterfaceBase(ScrollArea):
 
         self.view = QWidget()
         self.setWidget(self.view)
+        # Let the FluentWindow's themed background show through so dark mode
+        # tints the whole content area (not just the navigation panel).
+        self.setStyleSheet("background-color: transparent;")
+        self.view.setStyleSheet("background-color: transparent;")
 
         self.vbox = QVBoxLayout(self.view)
         self.vbox.setContentsMargins(30, 22, 30, 22)

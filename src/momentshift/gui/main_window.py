@@ -35,6 +35,11 @@ class MainWindow(FluentWindow):
         self.splashScreen.finish()
         self.themeListener.start()
         self._connect_config()
+        # Apply the saved language + theme immediately (config is loaded before
+        # the signal connections exist, so valueChanged never fires on startup).
+        translator.set_locale(LocaleKey(cfg.language.value))
+        self.retranslate_all()
+        self._on_theme(cfg.theme.value)
 
     # -- config signals --------------------------------------------------
     def _connect_config(self):

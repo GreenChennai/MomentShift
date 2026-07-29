@@ -31,6 +31,7 @@ class ComboSettingCard(SettingCard):
             self.combo.addItem(text, userData=value)
         self.hBoxLayout.addStretch(1)
         self.hBoxLayout.addWidget(self.combo)
+        self.hBoxLayout.addSpacing(8)  # keep a safe distance from the right edge
 
         for i, (text, value) in enumerate(options):
             if value == configItem.value:
@@ -102,11 +103,11 @@ class SettingInterface(InterfaceBase):
         )
 
         self.openCfgCard = PushSettingCard(
-            "", FIF.FOLDER, tr("settings.open_config"), ""
+            tr("settings.open_config_btn"), FIF.FOLDER, tr("settings.open_config"), ""
         )
         self.openCfgCard.button.clicked.connect(self._open_config)
         self.resetCard = PushSettingCard(
-            "", FIF.DELETE, tr("settings.reset"), ""
+            tr("settings.reset_btn"), FIF.DELETE, tr("settings.reset"), ""
         )
         self.resetCard.button.clicked.connect(self._reset)
 

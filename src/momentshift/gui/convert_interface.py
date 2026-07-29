@@ -21,9 +21,10 @@ from qfluentwidgets import (
     FluentIcon as FIF,
     PrimaryPushButton,
     PushButton,
-    TransparentPushButton,
+    TransparentToolButton,
     LineEdit,
     StrongBodyLabel,
+    BodyLabel,
     CaptionLabel,
     InfoBar,
     InfoBarPosition,
@@ -39,6 +40,7 @@ from .drop_area import DropArea
 from .queue_widget import QueueListWidget
 from .ffmpeg_card import FfmpegCard
 from .format_grid import FormatGrid
+from .advanced_panel import AdvancedPanel
 
 ALL_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
 CATEGORY_ICON = {"image": FIF.PHOTO, "audio": FIF.MUSIC, "video": FIF.VIDEO}
@@ -145,29 +147,37 @@ class ConvertInterface(InterfaceBase):
         mode_row.addStretch(1)
         ocv.addLayout(mode_row)
 
-        # fixed folder controls
+        # fixed folder controls (left label keeps the two rows aligned)
         self.fixedRow = QHBoxLayout()
+        fixedLabel = BodyLabel(tr("convert.output.fixed_label"))
+        fixedLabel.setFixedWidth(72)
         self.outputLine = LineEdit()
         self.outputLine.setReadOnly(True)
         self.outputLine.setPlaceholderText(tr("convert.output.same_dir"))
         self.outputLine.setText(cfg.outputFolder.value)
         self.outputChoose = PushButton(FIF.FOLDER, tr("convert.output.choose"))
         self.outputChoose.clicked.connect(self._choose_output)
+        self.fixedRow.addWidget(fixedLabel)
         self.fixedRow.addWidget(self.outputLine, 1)
         self.fixedRow.addWidget(self.outputChoose)
         ocv.addLayout(self.fixedRow)
 
-        # same-dir + suffix controls
+        # same-dir + suffix controls (directly under the "same dir" option)
         self.sameRow = QHBoxLayout()
-        self.suffixLabel = CaptionLabel(tr("convert.output.suffix"))
+        sameLabel = BodyLabel(tr("convert.output.suffix"))
+        sameLabel.setFixedWidth(72)
         self.suffixEdit = LineEdit()
         self.suffixEdit.setPlaceholderText(tr("convert.output.suffix_hint"))
         self.suffixEdit.setText(cfg.outputSuffix.value)
         self.suffixEdit.setFixedWidth(190)
-        self.sameRow.addWidget(self.suffixLabel)
+        self.sameRow.addWidget(sameLabel)
         self.sameRow.addWidget(self.suffixEdit)
         self.sameRow.addStretch(1)
         ocv.addLayout(self.sameRow)
+
+        self.sameHint = CaptionLabel(tr("convert.output.same_hint"))
+        self.sameHint.setObjectName("stagedSub")
+        ocv.addWidget(self.sameHint)
 
     def _on_mode_fixed(self, checked: bool):
         if checked:
@@ -215,6 +225,10 @@ class ConvertInterface(InterfaceBase):
         self.stagingList.setContentsMargins(0, 0, 0, 0)
         self.stagingList.setSpacing(6)
         scv.addLayout(self.stagingList)
+
+        self.advancedPanel = AdvancedPanel()
+        scv.addWidget(self.advancedPanel)
+
         self.stagingCard.setVisible(False)
 
     def _refresh_staging(self):
@@ -228,7 +242,9 @@ class ConvertInterface(InterfaceBase):
         n = len(self._staged)
         self.stagingCount.setText(f"（{n}）" if n else "")
         self.stagingCard.setVisible(n > 0)
-        self._refresh_format_cards()
+        cats = sorted({guess_category(p) for p in self._staged if guess_category(p)})
+        self._refresh_format_cards(cats)
+        self.advancedPanel.refresh(cats)
 
     def _make_staged_row(self, path: str) -> QWidget:
         row = QWidget()
@@ -250,7 +266,7 @@ class ConvertInterface(InterfaceBase):
         text_col.addWidget(name)
         text_col.addWidget(sub)
 
-        remove = TransparentPushButton(FIF.DELETE, "")
+        remove = TransparentToolButton(FIF.DELETE, self)
         remove.setFixedSize(30, 30)
         remove.setToolTip(tr("convert.action.remove"))
         remove.clicked.connect(lambda _=None, p=path: self._remove_staged(p))
@@ -295,8 +311,9 @@ class ConvertInterface(InterfaceBase):
         fcv.addWidget(self.addQueueBtn)
         self.formatCard.setVisible(False)
 
-    def _refresh_format_cards(self):
-        cats = sorted({guess_category(p) for p in self._staged if guess_category(p)})
+    def _refresh_format_cards(self, cats=None):
+        if cats is None:
+            cats = sorted({guess_category(p) for p in self._staged if guess_category(p)})
         for cat in cats:
             if cat not in self._format_by_cat:
                 self._format_by_cat[cat] = TARGET_GROUPS[cat][0]
@@ -559,8 +576,8 @@ class ConvertInterface(InterfaceBase):
         self.sameRadio.setText(tr("convert.output.mode.same"))
         self.outputLine.setPlaceholderText(tr("convert.output.same_dir"))
         self.outputChoose.setText(tr("convert.output.choose"))
-        self.suffixLabel.setText(tr("convert.output.suffix"))
         self.suffixEdit.setPlaceholderText(tr("convert.output.suffix_hint"))
+        self.sameHint.setText(tr("convert.output.same_hint"))
         self.stagingTitle.setText(tr("convert.staging.title"))
         self.stagingClear.setText(tr("convert.staging.clear"))
         self.formatTitle.setText(tr("convert.format.title"))
@@ -574,4 +591,5 @@ class ConvertInterface(InterfaceBase):
         self.clearBtn.setText(tr("convert.btn.clear"))
         self.queueList.retranslate()
         self.formatGrid.retranslate()
+        self.advancedPanel.retranslate()
         self._update_count()

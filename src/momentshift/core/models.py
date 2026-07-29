@@ -32,3 +32,10 @@ class Task:
     duration_ms: int = 0
     src_size: int = 0    # source file size in bytes (filled at enqueue)
     dst_size: int = 0    # output file size in bytes (filled after conversion)
+
+    # Advanced conversion options (see core/advanced.py). ``None`` => use defaults.
+    adv: dict = None
+    # Merge mode: when True, ``input_paths`` (not just ``input_path``) are
+    # concatenated into a single output (used for "merge into one file").
+    merge: bool = False
+    input_paths: list = None

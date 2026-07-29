@@ -21,6 +21,7 @@ from .ffmpeg import find_ffmpeg
 from .config import cfg
 from .hardware import detect_hw_accel
 from .logger import get_logger
+from . import advanced
 
 log = get_logger("queue")
 
@@ -152,15 +153,52 @@ class ConversionManager(QObject):
         ``suffix`` to the file stem to avoid clobbering the original).
         Same-format conversions (e.g. png -> png) are allowed; the caller is
         responsible for warning the user before starting.
+
+        If the advanced "merge into one file" option is enabled for the
+        category and there is more than one file, a single *merge* task is
+        created instead of one task per file.
         """
         added: list[Task] = []
         skipped: list[str] = []
         default_out = Path(output_dir) if (output_dir and output_mode == "fixed") else None
 
-        for raw in paths:
+        existing = [p for p in paths if Path(p).exists()]
+        if not existing:
+            return added, skipped
+        category = guess_category(existing[0])
+
+        # --- merge mode: one combined task ------------------------------
+        if category and advanced.is_merge_enabled(category) and len(existing) > 1:
+            profile = PROFILES[target_format]
+            if output_mode == "same":
+                out_dir = Path(existing[0]).parent
+                stem = Path(existing[0]).stem + (suffix or "") + "_merged"
+            else:
+                out_dir = default_out or Path(existing[0]).parent
+                stem = Path(existing[0]).stem + "_merged"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = self._unique_path(out_dir / (stem + profile["ext"]))
+            task = Task(
+                id=uuid.uuid4().hex[:12],
+                input_path=existing[0],
+                output_path=str(out_path),
+                target_format=target_format,
+                category=category,
+                use_gpu=False,
+                adv=dict(advanced.get(category)),
+                merge=True,
+                input_paths=list(existing),
+            )
+            task.src_size = sum(self._safe_size(p) for p in existing)
+            self.tasks.append(task)
+            added.append(task)
+            self.task_added.emit(task)
+            self.queue_changed.emit()
+            return added, skipped
+
+        # --- one task per file ------------------------------------------
+        for raw in existing:
             src = Path(raw)
-            if not src.exists():
-                continue
             category = guess_category(str(src))
             if category is None:
                 skipped.append(src.name)
@@ -183,17 +221,22 @@ class ConversionManager(QObject):
                 target_format=target_format,
                 category=category,
                 use_gpu=bool(use_gpu and profile["category"] == "video"),
+                adv=dict(advanced.get(category)),
             )
-            try:
-                task.src_size = src.stat().st_size
-            except OSError:
-                task.src_size = 0
+            task.src_size = self._safe_size(str(src))
             self.tasks.append(task)
             added.append(task)
             self.task_added.emit(task)
 
         self.queue_changed.emit()
         return added, skipped
+
+    @staticmethod
+    def _safe_size(path: str) -> int:
+        try:
+            return Path(path).stat().st_size
+        except OSError:
+            return 0
 
     # -- target (re)assignment ------------------------------------------
     def set_task_target(self, task_id: str, fmt: str) -> None:

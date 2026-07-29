@@ -16,6 +16,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from .advanced import build_advanced_args, build_merge_args, get as get_adv
+
 # --------------------------------------------------------------------------
 # Extension maps (used to guess the source category)
 # --------------------------------------------------------------------------
@@ -123,11 +125,17 @@ def build_args(task, hw: Optional[dict] = None) -> list[str]:
     """Return the ffmpeg argument list (excluding the binary) for a task.
 
     ``task`` must expose: ``input_path``, ``output_path``, ``target_format``,
-    ``category``, ``use_gpu``.
+    ``category``, ``use_gpu``. It may also carry ``adv`` (advanced options dict),
+    ``merge`` and ``input_paths`` (for multi-file merge).
     """
     hw = hw or {}
     profile = PROFILES[task.target_format]
     target = task.target_format
+
+    # --- multi-file merge into one output -------------------------------
+    if getattr(task, "merge", False) and getattr(task, "input_paths", None):
+        opt = task.adv if task.adv else get_adv(task.category)
+        return build_merge_args(task.category, task.input_paths, task.output_path, opt)
 
     args = ["-hide_banner", "-nostats", "-progress", "pipe:1", "-y", "-i", task.input_path]
 
@@ -149,6 +157,11 @@ def build_args(task, hw: Optional[dict] = None) -> list[str]:
     else:
         # webm / avi / image / audio -> CPU presets (always safe).
         args += profile["params"]
+
+    # --- advanced, per-category tuning ----------------------------------
+    opt = task.adv if task.adv else get_adv(task.category)
+    if opt:
+        args += build_advanced_args(task.category, target, opt)
 
     args.append(task.output_path)
     return args

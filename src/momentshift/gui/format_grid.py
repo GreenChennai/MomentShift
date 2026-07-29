@@ -1,89 +1,137 @@
 """Card-style format-selection matrix.
 
-Replaces the old dropdown / checkbox format pickers. Formats are shown as a
-grid of square "cards" grouped by media category (image / audio / video). Each
-card carries a category icon plus the target extension in large text, so the
-available conversions are obvious at a glance. Clicking a card selects the
-target format for that category (one selection per category).
-
-The category icons use FluentIcon. To use richer per-format artwork (e.g. the
-iconfont set at https://www.iconfont.cn/), drop the SVGs into the resources
-folder and extend ``ICON_BY_FORMAT`` below.
+Replaces the old dropdown / checkbox format pickers. Formats are shown as a grid
+of square "cards" grouped by media category (image / audio / video). Each card is
+a custom-painted square with a checkbox indicator (top-left) and a large
+``.PNG``-style suffix in the centre. Clicking a card selects the target format for
+that category (one selection per category) with a clear checked state and a small
+check-draw animation so the user always knows what is selected.
 """
 
 from __future__ import annotations
 
-from ..core.qt_compat import QWidget, QVBoxLayout, QGridLayout, QLabel, Signal, Qt
-from qfluentwidgets import FluentIcon as FIF, StrongBodyLabel
+from PyQt6.QtCore import pyqtProperty, QPropertyAnimation, QEasingCurve, Qt, QPointF, QRectF
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont
+from ..core.qt_compat import QWidget, QVBoxLayout, QGridLayout, Signal
+from qfluentwidgets import isDarkTheme
 from ..core.presets import TARGET_GROUPS
 from ..i18n.translator import tr
 
-CATEGORY_LABEL = {
-    "image": tr("convert.category.image"),
-    "audio": tr("convert.category.audio"),
-    "video": tr("convert.category.video"),
-}
-
-# Default icon per category. Extend with per-format artwork if desired.
-ICON_BY_CAT = {
-    "image": FIF.PHOTO,
-    "audio": FIF.MUSIC,
-    "video": FIF.VIDEO,
-}
-
-# Grid columns for the matrix.
 GRID_COLUMNS = 6
-
-CARD_STYLE = """
-FormatCard {
-    border: 1.5px solid rgba(128, 128, 128, 0.35);
-    border-radius: 12px;
-    background: rgba(128, 128, 128, 0.05);
-}
-FormatCard[selected="true"] {
-    border: 2px solid #2080f0;
-    background: rgba(32, 128, 240, 0.14);
-}
-FormatCard:hover {
-    border-color: rgba(32, 128, 240, 0.55);
-}
-"""
+ACCENT = QColor(32, 128, 240)
+GRAY_BORDER = QColor(128, 128, 128, 95)
+GRAY_BORDER_LIGHT = QColor(128, 128, 128, 60)
 
 
 class FormatCard(QWidget):
-    """A single selectable format button rendered as a card."""
+    """A single selectable format button rendered as a painted square card."""
 
     clicked = Signal(str, str)  # (category, fmt)
 
-    def __init__(self, category: str, fmt: str, icon, parent=None):
+    def __init__(self, category: str, fmt: str, parent=None):
         super().__init__(parent)
         self.category = category
         self.fmt = fmt
-        self.setFixedSize(96, 82)
+        self._selected = False
+        self._hover = False
+        self._check = 0.0  # 0..1 check-draw animation progress
+
+        self.setFixedSize(96, 92)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setProperty("selected", "false")
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._anim = QPropertyAnimation(self, b"checkValue")
+        self._anim.setDuration(170)
 
-        icon_label = QLabel()
-        icon_label.setPixmap(icon.icon().pixmap(30, 30))
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        name_label = StrongBodyLabel(fmt.upper())
-        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    # -- animation property ---------------------------------------------
+    def getCheck(self) -> float:
+        return self._check
 
-        layout.addWidget(icon_label)
-        layout.addWidget(name_label)
+    def setCheck(self, v: float) -> None:
+        self._check = v
+        self.update()
+
+    checkValue = pyqtProperty(float, getCheck, setCheck)
 
     def set_selected(self, value: bool) -> None:
-        self.setProperty("selected", "true" if value else "false")
-        self.style().polish(self)
+        self._selected = value
+        self._anim.stop()
+        self._anim.setStartValue(self._check)
+        self._anim.setEndValue(1.0 if value else 0.0)
+        self._anim.setEasingCurve(
+            QEasingCurve.Type.OutBack if value else QEasingCurve.Type.InCubic
+        )
+        self._anim.start()
+        self.update()
+
+    # -- events -----------------------------------------------------------
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.category, self.fmt)
         super().mousePressEvent(event)
+
+    # -- painting ---------------------------------------------------------
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.rect()
+
+        # card background + border
+        if self._selected:
+            bg = QColor(32, 128, 240, 28)
+            border = ACCENT
+            bw = 2
+        else:
+            bg = QColor(128, 128, 128, 13)
+            border = ACCENT if self._hover else GRAY_BORDER
+            bw = 2 if self._hover else 1
+        p.setPen(QPen(border, bw))
+        p.setBrush(QBrush(bg))
+        p.drawRoundedRect(r.adjusted(1, 1, r.width() - 2, r.height() - 2), 12, 12)
+
+        # checkbox indicator (top-left)
+        cb = QRectF(12, 12, 22, 22)
+        p.setPen(QPen(ACCENT if self._selected else GRAY_BORDER_LIGHT, 2))
+        p.setBrush(QBrush(ACCENT if self._selected else Qt.GlobalColor.transparent))
+        p.drawRoundedRect(cb, 6, 6)
+        if self._check > 0.01:
+            p.setPen(QPen(Qt.GlobalColor.white, 3,
+                          Qt.PenStyle.SolidLine,
+                          Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            cx, cy = cb.x() + cb.width() / 2, cb.y() + cb.height() / 2
+            s = self._check
+            p1 = QPointF(cx - 6, cy)
+            p2 = QPointF(cx - 1, cy + 5)
+            p3 = QPointF(cx + 7, cy - 5)
+
+            def lerp(a, b, t):
+                return a + (b - a) * t
+
+            p.drawLine(
+                QPointF(lerp(cx, p1.x(), s), lerp(cy, p1.y(), s)),
+                QPointF(lerp(cx, p2.x(), s), lerp(cy, p2.y(), s)),
+            )
+            p.drawLine(
+                QPointF(lerp(cx, p2.x(), s), lerp(cy, p2.y(), s)),
+                QPointF(lerp(cx, p3.x(), s), lerp(cy, p3.y(), s)),
+            )
+
+        # large suffix text (centre)
+        text = "." + self.fmt.upper()
+        p.setPen(QColor(255, 255, 255) if isDarkTheme() else QColor(20, 20, 20))
+        f = QFont()
+        f.setBold(True)
+        f.setPointSize(20)
+        p.setFont(f)
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter, text)
 
 
 class FormatGrid(QWidget):
@@ -98,13 +146,9 @@ class FormatGrid(QWidget):
         self.mainLayout = QVBoxLayout(self)
         self.mainLayout.setContentsMargins(0, 0, 0, 0)
         self.mainLayout.setSpacing(14)
-        self.setStyleSheet(CARD_STYLE)
 
     def setup(self, categories: list[str], selection: dict[str, str]) -> None:
-        """(Re)build the grid for the given categories.
-
-        ``selection`` maps category -> currently chosen target format.
-        """
+        """(Re)build the grid for the given categories."""
         self._clear()
         self._cards = {}
         self._selection = dict(selection)
@@ -115,7 +159,7 @@ class FormatGrid(QWidget):
             vbox.setContentsMargins(0, 0, 0, 0)
             vbox.setSpacing(8)
 
-            header = StrongBodyLabel(CATEGORY_LABEL.get(cat, cat))
+            header = QLabelStyle(tr("convert.category." + cat))
             vbox.addWidget(header)
 
             grid_widget = QWidget()
@@ -126,7 +170,7 @@ class FormatGrid(QWidget):
 
             cards: list[FormatCard] = []
             for i, fmt in enumerate(TARGET_GROUPS.get(cat, [])):
-                card = FormatCard(cat, fmt, ICON_BY_CAT.get(cat, FIF.DOCUMENT))
+                card = FormatCard(cat, fmt)
                 card.set_selected(self._selection.get(cat) == fmt)
                 card.clicked.connect(self._on_card)
                 grid.addWidget(card, i // GRID_COLUMNS, i % GRID_COLUMNS)
@@ -153,6 +197,11 @@ class FormatGrid(QWidget):
                 widget.deleteLater()
 
     def retranslate(self):
-        # Rebuild labels only if already populated.
         if self._cards:
             self.setup(list(self._cards.keys()), self._selection)
+
+
+def QLabelStyle(text: str):
+    """A simple strong body label for section headers (avoids extra import)."""
+    from qfluentwidgets import StrongBodyLabel
+    return StrongBodyLabel(text)

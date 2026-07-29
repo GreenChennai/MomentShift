@@ -1,16 +1,14 @@
 """Application configuration (persisted as JSON via qfluentwidgets' qconfig).
 
-Settings are stored per-user in an OS-appropriate config directory so the app
-stays portable and cross-platform aware:
+The config file lives **inside the software directory** (next to the executable)
+so the app stays self-contained and portable:
 
-- Windows : ``%APPDATA%/MomentShift/config.json``
-- macOS   : ``~/Library/Application Support/MomentShift/config.json``
-- Linux   : ``~/.config/MomentShift/config.json``
+- Frozen exe : ``<dir of MomentShift.exe>/config/config.json``
+- Dev run    : ``<repo root>/config/config.json``
 """
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -26,15 +24,21 @@ from qfluentwidgets import (
 )
 
 
+def app_base_dir() -> Path:
+    """Return the directory that should hold the config folder.
+
+    When frozen (PyInstaller), this is the directory containing the executable.
+    In development it is the repository root (the parent of ``src``).
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    # src/momentshift/core/config.py -> repo root is four levels up.
+    return Path(__file__).resolve().parent.parent.parent.parent
+
+
 def config_dir() -> Path:
-    """Return (and create) the OS-specific config directory."""
-    if sys.platform == "win32":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-    else:
-        base = Path.home() / ".config"
-    directory = base / "MomentShift"
+    """Return (and create) the config directory inside the software folder."""
+    directory = app_base_dir() / "config"
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 

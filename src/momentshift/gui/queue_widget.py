@@ -9,7 +9,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
     ProgressBar,
     ComboBox,
-    TransparentPushButton,
+    TransparentToolButton,
     StrongBodyLabel,
     CaptionLabel,
     InfoBar,
@@ -108,6 +108,13 @@ class QueueItemWidget(CardWidget):
         self._set_combo(task.target_format)
         self.formatCombo.currentIndexChanged.connect(self._on_format)
 
+        # Merge tasks combine several inputs into one output: show a summary
+        # instead of a single filename and hide the per-row format override.
+        if task.merge:
+            n = len(task.input_paths or [])
+            self.nameLabel.setText(tr("convert.queue.merge_name", n=n))
+            self.formatCombo.setVisible(False)
+
         # progress + percentage
         progCol = QVBoxLayout()
         progCol.setContentsMargins(0, 0, 0, 0)
@@ -130,19 +137,19 @@ class QueueItemWidget(CardWidget):
         self.statusLabel.setObjectName("queueStatus")
 
         # actions
-        self.retryBtn = TransparentPushButton(FIF.SYNC, "")
+        self.retryBtn = TransparentToolButton(FIF.SYNC, self)
         self.retryBtn.setToolTip(tr("convert.action.retry"))
         self.retryBtn.setFixedSize(32, 32)
         self.retryBtn.setVisible(task.status == Task.FAILED)
         self.retryBtn.clicked.connect(lambda: self.retryRequested.emit(task.id))
 
-        self.copyBtn = TransparentPushButton(FIF.COPY, "")
+        self.copyBtn = TransparentToolButton(FIF.COPY, self)
         self.copyBtn.setToolTip(tr("convert.result.copy"))
         self.copyBtn.setFixedSize(32, 32)
         self.copyBtn.setVisible(task.status == Task.DONE)
         self.copyBtn.clicked.connect(self._copy)
 
-        self.removeBtn = TransparentPushButton(FIF.DELETE, "")
+        self.removeBtn = TransparentToolButton(FIF.DELETE, self)
         self.removeBtn.setToolTip(tr("convert.action.remove"))
         self.removeBtn.setFixedSize(32, 32)
         self.removeBtn.clicked.connect(lambda: self.removeRequested.emit(task.id))
@@ -174,7 +181,14 @@ class QueueItemWidget(CardWidget):
         self.retryBtn.setVisible(status == Task.FAILED)
         self.copyBtn.setVisible(status == Task.DONE)
         if status == Task.DONE:
-            self.sizeLabel.setText(format_size_compare(self.task.src_size, self.task.dst_size))
+            before, after = self.task.src_size, self.task.dst_size
+            if before and after and after != before:
+                pct = (after - before) / before * 100
+                color = "#cf5c5c" if pct > 0 else "#4a9d5b"
+                self.sizeLabel.setStyleSheet(f"color: {color};")
+            else:
+                self.sizeLabel.setStyleSheet("")
+            self.sizeLabel.setText(format_size_compare(before, after))
             self.pathLabel.setText(Path(self.task.output_path).name)
             self.pathLabel.setToolTip(self.task.output_path)
             self.infoRowW.setVisible(True)
