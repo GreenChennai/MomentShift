@@ -1,19 +1,25 @@
 """Batch queue list: one card per task with live progress and actions."""
 
 import math
+import time
 from pathlib import Path
 
-from ..core.qt_compat import QWidget, QHBoxLayout, QVBoxLayout, QLabel, Signal, Qt, QApplication
+from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtGui import QColor, QPainter
+from ..core.qt_compat import (
+    QWidget, QHBoxLayout, QVBoxLayout, QLabel, Signal, QApplication
+)
 from qfluentwidgets import (
     CardWidget,
     FluentIcon as FIF,
-    ProgressBar,
     ComboBox,
     TransparentToolButton,
     StrongBodyLabel,
     CaptionLabel,
     InfoBar,
     InfoBarPosition,
+    isDarkTheme,
+    Theme,
 )
 from ..i18n.translator import tr
 from ..core.presets import TARGET_GROUPS
@@ -40,6 +46,16 @@ def format_size_compare(before: int, after: int) -> str:
     return f"{b} → {a}"
 
 
+def fmt_duration(seconds: float) -> str:
+    """Format seconds as mm:ss or hh:mm:ss."""
+    if seconds < 0:
+        return "--:--"
+    seconds = int(seconds)
+    if seconds < 3600:
+        return f"{seconds // 60:02d}:{seconds % 60:02d}"
+    return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
+
+
 class ClickLabel(QLabel):
     """A label that emits ``clicked`` on mouse press (for copy-to-clipboard)."""
 
@@ -50,8 +66,54 @@ class ClickLabel(QLabel):
         super().mousePressEvent(event)
 
 
+class ProgressBar(QWidget):
+    """A full-width progress background bar.
+
+    The background is white/light-grey; the filled portion is light green when
+    progressing and the entire bar turns red for failed tasks.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._value = 0
+        self._error = False
+        self.setMinimumHeight(8)
+        self.setMaximumHeight(8)
+
+    def set_value(self, value: int):
+        self._value = max(0, min(100, value))
+        self.update()
+
+    def set_error(self, error: bool):
+        self._error = error
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect())
+
+        if self._error:
+            bg = QColor(220, 80, 80)
+            fill = bg
+        else:
+            # Background: subtle light colour.
+            bg = QColor(220, 220, 220)
+            fill = QColor(120, 200, 120)
+
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(bg)
+        p.drawRoundedRect(r, 4, 4)
+
+        if not self._error and self._value > 0:
+            w = r.width() * self._value / 100.0
+            fill_rect = QRectF(r.x(), r.y(), w, r.height())
+            p.setBrush(fill)
+            p.drawRoundedRect(fill_rect, 4, 4)
+
+
 class QueueItemWidget(CardWidget):
-    """A single task row inside the queue."""
+    """A single task row inside the queue (portrait-friendly layout)."""
 
     removeRequested = Signal(str)
     retryRequested = Signal(str)
@@ -60,143 +122,149 @@ class QueueItemWidget(CardWidget):
     def __init__(self, task: Task, parent=None):
         super().__init__(parent)
         self.task = task
-        self.setMinimumHeight(64)
+        self._start_time = time.time()
+        self.setMinimumHeight(88)
 
-        main = QHBoxLayout(self)
-        main.setContentsMargins(12, 8, 12, 8)
-        main.setSpacing(10)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 8, 10, 8)
+        outer.setSpacing(6)
 
-        # icon
+        # Row 1: icon | name | status | actions
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+        row1.setContentsMargins(0, 0, 0, 0)
+
         self.iconLabel = QLabel()
         self.iconLabel.setPixmap(
-            CATEGORY_ICON.get(task.category, FIF.DOCUMENT).icon().pixmap(26, 26)
+            CATEGORY_ICON.get(task.category, FIF.DOCUMENT)
+            .icon(Theme.DARK if isDarkTheme() else Theme.AUTO)
+            .pixmap(22, 22)
         )
-        self.iconLabel.setFixedSize(30, 30)
+        self.iconLabel.setFixedSize(24, 24)
+        self.iconLabel.setStyleSheet("background-color: transparent;")
 
-        # name + path + result info (size / output path, shown when done)
-        textWidget = QWidget()
-        tcol = QVBoxLayout(textWidget)
-        tcol.setContentsMargins(0, 0, 0, 0)
-        tcol.setSpacing(2)
         self.nameLabel = StrongBodyLabel(Path(task.input_path).name)
-        self.subLabel = CaptionLabel(str(Path(task.input_path).parent))
-        self.subLabel.setObjectName("queueSub")
-        self.sizeLabel = CaptionLabel("")
-        self.sizeLabel.setObjectName("queueStatus")
-        self.pathLabel = ClickLabel("")
-        self.pathLabel.setObjectName("queueSub")
-        self.pathLabel.setCursor(Qt.CursorShape.PointingHandCursor)
-        infoRow = QHBoxLayout()
-        infoRow.setSpacing(8)
-        infoRow.addWidget(self.sizeLabel)
-        infoRow.addWidget(self.pathLabel)
-        infoRow.addStretch(1)
-        infoRowW = QWidget()
-        infoRowW.setLayout(infoRow)
-        infoRowW.setVisible(False)
-        tcol.addWidget(self.nameLabel)
-        tcol.addWidget(self.subLabel)
-        tcol.addWidget(infoRowW)
-        self.infoRowW = infoRowW
-        self.pathLabel.clicked.connect(self._copy)
+        self.nameLabel.setToolTip(str(task.input_path))
 
-        # per-row target format override (same category only)
-        self.formatCombo = ComboBox()
-        for fmt in TARGET_GROUPS.get(task.category, []):
-            self.formatCombo.addItem(fmt.upper(), userData=fmt)
-        self.formatCombo.setFixedWidth(92)
-        self._set_combo(task.target_format)
-        self.formatCombo.currentIndexChanged.connect(self._on_format)
-
-        # Merge tasks combine several inputs into one output: show a summary
-        # instead of a single filename and hide the per-row format override.
-        if task.merge:
-            n = len(task.input_paths or [])
-            self.nameLabel.setText(tr("convert.queue.merge_name", n=n))
-            self.formatCombo.setVisible(False)
-
-        # progress + percentage
-        progCol = QVBoxLayout()
-        progCol.setContentsMargins(0, 0, 0, 0)
-        progCol.setSpacing(2)
-        self.progress = ProgressBar()
-        self.progress.setFixedWidth(150)
-        self.progress.setValue(task.progress)
-        self.pctLabel = CaptionLabel(f"{task.progress}%")
-        self.pctLabel.setObjectName("queueStatus")
-        self.pctLabel.setFixedWidth(46)
-        progRow = QHBoxLayout()
-        progRow.setSpacing(6)
-        progRow.addWidget(self.progress)
-        progRow.addWidget(self.pctLabel)
-        progCol.addLayout(progRow)
-
-        # status
-        self.statusLabel = QLabel(tr(f"convert.status.{task.status}"))
-        self.statusLabel.setFixedWidth(72)
+        self.statusLabel = CaptionLabel(tr(f"convert.status.{task.status}"))
         self.statusLabel.setObjectName("queueStatus")
+        self.statusLabel.setAlignment(Qt.AlignmentFlag.AlignRight)
 
-        # actions
         self.retryBtn = TransparentToolButton(FIF.SYNC, self)
         self.retryBtn.setToolTip(tr("convert.action.retry"))
-        self.retryBtn.setFixedSize(32, 32)
+        self.retryBtn.setFixedSize(28, 28)
         self.retryBtn.setVisible(task.status == Task.FAILED)
         self.retryBtn.clicked.connect(lambda: self.retryRequested.emit(task.id))
 
         self.copyBtn = TransparentToolButton(FIF.COPY, self)
         self.copyBtn.setToolTip(tr("convert.result.copy"))
-        self.copyBtn.setFixedSize(32, 32)
+        self.copyBtn.setFixedSize(28, 28)
         self.copyBtn.setVisible(task.status == Task.DONE)
         self.copyBtn.clicked.connect(self._copy)
 
         self.removeBtn = TransparentToolButton(FIF.DELETE, self)
         self.removeBtn.setToolTip(tr("convert.action.remove"))
-        self.removeBtn.setFixedSize(32, 32)
+        self.removeBtn.setFixedSize(28, 28)
         self.removeBtn.clicked.connect(lambda: self.removeRequested.emit(task.id))
 
-        main.addWidget(self.iconLabel)
-        main.addWidget(textWidget, 1)
-        main.addWidget(self.formatCombo)
-        main.addLayout(progCol)
-        main.addWidget(self.statusLabel)
-        main.addWidget(self.retryBtn)
-        main.addWidget(self.copyBtn)
-        main.addWidget(self.removeBtn)
+        row1.addWidget(self.iconLabel)
+        row1.addWidget(self.nameLabel, 1)
+        row1.addWidget(self.statusLabel)
+        row1.addWidget(self.retryBtn)
+        row1.addWidget(self.copyBtn)
+        row1.addWidget(self.removeBtn)
 
-    # -- helpers ---------------------------------------------------------
+        # Progress bar (full-width background)
+        self.progress = ProgressBar()
+        self.progress.set_value(task.progress)
+        self.progress.set_error(task.status == Task.FAILED)
+
+        # Row 2: format combo | details (size/quality/time)
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+        row2.setContentsMargins(0, 0, 0, 0)
+
+        self.formatCombo = ComboBox()
+        for fmt in TARGET_GROUPS.get(task.category, []):
+            self.formatCombo.addItem(fmt.upper(), userData=fmt)
+        self.formatCombo.setFixedWidth(70)
+        self._set_combo(task.target_format)
+        self.formatCombo.currentIndexChanged.connect(self._on_format)
+
+        self.detailLabel = CaptionLabel("")
+        self.detailLabel.setObjectName("queueSub")
+        self.detailLabel.setWordWrap(True)
+
+        self.pathLabel = ClickLabel("")
+        self.pathLabel.setObjectName("queueSub")
+        self.pathLabel.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.pathLabel.clicked.connect(self._copy)
+        self.pathLabel.setVisible(False)
+
+        row2.addWidget(self.formatCombo)
+        row2.addWidget(self.detailLabel, 1)
+        row2.addWidget(self.pathLabel)
+
+        # Merge tasks combine several inputs into one output.
+        if task.merge:
+            n = len(task.input_paths or [])
+            self.nameLabel.setText(tr("convert.queue.merge_name", n=n))
+            self.formatCombo.setVisible(False)
+
+        outer.addLayout(row1)
+        outer.addWidget(self.progress)
+        outer.addLayout(row2)
+
+        self._update_details()
+
     def _set_combo(self, fmt: str):
         for i in range(self.formatCombo.count()):
             self.formatCombo.setCurrentIndex(i)
             if self.formatCombo.currentData() == fmt:
                 break
 
+    def _update_details(self):
+        """Refresh the detail line from current task data."""
+        parts = []
+        if self.task.status == Task.DONE and self.task.src_size and self.task.dst_size:
+            parts.append(format_size_compare(self.task.src_size, self.task.dst_size))
+        # Quality / bitrate hint from advanced options.
+        adv = self.task.adv or {}
+        if self.task.category == "image" and adv.get("quality"):
+            parts.append(tr("convert.queue.quality", q=adv["quality"]))
+        elif self.task.category in ("video", "audio") and adv.get("vbitrate"):
+            parts.append(tr("convert.queue.bitrate", b=adv["vbitrate"]))
+        # Elapsed / remaining.
+        elapsed = time.time() - self._start_time
+        if self.task.status == Task.RUNNING and self.task.progress > 0:
+            total_est = elapsed / (self.task.progress / 100.0)
+            remaining = total_est - elapsed
+            parts.append(tr("convert.queue.time", rem=fmt_duration(remaining), used=fmt_duration(elapsed)))
+        elif self.task.status == Task.DONE:
+            parts.append(tr("convert.queue.elapsed", t=fmt_duration(elapsed)))
+        self.detailLabel.setText("  |  ".join(parts))
+
     # -- updates from manager --------------------------------------------
     def set_progress(self, pct: int):
-        self.progress.setValue(pct)
-        self.pctLabel.setText(f"{pct}%")
+        self.task.progress = pct
+        self.progress.set_value(pct)
+        if self.task.status == Task.RUNNING:
+            self._update_details()
 
     def set_status(self, status: str, error: str = ""):
         self.task.status = status
         self.statusLabel.setText(tr(f"convert.status.{status}"))
         self.retryBtn.setVisible(status == Task.FAILED)
         self.copyBtn.setVisible(status == Task.DONE)
+        self.progress.set_error(status == Task.FAILED)
         if status == Task.DONE:
-            before, after = self.task.src_size, self.task.dst_size
-            if before and after and after != before:
-                pct = (after - before) / before * 100
-                color = "#cf5c5c" if pct > 0 else "#4a9d5b"
-                self.sizeLabel.setStyleSheet(f"color: {color};")
-            else:
-                self.sizeLabel.setStyleSheet("")
-            self.sizeLabel.setText(format_size_compare(before, after))
+            self._update_details()
             self.pathLabel.setText(Path(self.task.output_path).name)
             self.pathLabel.setToolTip(self.task.output_path)
-            self.infoRowW.setVisible(True)
+            self.pathLabel.setVisible(True)
             self.setToolTip("")
         else:
-            self.infoRowW.setVisible(False)
-            if status == Task.FAILED and error:
-                self.setToolTip(error.strip().splitlines()[-1] if error.strip() else "")
+            self.setToolTip(error.strip().splitlines()[-1] if error.strip() else "")
 
     def set_format(self, fmt: str):
         self.task.target_format = fmt
@@ -219,10 +287,11 @@ class QueueItemWidget(CardWidget):
         self.retryBtn.setToolTip(tr("convert.action.retry"))
         self.removeBtn.setToolTip(tr("convert.action.remove"))
         self.copyBtn.setToolTip(tr("convert.result.copy"))
+        self._update_details()
 
 
 class QueueListWidget(QWidget):
-    """Holds the queue items and keeps them in sync with the manager."""
+    """Holds the queue items, header and stats, and keeps them in sync."""
 
     removeRequested = Signal(str)
     retryRequested = Signal(str)
@@ -233,16 +302,61 @@ class QueueListWidget(QWidget):
         self.items: dict[str, QueueItemWidget] = {}
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(8)
+        self.layout.setSpacing(10)
+
+        # ---- stats bar ----
+        stats = QHBoxLayout()
+        stats.setSpacing(8)
+        stats.setContentsMargins(4, 0, 4, 0)
+        self.statTotal = QLabel(tr("convert.queue.stats.total", n=0))
+        self.statRunning = QLabel(tr("convert.queue.stats.running", n=0))
+        self.statError = QLabel(tr("convert.queue.stats.error", n=0))
+        for label in (self.statTotal, self.statRunning, self.statError):
+            label.setObjectName("queueSub")
+            stats.addWidget(label)
+        stats.addStretch(1)
+        self.layout.addLayout(stats)
+
+        # ---- header ----
+        header = QHBoxLayout()
+        header.setSpacing(6)
+        header.setContentsMargins(4, 0, 4, 0)
+        self.headerName = QLabel(tr("convert.queue.header.name"))
+        self.headerStatus = QLabel(tr("convert.queue.header.status"))
+        self.headerFormat = QLabel(tr("convert.queue.header.format"))
+        self.headerProgress = QLabel(tr("convert.queue.header.progress"))
+        for label in (self.headerName, self.headerStatus, self.headerFormat, self.headerProgress):
+            label.setObjectName("queueSub")
+        self.headerName.setFixedWidth(110)
+        self.headerStatus.setFixedWidth(46)
+        self.headerFormat.setFixedWidth(50)
+        self.headerProgress.setFixedWidth(52)
+        header.addWidget(self.headerName)
+        header.addWidget(self.headerStatus)
+        header.addWidget(self.headerFormat)
+        header.addWidget(self.headerProgress)
+        header.addStretch(1)
+        self.layout.addLayout(header)
+
+        # ---- list ----
+        self.listLayout = QVBoxLayout()
+        self.listLayout.setContentsMargins(0, 0, 0, 0)
+        self.listLayout.setSpacing(8)
+        self.layout.addLayout(self.listLayout)
 
         self.emptyLabel = QLabel(tr("convert.queue.empty"))
         self.emptyLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.emptyLabel.setObjectName("queueEmpty")
-        self.layout.addWidget(self.emptyLabel)
+        self.listLayout.addWidget(self.emptyLabel)
         self._update_empty()
 
     def _update_empty(self):
         self.emptyLabel.setVisible(len(self.items) == 0)
+
+    def _update_stats(self, counts: dict):
+        self.statTotal.setText(tr("convert.queue.stats.total", n=counts.get("total", 0)))
+        self.statRunning.setText(tr("convert.queue.stats.running", n=counts.get("running", 0)))
+        self.statError.setText(tr("convert.queue.stats.error", n=counts.get("failed", 0)))
 
     def add_item(self, task: Task):
         if task.id in self.items:
@@ -252,7 +366,7 @@ class QueueListWidget(QWidget):
         w.retryRequested.connect(self.retryRequested.emit)
         w.formatChanged.connect(self.formatChanged.emit)
         self.items[task.id] = w
-        self.layout.addWidget(w)
+        self.listLayout.addWidget(w)
         self._update_empty()
 
     def update_progress(self, task_id: str, pct: int):
@@ -273,7 +387,7 @@ class QueueListWidget(QWidget):
     def remove_item(self, task_id: str):
         w = self.items.pop(task_id, None)
         if w:
-            self.layout.removeWidget(w)
+            self.listLayout.removeWidget(w)
             w.deleteLater()
         self._update_empty()
 
@@ -283,7 +397,6 @@ class QueueListWidget(QWidget):
             if t.id not in self.items:
                 self.add_item(t)
             else:
-                # keep existing rows in sync with the model
                 self.items[t.id].set_format(t.target_format)
                 self.items[t.id].set_status(t.status)
         for tid in list(self.items):
@@ -292,12 +405,19 @@ class QueueListWidget(QWidget):
 
     def clear(self):
         for w in self.items.values():
-            self.layout.removeWidget(w)
+            self.listLayout.removeWidget(w)
             w.deleteLater()
         self.items.clear()
         self._update_empty()
 
     def retranslate(self):
         self.emptyLabel.setText(tr("convert.queue.empty"))
+        self.statTotal.setText(tr("convert.queue.stats.total", n=0))
+        self.statRunning.setText(tr("convert.queue.stats.running", n=0))
+        self.statError.setText(tr("convert.queue.stats.error", n=0))
+        self.headerName.setText(tr("convert.queue.header.name"))
+        self.headerStatus.setText(tr("convert.queue.header.status"))
+        self.headerFormat.setText(tr("convert.queue.header.format"))
+        self.headerProgress.setText(tr("convert.queue.header.progress"))
         for w in self.items.values():
             w.retranslate()

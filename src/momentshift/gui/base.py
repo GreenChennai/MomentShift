@@ -24,8 +24,9 @@ class InterfaceBase(ScrollArea):
         self.retheme()
 
         self.vbox = QVBoxLayout(self.view)
-        self.vbox.setContentsMargins(30, 22, 30, 22)
-        self.vbox.setSpacing(14)
+        # Tight margins for the narrow 400px portrait window.
+        self.vbox.setContentsMargins(16, 14, 16, 14)
+        self.vbox.setSpacing(12)
 
         self.header = QWidget()
         hb = QVBoxLayout(self.header)
@@ -43,9 +44,15 @@ class InterfaceBase(ScrollArea):
 
         Using a stylesheet is more reliable than QPalette because qfluentwidgets
         may install a global stylesheet that reverts palette colours.
+        QLabel is forced transparent so labels that set ``color`` don't paint a
+        black background box (issue seen in dark mode where text labels got a
+        #202020 patch behind them).
         """
         bg = DARK_BG if isDarkTheme() else LIGHT_BG
-        css = f"background-color: {bg.name()}; border: none;"
+        css = (
+            f"background-color: {bg.name()}; border: none;"
+            "QLabel { background-color: transparent; }"
+        )
         self.view.setStyleSheet(css)
         if self.viewport():
             self.viewport().setStyleSheet(css)

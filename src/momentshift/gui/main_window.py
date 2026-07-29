@@ -12,6 +12,7 @@ from qfluentwidgets import (
 )
 from ..core.config import cfg
 from ..i18n.translator import tr, translator, LocaleKey
+from qfluentwidgets import ConfigItem
 from qfluentwidgets import qconfig
 from .theme import LIGHT_BG, DARK_BG
 from .convert_interface import ConvertInterface
@@ -51,6 +52,13 @@ class MainWindow(FluentWindow):
         # theme changes — this also fires in "auto" mode when the OS theme
         # flips, which cfg.theme.valueChanged alone would miss.
         qconfig.themeChanged.connect(self._retheme_all)
+        # Auto-save every config item change so users don't lose settings
+        # (e.g. theme switched from "auto" to "dark").
+        self._save_config_slot = lambda: qconfig.save()
+        for name in dir(cfg.__class__):
+            attr = getattr(cfg.__class__, name)
+            if isinstance(attr, ConfigItem):
+                attr.valueChanged.connect(self._save_config_slot)
 
     def _retheme_all(self):
         self.convertInterface.retheme()
@@ -90,8 +98,9 @@ class MainWindow(FluentWindow):
 
     # -- window ----------------------------------------------------------
     def initWindow(self):
-        self.resize(1000, 720)
-        self.setMinimumWidth(820)
+        # Portrait phone-like aspect ratio (1:2) as requested.
+        self.resize(400, 800)
+        self.setMinimumWidth(360)
         # Disable Mica: it makes the window background transparent on Win11 and
         # the content area inherits a grey-ish Mica material instead of the dark
         # theme color. With Mica off, FluentWindow paints the solid custom bg.
@@ -116,6 +125,7 @@ class MainWindow(FluentWindow):
         QApplication.processEvents()
 
     def closeEvent(self, event):
+        qconfig.save()
         self.themeListener.terminate()
         self.themeListener.deleteLater()
         super().closeEvent(event)

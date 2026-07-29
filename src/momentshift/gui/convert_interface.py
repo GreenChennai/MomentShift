@@ -30,6 +30,8 @@ from qfluentwidgets import (
     InfoBarPosition,
     MessageBox,
     RadioButton,
+    isDarkTheme,
+    Theme,
 )
 from ..core.config import cfg
 from ..core.presets import TARGET_GROUPS, PROFILES, guess_category, IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS
@@ -70,12 +72,13 @@ class ConvertInterface(InterfaceBase):
         self.vbox.addWidget(self.drop)
 
         # ---- add toolbar (files / folder) ----
-        toolbar = QHBoxLayout()
+        # Stacked vertically so both buttons remain usable on a 400px wide window.
+        toolbar = QVBoxLayout()
+        toolbar.setSpacing(8)
         self.addBtn = PushButton(FIF.ADD, tr("convert.btn.add"))
         self.addFolderBtn = PushButton(FIF.FOLDER, tr("convert.add_folder"))
         toolbar.addWidget(self.addBtn)
         toolbar.addWidget(self.addFolderBtn)
-        toolbar.addStretch(1)
         self.vbox.addLayout(toolbar)
 
         # ---- staging card (files waiting for a format) ----
@@ -136,6 +139,8 @@ class ConvertInterface(InterfaceBase):
             self.advancedPanel.retheme()
         if hasattr(self, "formatGrid"):
             self.formatGrid.retheme()
+        if hasattr(self, "drop"):
+            self.drop.retheme()
 
     # ================================================================== #
     # Output location card
@@ -167,7 +172,7 @@ class ConvertInterface(InterfaceBase):
         # fixed folder controls (left label keeps the two rows aligned)
         self.fixedRow = QHBoxLayout()
         fixedLabel = BodyLabel(tr("convert.output.fixed_label"))
-        fixedLabel.setFixedWidth(72)
+        fixedLabel.setFixedWidth(56)
         self.outputLine = LineEdit()
         self.outputLine.setReadOnly(True)
         self.outputLine.setPlaceholderText(tr("convert.output.same_dir"))
@@ -182,11 +187,11 @@ class ConvertInterface(InterfaceBase):
         # same-dir + suffix controls (directly under the "same dir" option)
         self.sameRow = QHBoxLayout()
         sameLabel = BodyLabel(tr("convert.output.suffix"))
-        sameLabel.setFixedWidth(72)
+        sameLabel.setFixedWidth(56)
         self.suffixEdit = LineEdit()
         self.suffixEdit.setPlaceholderText(tr("convert.output.suffix_hint"))
         self.suffixEdit.setText(cfg.outputSuffix.value)
-        self.suffixEdit.setFixedWidth(190)
+        self.suffixEdit.setFixedWidth(120)
         self.sameRow.addWidget(sameLabel)
         self.sameRow.addWidget(self.suffixEdit)
         self.sameRow.addStretch(1)
@@ -271,8 +276,13 @@ class ConvertInterface(InterfaceBase):
 
         cat = guess_category(path) or "image"
         icon = QLabel()
-        icon.setPixmap(CATEGORY_ICON.get(cat, FIF.DOCUMENT).icon().pixmap(22, 22))
+        icon.setPixmap(
+            CATEGORY_ICON.get(cat, FIF.DOCUMENT)
+            .icon(Theme.DARK if isDarkTheme() else Theme.AUTO)
+            .pixmap(22, 22)
+        )
         icon.setFixedSize(26, 26)
+        icon.setStyleSheet("background-color: transparent;")
 
         name = StrongBodyLabel(Path(path).name)
         sub = CaptionLabel(str(Path(path).parent))
@@ -358,13 +368,13 @@ class ConvertInterface(InterfaceBase):
 
         q_head = QHBoxLayout()
         self.queueTitle = StrongBodyLabel(tr("convert.queue.title"))
-        self.queueCount = CaptionLabel("")
         q_head.addWidget(self.queueTitle)
         q_head.addStretch(1)
-        q_head.addWidget(self.queueCount)
 
         self.queueList = QueueListWidget()
-        self.controls = QHBoxLayout()
+        # Portrait layout: control buttons stacked vertically.
+        self.controls = QVBoxLayout()
+        self.controls.setSpacing(8)
         self.startBtn = PrimaryPushButton(FIF.PLAY, tr("convert.btn.start"))
         self.pauseBtn = PushButton(FIF.PAUSE, tr("convert.btn.pause"))
         self.pauseBtn.setEnabled(False)
@@ -579,7 +589,7 @@ class ConvertInterface(InterfaceBase):
 
     def _update_count(self):
         c = self.manager.counts()
-        self.queueCount.setText(f"{c['done']} / {c['total']}")
+        self.queueList._update_stats(c)
 
     # ================================================================== #
     # i18n

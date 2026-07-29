@@ -17,7 +17,7 @@ from qfluentwidgets import isDarkTheme
 from ..core.presets import TARGET_GROUPS
 from ..i18n.translator import tr
 
-GRID_COLUMNS = 6
+GRID_COLUMNS = 3
 ACCENT = QColor(32, 128, 240)
 GRAY_BORDER = QColor(128, 128, 128, 95)
 GRAY_BORDER_LIGHT = QColor(128, 128, 128, 60)
@@ -36,7 +36,9 @@ class FormatCard(QWidget):
         self._hover = False
         self._check = 0.0  # 0..1 check-draw animation progress
 
-        self.setFixedSize(96, 92)
+        # Square card; keep a 2px internal margin so the border is fully
+        # visible even when cards are packed tightly in the grid.
+        self.setFixedSize(88, 88)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self._anim = QPropertyAnimation(self, b"checkValue")
@@ -99,7 +101,9 @@ class FormatCard(QWidget):
             bw = 2 if self._hover else 1
         p.setPen(QPen(border, bw))
         p.setBrush(QBrush(bg))
-        p.drawRoundedRect(r.adjusted(1, 1, r.width() - 2, r.height() - 2), 12, 12)
+        # Inset by 2px on every side so the border stroke is never clipped
+        # by neighbouring cards in the grid.
+        p.drawRoundedRect(r.adjusted(2, 2, -2, -2), 10, 10)
 
         # checkbox indicator (top-left)
         cb = QRectF(12, 12, 22, 22)
@@ -135,7 +139,7 @@ class FormatCard(QWidget):
         p.setPen(QColor(255, 255, 255) if isDarkTheme() else QColor(20, 20, 20))
         f = QFont()
         f.setBold(True)
-        f.setPointSize(20)
+        f.setPointSize(18)
         p.setFont(f)
         p.drawText(r, Qt.AlignmentFlag.AlignCenter, text)
 

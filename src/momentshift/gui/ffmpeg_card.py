@@ -38,31 +38,37 @@ class FfmpegCard(CardWidget):
         self._building = False
 
     def _init_ui(self):
-        root = QHBoxLayout(self)
+        # Portrait-friendly vertical layout: buttons stacked below the text so
+        # the card fits the 400px window width without triggering a horizontal
+        # scrollbar.
+        root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 12)
-        root.setSpacing(12)
+        root.setSpacing(10)
 
+        top = QHBoxLayout()
+        top.setSpacing(10)
         self.iconLabel = StrongBodyLabel("!")
         self.iconLabel.setFixedWidth(22)
-        root.addWidget(self.iconLabel)
-
-        text_col = QVBoxLayout()
-        text_col.setSpacing(2)
         self.titleLabel = StrongBodyLabel(tr("ffmpeg.missing"))
+        top.addWidget(self.iconLabel)
+        top.addWidget(self.titleLabel, 1)
+        root.addLayout(top)
+
         self.hintLabel = CaptionLabel(tr("ffmpeg.hint"))
-        text_col.addWidget(self.titleLabel)
-        text_col.addWidget(self.hintLabel)
-        root.addLayout(text_col, 1)
+        self.hintLabel.setWordWrap(True)
+        root.addWidget(self.hintLabel)
 
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
         self.linkBtn = HyperlinkButton(FFMPEG_DOWNLOAD_PAGE, tr("ffmpeg.open_site"), self)
-        root.addWidget(self.linkBtn)
-
         self.downloadBtn = PushButton(tr("ffmpeg.oneclick"), icon=FIF.DOWNLOAD)
         self.downloadBtn.clicked.connect(self._on_download)
-        root.addWidget(self.downloadBtn)
+        btn_row.addWidget(self.linkBtn)
+        btn_row.addWidget(self.downloadBtn)
+        btn_row.addStretch(1)
+        root.addLayout(btn_row)
 
         self.progress = ProgressBar()
-        self.progress.setFixedWidth(140)
         self.progress.setRange(0, 0)  # indeterminate "busy" bar
         self.progress.hide()
         root.addWidget(self.progress)

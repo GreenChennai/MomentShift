@@ -45,7 +45,7 @@ class _Header(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def set_expanded_look(self) -> None:
-        self.chevron.setStyleSheet(f"color: {sub_text()}; font-size: 12px;")
+        self.chevron.setStyleSheet(f"color: {sub_text()}; background-color: transparent; font-size: 12px;")
 
     def retheme(self) -> None:
         self.set_expanded_look()
