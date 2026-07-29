@@ -52,6 +52,7 @@ class InterfaceBase(ScrollArea):
         css = (
             f"background-color: {bg.name()}; border: none;"
             "QLabel { background-color: transparent; }"
+            "FluentLabelBase { background-color: transparent; }"
         )
         self.view.setStyleSheet(css)
         if self.viewport():

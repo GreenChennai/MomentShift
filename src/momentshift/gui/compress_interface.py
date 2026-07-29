@@ -33,6 +33,7 @@ from qfluentwidgets import (
     CaptionLabel,
     InfoBar,
     InfoBarPosition,
+    ScrollArea,
     isDarkTheme,
     Theme,
 )
@@ -220,6 +221,7 @@ class CompressListWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet("background-color: transparent; border: none;")
         self.items: dict[str, CompressItemWidget] = {}
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -391,7 +393,6 @@ class CompressInterface(InterfaceBase):
         cv.addWidget(self._row(tr("compress.output.mode"), self.modeFixed))
 
         self.suffixEdit = _line_edit(tr("compress.output.suffix_hint"), "_compressed")
-        self.suffixEdit.setFixedWidth(130)
         cv.addWidget(self._row(tr("compress.output.suffix"), self.suffixEdit))
 
         self.fixedEdit = _line_edit(tr("compress.output.fixed_hint"), "")
@@ -470,7 +471,15 @@ class CompressInterface(InterfaceBase):
 
         self.list = CompressListWidget()
         self.list.removeRequested.connect(self._on_remove)
-        lv.addWidget(self.list, 1)
+
+        # Internal scrollbar so the compress list does not push the whole page.
+        self.listScroll = ScrollArea()
+        self.listScroll.setWidgetResizable(True)
+        self.listScroll.setWidget(self.list)
+        self.listScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.listScroll.setStyleSheet("background-color: transparent; border: none;")
+        self.listScroll.setMaximumHeight(420)
+        lv.addWidget(self.listScroll, 1)
 
         self.controls = QVBoxLayout()
         self.controls.setSpacing(8)
@@ -664,8 +673,9 @@ class CompressInterface(InterfaceBase):
     def retheme(self):
         super().retheme()
         self.setStyleSheet(f"""
-        #queueSub {{ color: {sub_text()}; }}
-        #queueEmpty {{ color: {muted_text()}; padding: 30px; }}
+        FluentLabelBase {{ background-color: transparent; }}
+        #queueSub {{ color: {sub_text()}; background-color: transparent; }}
+        #queueEmpty {{ color: {muted_text()}; padding: 30px; background-color: transparent; }}
         """)
 
     def retranslateUi(self):

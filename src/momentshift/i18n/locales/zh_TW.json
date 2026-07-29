@@ -29,6 +29,7 @@
   "convert.format.title": "選擇目標格式",
   "convert.format.hint": "為每種媒體類型選擇轉換格式",
   "convert.format.add": "加入任務佇列（{n}）",
+  "convert.output.mode": "輸出位置",
   "convert.output.mode.fixed": "指定輸出目錄",
   "convert.output.mode.same": "儲存到來源檔同目錄",
   "convert.output.suffix": "檔名後綴",

@@ -1,7 +1,6 @@
 """Batch queue list: one card per task with live progress and actions."""
 
 import math
-import time
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QRectF
@@ -45,26 +44,6 @@ def format_size_compare(before: int, after: int) -> str:
         sign = "+" if pct > 0 else ""
         return tr("convert.result.size", before=b, after=a, pct=f"{sign}{pct:.0f}%")
     return f"{b} → {a}"
-
-
-def fmt_duration(seconds: float) -> str:
-    """Format seconds as mm:ss or hh:mm:ss."""
-    if seconds < 0:
-        return "--:--"
-    seconds = int(seconds)
-    if seconds < 3600:
-        return f"{seconds // 60:02d}:{seconds % 60:02d}"
-    return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
-
-
-class ClickLabel(QLabel):
-    """A label that emits ``clicked`` on mouse press (for copy-to-clipboard)."""
-
-    clicked = Signal()
-
-    def mousePressEvent(self, event):
-        self.clicked.emit()
-        super().mousePressEvent(event)
 
 
 class StatusPill(QLabel):
@@ -155,7 +134,6 @@ class QueueItemWidget(ThemedCard):
     def __init__(self, task: Task, parent=None):
         super().__init__(parent)
         self.task = task
-        self._start_time = time.time()
         self.setMinimumHeight(88)
 
         outer = QVBoxLayout(self)
@@ -224,17 +202,10 @@ class QueueItemWidget(ThemedCard):
 
         self.detailLabel = CaptionLabel("")
         self.detailLabel.setObjectName("queueSub")
-        self.detailLabel.setWordWrap(True)
-
-        self.pathLabel = ClickLabel("")
-        self.pathLabel.setObjectName("queueSub")
-        self.pathLabel.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.pathLabel.clicked.connect(self._copy)
-        self.pathLabel.setVisible(False)
+        self.detailLabel.setWordWrap(False)
 
         row2.addWidget(self.formatCombo)
         row2.addWidget(self.detailLabel, 1)
-        row2.addWidget(self.pathLabel)
 
         # Merge tasks combine several inputs into one output.
         if task.merge:
@@ -255,7 +226,7 @@ class QueueItemWidget(ThemedCard):
                 break
 
     def _update_details(self):
-        """Refresh the detail line from current task data."""
+        """Refresh the detail line (size compare + quality/bitrate)."""
         parts = []
         if self.task.status == Task.DONE and self.task.src_size and self.task.dst_size:
             parts.append(format_size_compare(self.task.src_size, self.task.dst_size))
@@ -265,15 +236,7 @@ class QueueItemWidget(ThemedCard):
             parts.append(tr("convert.queue.quality", q=adv["quality"]))
         elif self.task.category in ("video", "audio") and adv.get("vbitrate"):
             parts.append(tr("convert.queue.bitrate", b=adv["vbitrate"]))
-        # Elapsed / remaining.
-        elapsed = time.time() - self._start_time
-        if self.task.status == Task.RUNNING and self.task.progress > 0:
-            total_est = elapsed / (self.task.progress / 100.0)
-            remaining = total_est - elapsed
-            parts.append(tr("convert.queue.time", rem=fmt_duration(remaining), used=fmt_duration(elapsed)))
-        elif self.task.status == Task.DONE:
-            parts.append(tr("convert.queue.elapsed", t=fmt_duration(elapsed)))
-        self.detailLabel.setText("  |  ".join(parts))
+        self.detailLabel.setText("  ·  ".join(parts))
 
     # -- updates from manager --------------------------------------------
     def set_progress(self, pct: int):
@@ -290,10 +253,7 @@ class QueueItemWidget(ThemedCard):
         self.progress.set_error(status == Task.FAILED)
         if status == Task.DONE:
             self._update_details()
-            self.pathLabel.setText(Path(self.task.output_path).name)
-            self.pathLabel.setToolTip(self.task.output_path)
-            self.pathLabel.setVisible(True)
-            self.setToolTip("")
+            self.setToolTip(self.task.output_path or "")
         else:
             self.setToolTip(error.strip().splitlines()[-1] if error.strip() else "")
 
@@ -330,6 +290,7 @@ class QueueListWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet("background-color: transparent; border: none;")
         self.items: dict[str, QueueItemWidget] = {}
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)

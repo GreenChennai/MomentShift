@@ -79,3 +79,39 @@ def map_theme(value: str) -> Theme:
         "light": Theme.LIGHT,
         "dark": Theme.DARK,
     }.get(value, Theme.AUTO)
+
+
+# ---------------------------------------------------------------------------
+# Workaround: FluentLabelBase installs a widget-level stylesheet for colour
+# (via setCustomStyleSheet). Once a widget has its own stylesheet, ancestor
+# rules such as ``QLabel { background-color: transparent }`` are no longer
+# the only authority for that widget, and some labels pick up a default fill
+# that differs from the card surface. We patch setTextColor so the custom
+# rule always carries ``background-color: transparent`` as well.
+# ---------------------------------------------------------------------------
+def _patch_fluent_label_background():
+    from qfluentwidgets.components.widgets.label import FluentLabelBase
+    from qfluentwidgets.common.style_sheet import setCustomStyleSheet
+
+    _orig = FluentLabelBase.setTextColor
+
+    def _set_text_color(self, light=QColor(0, 0, 0), dark=QColor(255, 255, 255)):
+        _orig(self, light, dark)
+        # Re-apply the custom rule with an explicit transparent background so
+        # the label's own stylesheet never carries an opaque default fill.
+        light_qss = (
+            f"FluentLabelBase{{"
+            f"color:{self.lightColor.name(QColor.NameFormat.HexArgb)};"
+            f"background-color:transparent}}"
+        )
+        dark_qss = (
+            f"FluentLabelBase{{"
+            f"color:{self.darkColor.name(QColor.NameFormat.HexArgb)};"
+            f"background-color:transparent}}"
+        )
+        setCustomStyleSheet(self, light_qss, dark_qss)
+
+    FluentLabelBase.setTextColor = _set_text_color
+
+
+_patch_fluent_label_background()

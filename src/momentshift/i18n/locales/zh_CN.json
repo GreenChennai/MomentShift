@@ -29,6 +29,7 @@
   "convert.format.title": "选择目标格式",
   "convert.format.hint": "为每种媒体类型选择转换格式",
   "convert.format.add": "加入任务队列（{n}）",
+  "convert.output.mode": "输出位置",
   "convert.output.mode.fixed": "指定输出目录",
   "convert.output.mode.same": "保存到源文件同目录",
   "convert.output.suffix": "文件名后缀",

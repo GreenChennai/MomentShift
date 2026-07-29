@@ -29,6 +29,7 @@
   "convert.format.title": "Choose target format",
   "convert.format.hint": "Pick a format for each media type",
   "convert.format.add": "Add to queue ({n})",
+  "convert.output.mode": "Output location",
   "convert.output.mode.fixed": "Specific output folder",
   "convert.output.mode.same": "Next to source file",
   "convert.output.suffix": "Filename suffix",

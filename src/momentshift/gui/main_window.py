@@ -104,8 +104,8 @@ class MainWindow(FluentWindow):
 
     # -- window ----------------------------------------------------------
     def initWindow(self):
-        # Portrait phone-like aspect ratio (1:2) as requested.
-        self.resize(400, 800)
+        # Portrait phone-like aspect ratio, enlarged per v0.1.5 request.
+        self.resize(450, 1000)
         self.setMinimumWidth(360)
         # Disable Mica: it makes the window background transparent on Win11 and
         # the content area inherits a grey-ish Mica material instead of the dark

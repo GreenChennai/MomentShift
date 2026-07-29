@@ -17,7 +17,6 @@ from pathlib import Path
 
 from ..core.qt_compat import QFileDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, Signal, Qt
 from qfluentwidgets import (
-    CardWidget,
     FluentIcon as FIF,
     PrimaryPushButton,
     PushButton,
@@ -29,7 +28,8 @@ from qfluentwidgets import (
     InfoBar,
     InfoBarPosition,
     MessageBox,
-    RadioButton,
+    SwitchButton,
+    ScrollArea,
     isDarkTheme,
     Theme,
 )
@@ -120,13 +120,14 @@ class ConvertInterface(InterfaceBase):
     def _content_stylesheet(self) -> str:
         """Theme-aware secondary/hint text colors (re-applied on theme change)."""
         return f"""
+        FluentLabelBase {{ background-color: transparent; }}
         #dropTitle {{ font-size: 18px; font-weight: 600; }}
         #dropHint  {{ color: {sub_text()}; }}
         #dropFormats {{ color: {hint_text()}; font-size: 12px; }}
-        #queueSub {{ color: {sub_text()}; }}
-        #queueEmpty {{ color: {muted_text()}; padding: 30px; }}
+        #queueSub {{ color: {sub_text()}; background-color: transparent; }}
+        #queueEmpty {{ color: {muted_text()}; padding: 30px; background-color: transparent; }}
         #queueStatus {{ color: {sub_text()}; }}
-        #stagedSub {{ color: {sub_text()}; }}
+        #stagedSub {{ color: {sub_text()}; background-color: transparent; }}
         """
 
     def retheme(self):
@@ -157,64 +158,62 @@ class ConvertInterface(InterfaceBase):
         head.addStretch(1)
         ocv.addLayout(head)
 
-        mode_row = QHBoxLayout()
-        self.fixedRadio = RadioButton(tr("convert.output.mode.fixed"))
-        self.sameRadio = RadioButton(tr("convert.output.mode.same"))
-        self.fixedRadio.setChecked(cfg.outputMode.value == "fixed")
-        self.sameRadio.setChecked(cfg.outputMode.value == "same")
-        self.fixedRadio.toggled.connect(self._on_mode_fixed)
-        self.sameRadio.toggled.connect(self._on_mode_same)
-        mode_row.addWidget(self.fixedRadio)
-        mode_row.addWidget(self.sameRadio)
-        mode_row.addStretch(1)
-        ocv.addLayout(mode_row)
+        # Output mode switch (same visual style as the Compress interface).
+        self.modeFixed = SwitchButton()
+        self.modeFixed.setText(tr("convert.output.mode.fixed"))
+        self.modeFixed.setChecked(cfg.outputMode.value == "fixed")
+        self.modeFixed.checkedChanged.connect(self._on_mode_fixed)
+        ocv.addWidget(self._row(tr("convert.output.mode"), self.modeFixed))
 
-        # fixed folder controls (left label keeps the two rows aligned)
-        self.fixedRow = QHBoxLayout()
-        fixedLabel = BodyLabel(tr("convert.output.fixed_label"))
-        fixedLabel.setFixedWidth(56)
+        # Same-dir suffix (left label + stretched edit).
+        self.suffixEdit = LineEdit()
+        self.suffixEdit.setPlaceholderText(tr("convert.output.suffix_hint"))
+        self.suffixEdit.setText(cfg.outputSuffix.value)
+        ocv.addWidget(self._row(tr("convert.output.suffix"), self.suffixEdit))
+
+        # Fixed output folder (left label + edit + choose button).
         self.outputLine = LineEdit()
         self.outputLine.setReadOnly(True)
         self.outputLine.setPlaceholderText(tr("convert.output.same_dir"))
         self.outputLine.setText(cfg.outputFolder.value)
         self.outputChoose = PushButton(FIF.FOLDER, tr("convert.output.choose"))
         self.outputChoose.clicked.connect(self._choose_output)
-        self.fixedRow.addWidget(fixedLabel)
-        self.fixedRow.addWidget(self.outputLine, 1)
-        self.fixedRow.addWidget(self.outputChoose)
-        ocv.addLayout(self.fixedRow)
-
-        # same-dir + suffix controls (directly under the "same dir" option)
-        self.sameRow = QHBoxLayout()
-        sameLabel = BodyLabel(tr("convert.output.suffix"))
-        sameLabel.setFixedWidth(56)
-        self.suffixEdit = LineEdit()
-        self.suffixEdit.setPlaceholderText(tr("convert.output.suffix_hint"))
-        self.suffixEdit.setText(cfg.outputSuffix.value)
-        self.suffixEdit.setFixedWidth(120)
-        self.sameRow.addWidget(sameLabel)
-        self.sameRow.addWidget(self.suffixEdit)
-        self.sameRow.addStretch(1)
-        ocv.addLayout(self.sameRow)
+        frow = QHBoxLayout()
+        frow.setContentsMargins(0, 0, 0, 0)
+        frow.setSpacing(8)
+        frow.addWidget(self.outputLine, 1)
+        frow.addWidget(self.outputChoose)
+        ocv.addWidget(self._row(tr("convert.output.fixed_label"), frow))
 
         self.sameHint = CaptionLabel(tr("convert.output.same_hint"))
         self.sameHint.setObjectName("stagedSub")
         ocv.addWidget(self.sameHint)
 
-    def _on_mode_fixed(self, checked: bool):
-        if checked:
-            cfg.outputMode.value = "fixed"
-            self._apply_output_mode()
+    def _row(self, label: str, control):
+        """Left-aligned label + control row (mirrors Compress interface)."""
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(10)
+        lab = BodyLabel(label)
+        lab.setFixedWidth(96)
+        h.addWidget(lab)
+        if isinstance(control, (QHBoxLayout, QVBoxLayout)):
+            h.addLayout(control, 1)
+        else:
+            h.addWidget(control, 1)
+        return row
 
-    def _on_mode_same(self, checked: bool):
-        if checked:
-            cfg.outputMode.value = "same"
-            self._apply_output_mode()
+    def _on_mode_fixed(self, fixed: bool):
+        cfg.outputMode.value = "fixed" if fixed else "same"
+        self._apply_output_mode()
 
     def _apply_output_mode(self):
         fixed = cfg.outputMode.value == "fixed"
-        self.fixedRow.setEnabled(fixed)
-        self.sameRow.setEnabled(not fixed)
+        self.outputLine.setEnabled(fixed)
+        self.outputChoose.setEnabled(fixed)
+        self.suffixEdit.setEnabled(not fixed)
+        self.sameHint.setEnabled(not fixed)
 
     def _choose_output(self):
         d = QFileDialog.getExistingDirectory(
@@ -372,6 +371,16 @@ class ConvertInterface(InterfaceBase):
         q_head.addStretch(1)
 
         self.queueList = QueueListWidget()
+
+        # Internal scrollbar: queue items scroll inside the card instead of
+        # pushing the whole Convert interface downward.
+        self.queueScroll = ScrollArea()
+        self.queueScroll.setWidgetResizable(True)
+        self.queueScroll.setWidget(self.queueList)
+        self.queueScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.queueScroll.setStyleSheet("background-color: transparent; border: none;")
+        self.queueScroll.setMaximumHeight(420)
+
         # Portrait layout: control buttons stacked vertically.
         self.controls = QVBoxLayout()
         self.controls.setSpacing(8)
@@ -384,7 +393,7 @@ class ConvertInterface(InterfaceBase):
         self.controls.addWidget(self.clearBtn)
 
         qcv.addLayout(q_head)
-        qcv.addWidget(self.queueList, 1)
+        qcv.addWidget(self.queueScroll, 1)
         qcv.addLayout(self.controls)
 
     # ================================================================== #
@@ -599,8 +608,7 @@ class ConvertInterface(InterfaceBase):
         self.drop.retranslate()
         self.ffmpegCard.retranslateUi()
         self.outputTitle.setText(tr("convert.output.label"))
-        self.fixedRadio.setText(tr("convert.output.mode.fixed"))
-        self.sameRadio.setText(tr("convert.output.mode.same"))
+        self.modeFixed.setText(tr("convert.output.mode.fixed"))
         self.outputLine.setPlaceholderText(tr("convert.output.same_dir"))
         self.outputChoose.setText(tr("convert.output.choose"))
         self.suffixEdit.setPlaceholderText(tr("convert.output.suffix_hint"))
