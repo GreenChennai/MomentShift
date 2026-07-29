@@ -41,6 +41,7 @@ from .queue_widget import QueueListWidget
 from .ffmpeg_card import FfmpegCard
 from .format_grid import FormatGrid
 from .advanced_panel import AdvancedPanel
+from .theme import sub_text, hint_text, muted_text
 
 ALL_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
 CATEGORY_ICON = {"image": FIF.PHOTO, "audio": FIF.MUSIC, "video": FIF.VIDEO}
@@ -54,17 +55,7 @@ class ConvertInterface(InterfaceBase):
         self._format_by_cat: dict[str, str] = {}  # category -> chosen format
         self._run_active = False
 
-        self.setStyleSheet(
-            """
-            #dropTitle { font-size: 18px; font-weight: 600; }
-            #dropHint  { color: rgba(128,128,128,1); }
-            #dropFormats { color: rgba(150,150,150,1); font-size: 12px; }
-            #queueSub { color: rgba(128,128,128,1); }
-            #queueEmpty { color: rgba(140,140,140,1); padding: 30px; }
-            #queueStatus { color: rgba(128,128,128,1); }
-            #stagedSub { color: rgba(128,128,128,1); }
-            """
-        )
+        self.retheme()
 
         # ---- ffmpeg status / acquisition card (start screen) ----
         self.ffmpegCard = FfmpegCard()
@@ -119,6 +110,31 @@ class ConvertInterface(InterfaceBase):
 
         self._apply_output_mode()
         self._refresh_staging()
+
+    # ================================================================== #
+    # Theme
+    # ================================================================== #
+    def _content_stylesheet(self) -> str:
+        """Theme-aware secondary/hint text colors (re-applied on theme change)."""
+        return f"""
+        #dropTitle {{ font-size: 18px; font-weight: 600; }}
+        #dropHint  {{ color: {sub_text()}; }}
+        #dropFormats {{ color: {hint_text()}; font-size: 12px; }}
+        #queueSub {{ color: {sub_text()}; }}
+        #queueEmpty {{ color: {muted_text()}; padding: 30px; }}
+        #queueStatus {{ color: {sub_text()}; }}
+        #stagedSub {{ color: {sub_text()}; }}
+        """
+
+    def retheme(self):
+        """Re-apply theme-aware styles (called on every theme change)."""
+        self.setStyleSheet(self._content_stylesheet())
+        # Guard: at __init__ time these children may not exist yet; the
+        # themeChanged signal re-runs retheme() once everything is built.
+        if hasattr(self, "advancedPanel"):
+            self.advancedPanel.retheme()
+        if hasattr(self, "formatGrid"):
+            self.formatGrid.retheme()
 
     # ================================================================== #
     # Output location card

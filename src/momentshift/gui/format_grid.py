@@ -91,7 +91,11 @@ class FormatCard(QWidget):
             bw = 2
         else:
             bg = QColor(128, 128, 128, 13)
-            border = ACCENT if self._hover else GRAY_BORDER
+            # A faint grey border is invisible on a dark card, so lighten it
+            # in dark mode; keep the usual grey in light mode.
+            border = ACCENT if self._hover else (
+                QColor(255, 255, 255, 40) if isDarkTheme() else GRAY_BORDER
+            )
             bw = 2 if self._hover else 1
         p.setPen(QPen(border, bw))
         p.setBrush(QBrush(bg))
@@ -99,11 +103,13 @@ class FormatCard(QWidget):
 
         # checkbox indicator (top-left)
         cb = QRectF(12, 12, 22, 22)
-        p.setPen(QPen(ACCENT if self._selected else GRAY_BORDER_LIGHT, 2))
+        cb_border = QColor(255, 255, 255, 70) if isDarkTheme() else GRAY_BORDER_LIGHT
+        p.setPen(QPen(ACCENT if self._selected else cb_border, 2))
         p.setBrush(QBrush(ACCENT if self._selected else Qt.GlobalColor.transparent))
         p.drawRoundedRect(cb, 6, 6)
         if self._check > 0.01:
-            p.setPen(QPen(Qt.GlobalColor.white, 3,
+            tick = QColor(255, 255, 255) if isDarkTheme() else QColor(20, 20, 20)
+            p.setPen(QPen(tick, 3,
                           Qt.PenStyle.SolidLine,
                           Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
             cx, cy = cb.x() + cb.width() / 2, cb.y() + cb.height() / 2
@@ -195,6 +201,11 @@ class FormatGrid(QWidget):
             widget = item.widget() if item else None
             if widget:
                 widget.deleteLater()
+
+    def retheme(self) -> None:
+        """Repaint every card so theme-aware colours (tick/border) refresh."""
+        for card in self.findChildren(FormatCard):
+            card.update()
 
     def retranslate(self):
         if self._cards:

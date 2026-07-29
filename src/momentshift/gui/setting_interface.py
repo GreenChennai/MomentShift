@@ -16,6 +16,7 @@ from qfluentwidgets import (
 from ..core.config import cfg, config_dir
 from ..i18n.translator import tr, LocaleKey, available_languages
 from .base import InterfaceBase
+from .theme import sub_text
 
 
 class ComboSettingCard(SettingCard):
@@ -59,7 +60,7 @@ class ComboSettingCard(SettingCard):
 class SettingInterface(InterfaceBase):
     def __init__(self, parent=None):
         super().__init__("Settings", tr("settings.title"), "", parent)
-        self.setStyleSheet("#cardSub{color: rgba(128,128,128,1);}")
+        self.retheme()
 
         group = SettingCardGroup(tr("settings.group.general"))
 
@@ -119,6 +120,11 @@ class SettingInterface(InterfaceBase):
 
         self.vbox.addWidget(group)
         self.vbox.addStretch(1)
+
+    # -- theme -----------------------------------------------------------
+    def retheme(self):
+        # Kept theme-aware for any future sub-text using #cardSub; harmless now.
+        self.setStyleSheet(f"#cardSub{{color: {sub_text()};}}")
 
     # -- actions ---------------------------------------------------------
     def _choose_output(self):

@@ -12,6 +12,8 @@ from qfluentwidgets import (
 )
 from ..core.config import cfg
 from ..i18n.translator import tr, translator, LocaleKey
+from qfluentwidgets import qconfig
+from .theme import LIGHT_BG, DARK_BG
 from .convert_interface import ConvertInterface
 from .setting_interface import SettingInterface
 from .about_interface import AboutInterface
@@ -45,6 +47,14 @@ class MainWindow(FluentWindow):
     def _connect_config(self):
         cfg.language.valueChanged.connect(self._on_language)
         cfg.theme.valueChanged.connect(self._on_theme)
+        # Re-apply custom (non-qfluentwidgets) styles whenever the effective
+        # theme changes — this also fires in "auto" mode when the OS theme
+        # flips, which cfg.theme.valueChanged alone would miss.
+        qconfig.themeChanged.connect(self._retheme_all)
+
+    def _retheme_all(self):
+        self.convertInterface.retheme()
+        self.settingInterface.retheme()
 
     def _on_language(self, value):
         translator.set_locale(LocaleKey(value))
@@ -81,6 +91,10 @@ class MainWindow(FluentWindow):
     def initWindow(self):
         self.resize(1000, 720)
         self.setMinimumWidth(820)
+        # Give the window (and the content area behind transparent scroll
+        # views) a deterministic theme background instead of relying on the
+        # default, which left the inner frame grey in dark mode.
+        self.setCustomBackgroundColor(LIGHT_BG, DARK_BG)
         self.setWindowTitle(tr("app.title"))
         self.setWindowIcon(FIF.APPLICATION.icon())
 

@@ -18,6 +18,7 @@ from qfluentwidgets import (
 )
 from ..core import advanced
 from ..i18n.translator import tr
+from .theme import sub_text
 
 CATEGORY_PANEL_TITLE = {
     "image": "convert.advanced.image",
@@ -36,12 +37,18 @@ class _Header(QWidget):
         h.setContentsMargins(4, 6, 4, 6)
         h.setSpacing(8)
         self.chevron = QLabel("▾" if expanded else "▸")
-        self.chevron.setStyleSheet("color: rgba(130,130,130,1); font-size: 12px;")
+        self.set_expanded_look()
         self.titleLabel = StrongBodyLabel(title)
         h.addWidget(self.chevron)
         h.addWidget(self.titleLabel)
         h.addStretch(1)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_expanded_look(self) -> None:
+        self.chevron.setStyleSheet(f"color: {sub_text()}; font-size: 12px;")
+
+    def retheme(self) -> None:
+        self.set_expanded_look()
 
     def set_expanded(self, v: bool) -> None:
         self._expanded = v
@@ -191,3 +198,9 @@ class AdvancedPanel(QWidget):
         self._expand.header.titleLabel.setText(tr("convert.advanced.title"))
         for cat, panel in self._cat_panels.items():
             panel.header.titleLabel.setText(tr(CATEGORY_PANEL_TITLE.get(cat, cat)))
+
+    def retheme(self):
+        """Re-apply theme-aware colors to every header chevron."""
+        self._expand.header.retheme()
+        for panel in self._cat_panels.values():
+            panel.header.retheme()

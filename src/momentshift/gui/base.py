@@ -18,6 +18,10 @@ class InterfaceBase(ScrollArea):
         # tints the whole content area (not just the navigation panel).
         self.setStyleSheet("background-color: transparent;")
         self.view.setStyleSheet("background-color: transparent;")
+        # The scroll viewport owns its own background; make it transparent too
+        # or it would paint a default grey over the themed window behind it.
+        if self.viewport():
+            self.viewport().setStyleSheet("background-color: transparent;")
 
         self.vbox = QVBoxLayout(self.view)
         self.vbox.setContentsMargins(30, 22, 30, 22)
