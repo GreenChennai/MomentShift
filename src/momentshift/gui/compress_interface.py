@@ -411,7 +411,15 @@ class CompressInterface(InterfaceBase):
         self.backendNote.setObjectName("queueSub")
         cv.addWidget(self.backendNote)
 
+        # in-app download for the optional external compressors
+        self.toolsBtn = PushButton(FIF.DOWNLOAD, tr("compress.tools.download"))
+        self.toolsBtn.clicked.connect(self._on_download_tools)
+        cv.addWidget(self._row(tr("compress.tools"), self.toolsBtn))
+
     def _fill_backends(self):
+        # Clear first so a language-switch retranslate doesn't append duplicates
+        # (the old items were still present, yielding two "自动选择"/"Pillow").
+        self.backendCombo.clear()
         self.backendCombo.addItem(tr("compress.backend.auto"), userData="auto")
         backs = compressor.available_backends()
         order = ["pillow", "oxipng", "optipng", "mozjpeg"]
@@ -423,6 +431,32 @@ class CompressInterface(InterfaceBase):
         backs = compressor.available_backends()
         names = [b["name"] for b in backs.values()]
         self.backendNote.setText(tr("compress.backend.note", list="、".join(names) if names else tr("compress.backend.none")))
+
+    def _on_download_tools(self):
+        """One-click download of the optional external compressors into tools/."""
+        from ..core.tools_download import ToolsDownloadAllWorker
+
+        self.toolsBtn.setEnabled(False)
+        self.toolsBtn.setText(tr("compress.tools.downloading"))
+        tools_dir = compressor.tools_dir()
+        worker = ToolsDownloadAllWorker(str(tools_dir))
+        worker.signals.started.connect(lambda: self.toolsBtn.setText(tr("compress.tools.downloading")))
+        worker.signals.finished.connect(self._on_tools_downloaded)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_tools_downloaded(self, results: dict):
+        self.toolsBtn.setEnabled(True)
+        self.toolsBtn.setText(tr("compress.tools.download"))
+        self._fill_backends()
+        self._refresh_backend_note()
+        failed = {tid: r for tid, (ok, r) in results.items() if not ok}
+        if not failed:
+            InfoBar.success(tr("compress.tools.done"), "", parent=self.window(),
+                            duration=2500, position=InfoBarPosition.TOP_RIGHT)
+        else:
+            msgs = "; ".join(f"{tid}: {r}" for tid, r in failed.items())
+            InfoBar.warning(tr("compress.tools.failed", msg=msgs), "", parent=self.window(),
+                            duration=5000, position=InfoBarPosition.TOP_RIGHT)
 
     @staticmethod
     def _row(label: str, control) -> QWidget:
@@ -681,6 +715,7 @@ class CompressInterface(InterfaceBase):
     def retranslateUi(self):
         self.retranslate(tr("nav.compress"), tr("compress.tagline"))
         self.settingsTitle.setText(tr("compress.settings.title"))
+        self.toolsBtn.setText(tr("compress.tools.download"))
         self.queueTitle.setText(tr("compress.queue.title"))
         self.drop.retranslate()
         self._fill_backends()

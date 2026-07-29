@@ -37,13 +37,34 @@ def app_base_dir() -> Path:
 
 
 def config_dir() -> Path:
-    """Return (and create) the config directory inside the software folder."""
+    """Return (and create) the config directory inside the software folder.
+
+    Deprecated: config now lives at the app root (see ``CONFIG_FILE``). Kept
+    only to migrate an old ``config/config.json`` into the new location.
+    """
     directory = app_base_dir() / "config"
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
 
-CONFIG_FILE = config_dir() / "config.json"
+def tools_dir() -> Path:
+    """Unified folder for bundled external tools (compressors, upscaler, ...).
+
+    Lives directly inside the software directory so the app can manage these
+    binaries itself (a one-click in-app download drops them here), instead of
+    relying on the user to place files next to the exe or on PATH.
+    """
+    directory = app_base_dir() / "tools"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _old_config_file() -> Path:
+    """The pre-v0.1.6 location of the config file, used for one-time migration."""
+    return app_base_dir() / "config" / "config.json"
+
+
+CONFIG_FILE = app_base_dir() / "config.json"
 
 
 class Config(QConfig):
@@ -76,4 +97,22 @@ class Config(QConfig):
 
 
 cfg = Config()
+
+
+def _migrate_config() -> None:
+    """One-time move of an old ``config/config.json`` to the app-root location."""
+    old = _old_config_file()
+    if not CONFIG_FILE.exists() and old.exists():
+        try:
+            CONFIG_FILE.write_text(old.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError:
+            pass
+
+
+# Config lives at the software root (a single, self-contained settings file).
+# If it is missing on first run, create it with the default values so the app
+# always has a valid, populated settings file.
+_migrate_config()
 qconfig.load(str(CONFIG_FILE), cfg)
+if not CONFIG_FILE.exists():
+    qconfig.save()

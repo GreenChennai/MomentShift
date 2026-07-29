@@ -245,7 +245,17 @@ class ConvertInterface(InterfaceBase):
         self.stagingList = QVBoxLayout()
         self.stagingList.setContentsMargins(0, 0, 0, 0)
         self.stagingList.setSpacing(6)
-        scv.addLayout(self.stagingList)
+        # Wrap the staging list in an internal scroll area so many "待处理文件"
+        # scroll inside the card instead of pushing the whole page.
+        self.stagingWidget = QWidget()
+        self.stagingWidget.setLayout(self.stagingList)
+        self.stagingScroll = ScrollArea()
+        self.stagingScroll.setWidgetResizable(True)
+        self.stagingScroll.setWidget(self.stagingWidget)
+        self.stagingScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.stagingScroll.setStyleSheet("background-color: transparent; border: none;")
+        self.stagingScroll.setMaximumHeight(420)
+        scv.addWidget(self.stagingScroll, 1)
 
         self.advancedPanel = AdvancedPanel()
         scv.addWidget(self.advancedPanel)

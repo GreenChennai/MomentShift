@@ -50,21 +50,36 @@ def app_dir() -> Path:
     return app_base_dir()
 
 
-def find_tool(name: str) -> Optional[str]:
+def tools_dir() -> Path:
+    """Unified folder where the app manages external tools (compressors, ...)."""
+    from .config import tools_dir as _tools_dir
+
+    return _tools_dir()
+
+
+def find_tool(name: str, *, extra_dir: Optional[str] = None) -> Optional[str]:
     """Locate an external tool by name.
 
-    Searches the application directory (where the user drops ``oxipng.exe``,
-    ``optipng.exe``, ``jpegtran.exe``, ``cjpeg.exe``) first, then ``PATH``.
+    Search order:
+
+    1. the unified ``tools/`` folder (managed by the app / in-app download);
+    2. the application directory (user-supplied, like ffmpeg);
+    3. an optional ``extra_dir`` (e.g. an engine-specific subfolder);
+    4. the system ``PATH``.
+
     Returns the absolute path or ``None``.
     """
     candidates = [name, name + ".exe"]
-    # 1) application folder (user-supplied, like ffmpeg)
-    base = app_dir()
-    for cand in candidates:
-        p = base / cand
-        if p.is_file():
-            return str(p)
-    # 2) system PATH
+    search_dirs = [tools_dir(), app_dir()]
+    if extra_dir:
+        search_dirs.append(Path(extra_dir))
+    # 1-3) local folders
+    for base in search_dirs:
+        for cand in candidates:
+            p = base / cand
+            if p.is_file():
+                return str(p)
+    # 4) system PATH
     for cand in candidates:
         loc = shutil.which(cand)
         if loc:

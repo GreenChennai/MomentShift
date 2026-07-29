@@ -23,6 +23,10 @@ release/
 tools/ffmpeg_bin/
 dist_assets/
 
+# ---- Bundled external tools (downloaded in-app, not committed) ----
+tools/*.exe
+tools/realesrgan/
+
 # ---- Editors / OS ----
 .idea/
 .vscode/

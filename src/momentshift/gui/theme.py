@@ -114,4 +114,36 @@ def _patch_fluent_label_background():
     FluentLabelBase.setTextColor = _set_text_color
 
 
+# ---------------------------------------------------------------------------
+# Workaround #2: SwitchButton's text is a plain QLabel (NOT FluentLabelBase),
+# and SwitchButton.setTextColor applies "SwitchButton>QLabel{color:...}" with no
+# background. That widget-level rule overrides ancestor transparent rules, so the
+# switch's text label picks up a default fill — visible in any card that contains
+# a SwitchButton (e.g. the "压缩设置" and "输出目录" cards). Patch setTextColor to
+# also carry background-color:transparent, exactly like the FluentLabelBase fix.
+# ---------------------------------------------------------------------------
+def _patch_switch_button_label_background():
+    from qfluentwidgets.components.widgets.switch_button import SwitchButton
+    from qfluentwidgets.common.style_sheet import setCustomStyleSheet
+
+    _orig = SwitchButton.setTextColor
+
+    def _set_text_color(self, light, dark):
+        _orig(self, light, dark)
+        light_qss = (
+            f"SwitchButton>QLabel{{"
+            f"color:{self.lightTextColor.name(QColor.NameFormat.HexArgb)};"
+            f"background-color:transparent}}"
+        )
+        dark_qss = (
+            f"SwitchButton>QLabel{{"
+            f"color:{self.darkTextColor.name(QColor.NameFormat.HexArgb)};"
+            f"background-color:transparent}}"
+        )
+        setCustomStyleSheet(self.label, light_qss, dark_qss)
+
+    SwitchButton.setTextColor = _set_text_color
+
+
 _patch_fluent_label_background()
+_patch_switch_button_label_background()
