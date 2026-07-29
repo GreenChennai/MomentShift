@@ -14,6 +14,7 @@ class InterfaceBase(ScrollArea):
         self.setWidgetResizable(True)
 
         self.view = QWidget()
+        self.view.setObjectName(object_name + "View")
         self.setWidget(self.view)
 
         self.vbox = QVBoxLayout(self.view)
@@ -54,19 +55,21 @@ class InterfaceBase(ScrollArea):
     def retheme(self):
         """Apply a solid theme background to the scroll view + viewport.
 
-        A stylesheet is more reliable than QPalette because qfluentwidgets may
-        install a global stylesheet that reverts palette colours. QLabel is forced
-        transparent so labels that set ``color`` don't paint a dark background box.
+        Uses an ID-qualified selector so the bare ``background-color`` applies
+        ONLY to this view — not to descendant cards/widgets (which caused the
+        grey #F4F4F4 halo behind labels inside cards in light mode).
+        Labels are forced transparent so the card surface shows through.
         """
         bg = DARK_BG if isDarkTheme() else LIGHT_BG
+        oid = self.view.objectName() or "view"
         css = (
-            f"background-color: {bg.name()}; border: none;"
-            "QLabel { background-color: transparent; }"
-            "FluentLabelBase { background-color: transparent; }"
+            f"#{oid} {{ background-color: {bg.name()}; border: none; }}"
+            "QLabel, FluentLabelBase, BodyLabel, CaptionLabel, StrongBodyLabel,"
+            " TitleLabel, SubtitleLabel { background-color: transparent; }"
         )
         self.view.setStyleSheet(css)
         if self.viewport():
-            self.viewport().setStyleSheet(css)
+            self.viewport().setStyleSheet(f"background-color: {bg.name()}; border: none;")
         self._style_accent()
 
     def retranslate(self, title: str = None, subtitle: str = None):

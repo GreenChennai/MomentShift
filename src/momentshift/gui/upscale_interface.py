@@ -28,7 +28,7 @@ from ..core.qt_compat import Signal, QObject, QRunnable, QThreadPool
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, field_row, primary_btn, ghost_btn, icon_btn,
-    muted_text, sub_text, CARD_MARGIN,
+    muted_text, sub_text, CARD_MARGIN, scrollbar_qss,
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
@@ -344,7 +344,7 @@ class UpscaleInterface(InterfaceBase):
         self.stagingLayout.setSpacing(6)
         self.stagingLayout.addStretch(1)
         self.stagingScroll.setWidget(self.stagingList)
-        self.stagingScroll.setMaximumHeight(170)
+        self.stagingScroll.setMaximumHeight(340)
         svb.addWidget(self.stagingScroll)
         sctrl = QHBoxLayout()
         self.stageAddBtn = primary_btn(tr("upscale.staging.add", n=0), icon=FIF.UP)
@@ -415,7 +415,7 @@ class UpscaleInterface(InterfaceBase):
         self.listWidget.compareRequested.connect(self._on_compare)
         self.queueScroll = self._scroll()
         self.queueScroll.setWidget(self.listWidget)
-        self.queueScroll.setMaximumHeight(320)
+        self.queueScroll.setMaximumHeight(640)
         qvb.addWidget(self.queueScroll)
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
@@ -453,7 +453,9 @@ class UpscaleInterface(InterfaceBase):
         s = QScrollArea()
         s.setWidgetResizable(True)
         s.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        s.setStyleSheet("QScrollArea{border:none; background:transparent;}")
+        s.setStyleSheet(
+            f"QScrollArea{{border:none; background:transparent;}} {scrollbar_qss()}"
+        )
         s.viewport().setStyleSheet("background:transparent;")
         return s
 
@@ -522,7 +524,7 @@ class UpscaleInterface(InterfaceBase):
             self.stagingCount.setText(tr("upscale.staging.empty"))
             self.stagingLayout.addStretch(1)
         else:
-            self.stagingCount.setText(tr("upscale.staging.count", count=len(self._staged)))
+            self.stagingCount.setText(tr("upscale.staging.count", n=len(self._staged)))
             for p in self._staged:
                 row = QWidget()
                 hb = QHBoxLayout(row)
@@ -687,6 +689,7 @@ class UpscaleInterface(InterfaceBase):
 
     # -- theme / i18n ----------------------------------------------------
     def retheme(self):
+        super().retheme()
         self.dropArea.retheme()
         self.compareWidget._restyle()
 

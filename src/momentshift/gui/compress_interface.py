@@ -24,7 +24,7 @@ from ..core.tools_download import ToolsDownloadAllWorker
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
-    muted_text, sub_text, CARD_MARGIN,
+    muted_text, sub_text, CARD_MARGIN, scrollbar_qss,
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
@@ -285,10 +285,12 @@ class CompressInterface(InterfaceBase):
         self.queueScroll = QScrollArea()
         self.queueScroll.setWidgetResizable(True)
         self.queueScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.queueScroll.setStyleSheet("QScrollArea{border:none; background:transparent;}")
+        self.queueScroll.setStyleSheet(
+            f"QScrollArea{{border:none; background:transparent;}} {scrollbar_qss()}"
+        )
         self.queueScroll.viewport().setStyleSheet("background:transparent;")
         self.queueScroll.setWidget(self.listWidget)
-        self.queueScroll.setMaximumHeight(300)
+        self.queueScroll.setMaximumHeight(600)
         qvb.addWidget(self.queueScroll)
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("compress.start"), icon=FIF.PLAY)
@@ -510,6 +512,7 @@ class CompressInterface(InterfaceBase):
 
     # -- theme / i18n ----------------------------------------------------
     def retheme(self):
+        super().retheme()
         self.dropArea.retheme()
 
     def retranslateUi(self):

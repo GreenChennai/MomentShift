@@ -332,9 +332,9 @@ class QueueListWidget(QWidget):
         self._update_stats(_counts_from(self.items))
 
     def _update_stats(self, counts: dict):
-        self.statTotal.setText(tr("convert.queue.total", total=counts.get("total", 0)))
-        self.statRun.setText(tr("convert.queue.running", running=counts.get("running", 0)))
-        self.statErr.setText(tr("convert.queue.failed", failed=counts.get("failed", 0)))
+        self.statTotal.setText(tr("convert.queue.total", n=counts.get("total", 0)))
+        self.statRun.setText(tr("convert.queue.running", n=counts.get("running", 0)))
+        self.statErr.setText(tr("convert.queue.failed", n=counts.get("failed", 0)))
 
 
 def _basename(path: str) -> str:

@@ -1,6 +1,7 @@
 """Entry point: ``python -m momentshift`` or the installed ``momentshift`` CLI."""
 
 import sys
+import threading
 import traceback
 
 # NOTE: use ABSOLUTE imports here. PyInstaller freezes this file as the
@@ -39,9 +40,17 @@ def _excepthook(exc_type, exc, tb):
     )
 
 
+def _threading_excepthook(args):
+    get_logger("app").critical(
+        f"Unhandled exception in thread ({args.thread.name}):\n"
+        + "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+    )
+
+
 def main():
     init_logging()
     sys.excepthook = _excepthook
+    threading.excepthook = _threading_excepthook
 
     log = get_logger("app")
     log.info("Starting %s %s", APP_NAME, VERSION)

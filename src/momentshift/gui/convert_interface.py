@@ -22,7 +22,7 @@ from ..core.models import Task
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
-    muted_text, sub_text, CARD_MARGIN,
+    muted_text, sub_text, CARD_MARGIN, scrollbar_qss,
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
@@ -71,10 +71,10 @@ class ConvertInterface(InterfaceBase):
         self.stagingLayout.setSpacing(6)
         self.stagingLayout.addStretch(1)
         self.stagingScroll.setWidget(self.stagingList)
-        self.stagingScroll.setMaximumHeight(170)
+        self.stagingScroll.setMaximumHeight(340)
         vb.addWidget(self.stagingScroll)
 
-        self.addQueueBtn = primary_btn(tr("convert.queue.add"), icon=FIF.UP)
+        self.addQueueBtn = primary_btn(tr("convert.queue.add", n=0), icon=FIF.UP)
         self.addQueueBtn.clicked.connect(self._on_add_to_queue)
         vb.addWidget(self.addQueueBtn)
         self.vbox.addWidget(card)
@@ -101,17 +101,21 @@ class ConvertInterface(InterfaceBase):
         self._apply_output_mode()
         self.vbox.addWidget(ocard)
 
-        # --- format selection --------------------------------------------
+        # --- format selection (hidden until staging has files) ----------
         fcard, fvb, self.tFormat = self._card("convert.format.title", "convert.format.subtitle")
         self.formatGrid = FormatGrid(self)
         self.formatGrid.selectionChanged.connect(self._on_selection)
         fvb.addWidget(self.formatGrid)
+        self.fcard = fcard
+        self.fcard.setVisible(False)
         self.vbox.addWidget(fcard)
 
-        # --- advanced -----------------------------------------------------
+        # --- advanced (hidden until staging has files) -------------------
         acard, avb, self.tAdvanced = self._card("convert.advanced.title", "convert.advanced.subtitle")
         self.advancedPanel = AdvancedPanel(self)
         avb.addWidget(self.advancedPanel)
+        self.acard = acard
+        self.acard.setVisible(False)
         self.vbox.addWidget(acard)
 
         # --- queue --------------------------------------------------------
@@ -122,7 +126,7 @@ class ConvertInterface(InterfaceBase):
         self.queueList.formatChanged.connect(self._on_row_format)
         self.queueScroll = self._scroll()
         self.queueScroll.setWidget(self.queueList)
-        self.queueScroll.setMaximumHeight(320)
+        self.queueScroll.setMaximumHeight(640)
         qvb.addWidget(self.queueScroll)
 
         ctrl = QHBoxLayout()
@@ -165,7 +169,9 @@ class ConvertInterface(InterfaceBase):
         s = QScrollArea()
         s.setWidgetResizable(True)
         s.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        s.setStyleSheet("QScrollArea{border:none; background:transparent;}")
+        s.setStyleSheet(
+            f"QScrollArea{{border:none; background:transparent;}} {scrollbar_qss()}"
+        )
         s.viewport().setStyleSheet("background:transparent;")
         return s
 
@@ -218,11 +224,17 @@ class ConvertInterface(InterfaceBase):
             w = item.widget()
             if w:
                 w.deleteLater()
-        if not self._staged:
+        count = len(self._staged)
+        # Show format grid + advanced panel only when staging has files
+        self.fcard.setVisible(count > 0)
+        self.acard.setVisible(count > 0)
+        self.addQueueBtn.setText(tr("convert.queue.add", n=count))
+        self.addQueueBtn.setEnabled(count > 0)
+        if not count:
             self.stagingCount.setText(tr("convert.staging.empty"))
             self.stagingLayout.addStretch(1)
             return
-        self.stagingCount.setText(tr("convert.staging.count", count=len(self._staged)))
+        self.stagingCount.setText(tr("convert.staging.count", n=count))
         for p in self._staged:
             row = QWidget()
             hb = QHBoxLayout(row)
@@ -364,6 +376,7 @@ class ConvertInterface(InterfaceBase):
 
     # -- theme / i18n ----------------------------------------------------
     def retheme(self):
+        super().retheme()
         self.dropArea.retheme()
         self.formatGrid.retheme()
         self.advancedPanel.retheme()
@@ -382,7 +395,7 @@ class ConvertInterface(InterfaceBase):
             tr("convert.drop.title"), tr("convert.drop.hint"), tr("convert.drop.formats"))
         self.addFilesBtn.setText(tr("convert.add.files"))
         self.addFolderBtn.setText(tr("convert.add.folder"))
-        self.addQueueBtn.setText(tr("convert.queue.add"))
+        self.addQueueBtn.setText(tr("convert.queue.add", n=len(self._staged)))
         self.suffixEdit.setPlaceholderText(tr("convert.output.suffix.ph"))
         self._apply_output_mode()
         self.formatGrid.retranslate()

@@ -11,7 +11,7 @@ public API consumed by ``convert_interface`` is preserved:
 
 from __future__ import annotations
 
-from PyQt6.QtGui import QColor, QPainter, QPen, QFont
+from PyQt6.QtGui import QColor, QPainter, QPen, QFont, QBrush
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 
@@ -65,10 +65,12 @@ class FormatCard(QWidget):
 
         painter.setPen(text)
         font = QFont()
-        font.setPointSize(13)
+        font.setPointSize(14)
         font.setBold(True)
         painter.setFont(font)
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.fmt.upper())
+        # Display as ".Png" (dot prefix, title case) for visual clarity
+        display = "." + self.fmt.capitalize()
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, display)
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.category, self.fmt)

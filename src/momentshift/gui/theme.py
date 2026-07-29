@@ -96,6 +96,13 @@ class ThemedCard(CardWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBorderRadius(RADIUS)
+        # Force all child labels to have transparent backgrounds so the card's
+        # painted surface shows through (not the view's background #F4F4F4).
+        # This card-level stylesheet has higher priority than ancestor rules.
+        self.setStyleSheet(
+            "ThemedCard > QWidget { background-color: transparent; }"
+            "FluentLabelBase, QLabel { background-color: transparent; }"
+        )
 
     def _normalBackgroundColor(self):
         return component_bg()
@@ -199,6 +206,28 @@ def icon_btn(icon, tooltip: str = "", parent=None) -> TransparentToolButton:
     return btn
 
 
+def scrollbar_qss() -> str:
+    """Theme-aware, modern scrollbar stylesheet for QScrollArea."""
+    handle = "rgba(140, 140, 140, 0.6)" if not isDarkTheme() else "rgba(160, 160, 160, 0.5)"
+    hover = "rgba(120, 120, 120, 0.85)" if not isDarkTheme() else "rgba(180, 180, 180, 0.8)"
+    return (
+        "QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }"
+        "QScrollBar::handle:vertical {"
+        f" background: {handle}; border-radius: 4px; min-height: 30px;"
+        " }"
+        f"QScrollBar::handle:vertical:hover {{ background: {hover}; }}"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+        "QScrollBar:horizontal { background: transparent; height: 8px; margin: 0; }"
+        "QScrollBar::handle:horizontal {"
+        f" background: {handle}; border-radius: 4px; min-width: 30px;"
+        " }"
+        f"QScrollBar::handle:horizontal:hover {{ background: {hover}; }}"
+        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }"
+        "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Workaround #1: FluentLabelBase installs a widget-level stylesheet for colour.
 # Once a widget has its own stylesheet, ancestor rules such as
@@ -210,6 +239,9 @@ def _patch_fluent_label_background():
     from qfluentwidgets.components.widgets.label import FluentLabelBase
     from qfluentwidgets.common.style_sheet import setCustomStyleSheet
 
+    # Patch setTextColor — when a label's colour changes, ensure the custom
+    # stylesheet always carries ``background:transparent`` so the card surface
+    # shows through (not the view background behind the card).
     _orig = FluentLabelBase.setTextColor
 
     def _set_text_color(self, light=QColor(0, 0, 0), dark=QColor(255, 255, 255)):
