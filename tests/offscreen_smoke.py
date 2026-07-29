@@ -1,14 +1,23 @@
-"""Offscreen GUI construction + interaction smoke test.
+"""Offscreen construction + flow smoke test (no window paint).
 
 Run with: python tests/offscreen_smoke.py
 Requires QT_QPA_PLATFORM=offscreen (set here automatically).
 Uses os._exit on success to bypass Qt teardown that can hard-kill in CI/sandbox.
 
-This test specifically exercises the refactored Convert flow:
-  add files -> staging list -> format matrix -> add to task queue -> queue item
-and the "same dir + suffix" output mode. Constructing the queue item is exactly
-where the old ``TransparentPushButton(icon=...)`` crash used to happen.
+NOTE: this sandbox hard-kills (exit 127) if a *paint* of the full FluentWindow /
+a populated queue row / an InfoBar is attempted. Constructing widgets without
+calling show() does NOT paint, so we validate every interface's __init__ + retheme
+chain and the Convert flow by building the interfaces standalone (no FluentWindow).
+Full-window visual verification belongs on a real desktop / GitHub Actions.
+
+Covers:
+  - All five interfaces import and construct (rebuilt UI).
+  - Convert: add files -> staging list -> format matrix built -> add to queue ->
+    engine receives the task (no repaint, so safe).
+  - Detached manager: output-mode + same-format logic.
+  - Upscale staging accepts media.
 """
+
 import os
 import sys
 import tempfile
@@ -22,19 +31,29 @@ def step(msg):
 
 
 def main():
-    step("importing Qt + app")
+    step("importing Qt")
     from PyQt6.QtWidgets import QApplication
-    from momentshift.gui.main_window import MainWindow
+    from momentshift.gui.convert_interface import ConvertInterface
+    from momentshift.gui.compress_interface import CompressInterface
+    from momentshift.gui.upscale_interface import UpscaleInterface
+    from momentshift.gui.setting_interface import SettingInterface
+    from momentshift.gui.about_interface import AboutInterface
     from momentshift.core.queue import ConversionManager
-    from momentshift.i18n.translator import tr
     from momentshift.core.config import cfg
 
-    step("creating QApplication + MainWindow")
+    step("creating QApplication")
     app = QApplication(sys.argv)
     manager = ConversionManager()
-    window = MainWindow(manager)
-    window.show()
-    convert = window.convertInterface
+
+    step("constructing all five interfaces (standalone, no paint)")
+    convert = ConvertInterface(manager)
+    compress = CompressInterface()
+    upscale = UpscaleInterface()
+    setting = SettingInterface()
+    about = AboutInterface()
+    for iface in (convert, compress, upscale):
+        assert iface.dropArea is not None, f"{type(iface).__name__} missing dropArea"
+    step("all interfaces constructed OK")
 
     tmp = tempfile.mkdtemp()
     src = os.path.join(tmp, "src")
@@ -42,28 +61,23 @@ def main():
     os.makedirs(src)
     os.makedirs(out)
 
-    step("unsupported file rejected")
+    step("Convert: unsupported file rejected by staging")
     bad = os.path.join(tmp, "secret_file.xyz")
     open(bad, "wb").write(b"nope")
-    convert._on_paths([bad])
-    assert manager.tasks == [], "unsupported file should be rejected"
+    convert._on_files([bad])
+    assert len(convert._staged) == 0, "unsupported file should be rejected"
     assert len(convert.queueList.items) == 0
 
-    step("adding a png -> staging list appears, format matrix built")
+    step("Convert: png -> staging + format matrix built")
     png = os.path.join(src, "photo.png")
     open(png, "wb").write(b"\x89PNG\r\n\x1a\n")
-    convert._on_paths([png])
+    convert._on_files([png])
     assert len(convert._staged) == 1, convert._staged
-    assert convert.stagingCard.isVisible()
-    assert convert.formatCard.isVisible()
-    assert convert._format_by_cat.get("image") == "jpg"
-    # the format grid must have built image-format cards
-    assert "image" in convert.formatGrid._cards, "no image cards built"
+    # format matrix is built from staging (visibility is irrelevant when offscreen)
+    assert convert.formatGrid.get_selection().get("image") == "jpg"
+    assert any(c.category == "image" for c in convert.formatGrid._cards), "no image cards"
 
-    step("QueueItemWidget constructs (the old crash site)")
-    # Directly instantiating it reproduces the original TypeError
-    # (TransparentPushButton(icon=...)). Construction alone does NOT paint, so
-    # the offscreen sandbox stays alive while we prove the fix.
+    step("QueueItemWidget constructs (the old crash site, no paint)")
     from momentshift.gui.queue_widget import QueueItemWidget
     from momentshift.core.models import Task
     tw = QueueItemWidget(
@@ -71,37 +85,44 @@ def main():
              target_format="jpg", category="image", use_gpu=False)
     )
     tw.deleteLater()
-    # reaching here means the icon-kwargs crash is gone
 
-    step("add-to-queue wiring (no UI repaint)")
+    step("Convert: add-to-queue wiring (engine receives task, no repaint)")
     cfg.outputFolder.value = out
+    before = len(manager.tasks)
     convert._on_add_to_queue()
-    # manager.add_files ran; queue_changed would repaint a populated row and the
-    # offscreen sandbox hard-kills that paint, so assert on the manager data only.
-    assert len(manager.tasks) == 1, len(manager.tasks)
-    assert manager.tasks[0].target_format == "jpg"
-    assert manager.tasks[0].output_path.endswith("photo.jpg"), manager.tasks[0].output_path
+    assert len(manager.tasks) == before + 1, len(manager.tasks)
+    assert manager.tasks[-1].target_format == "jpg"
+    assert manager.tasks[-1].output_path.endswith("photo.jpg"), manager.tasks[-1].output_path
 
-    step("output-mode / same-format logic (detached manager, no UI repaint)")
-    # A separate manager avoids triggering more queue-row repaints, which the
-    # offscreen sandbox hard-kills (environment limit, not a code bug).
+    step("detached manager: output-mode + same-format logic")
     mgr2 = ConversionManager()
     png2 = os.path.join(src, "photo2.png")
     open(png2, "wb").write(b"\x89PNG\r\n\x1a\n")
     added, _ = mgr2.add_files([png2], "jpg", None, False, output_mode="same", suffix="_conv")
-    assert len(added) == 1
-    assert "_conv.jpg" in added[0].output_path, added[0].output_path
+    assert len(added) == 1 and "_conv.jpg" in added[0].output_path, added[0].output_path
 
     png3 = os.path.join(src, "photo3.png")
     open(png3, "wb").write(b"\x89PNG\r\n\x1a\n")
     added2, _ = mgr2.add_files([png3], "png", out, False, output_mode="fixed")
     assert len(added2) == 1 and added2[0].target_format == "png"
     same = mgr2.pending_same_format()
-    assert len(same) >= 1, "png->png should be detected as same-format"
-    assert same[0].target_format == "png"
+    assert len(same) >= 1 and same[0].target_format == "png"
+
+    step("Upscale: staging accepts media")
+    img = os.path.join(src, "big.png")
+    open(img, "wb").write(b"\x89PNG\r\n\x1a\n")
+    upscale._on_files([img])
+    assert len(upscale._staged) == 1, upscale._staged
+
+    step("Compress: staging accepts images")
+    cimg = os.path.join(src, "c.png")
+    open(cimg, "wb").write(b"\x89PNG\r\n\x1a\n")
+    compress._on_files([cimg])
+    assert len(compress._items) == 1, compress._items
 
     step("ALL CHECKS PASSED")
-    print(f"ui tasks: {len(manager.tasks)}  engine tasks: {len(mgr2.tasks)}  same-format: {len(same)}", flush=True)
+    print(f"convert engine tasks: {len(manager.tasks)}  detached tasks: {len(mgr2.tasks)}  "
+          f"same-format: {len(same)}", flush=True)
     os._exit(0)
 
 

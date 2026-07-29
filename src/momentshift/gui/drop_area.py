@@ -1,98 +1,109 @@
-"""Drag-and-drop target area for adding files to the conversion queue."""
+"""Drag-and-drop / click-to-pick input zone, shared by Convert/Compress/Upscale."""
 
-from ..core.qt_compat import QWidget, QVBoxLayout, QLabel, Signal, QDragEnterEvent, QDropEvent, Qt
-from qfluentwidgets import FluentIcon as FIF, isDarkTheme, Theme
-from .theme import ThemedCard
-from ..i18n.translator import tr
+from __future__ import annotations
+
+from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout
+from qfluentwidgets import FluentIcon as FIF, StrongBodyLabel, CaptionLabel, isDarkTheme
+
+from ..core.qt_compat import Signal, QDragEnterEvent, QDropEvent
+from .theme import ThemedCard, muted_text, accent_name
 
 
 class DropArea(ThemedCard):
-    """A card that accepts file drops and click-to-select."""
+    """A dashed drop zone. Emits ``filesDropped`` (list of paths) and ``clicked``."""
 
     filesDropped = Signal(list)
     clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setBorderRadius(14)
         self.setAcceptDrops(True)
-        self.setMinimumHeight(140)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._hover = False
+
+        self.inner = QWidget(self)
+        self.inner.setObjectName("dropInner")
+        vb = QVBoxLayout(self.inner)
+        vb.setContentsMargins(16, 20, 16, 20)
+        vb.setSpacing(8)
+        vb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.iconLabel = QLabel(self)
+        self.iconLabel.setObjectName("dropIcon")
+        vb.addWidget(self.iconLabel, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.titleLabel = StrongBodyLabel()
+        self.titleLabel.setObjectName("dropTitle")
+        vb.addWidget(self.titleLabel, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.hintLabel = CaptionLabel()
+        self.hintLabel.setObjectName("dropHint")
+        self.hintLabel.setStyleSheet(f"color: {muted_text()};")
+        vb.addWidget(self.hintLabel, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.formatsLabel = CaptionLabel()
+        self.formatsLabel.setObjectName("dropFormats")
+        self.formatsLabel.setStyleSheet(f"color: {muted_text()};")
+        vb.addWidget(self.formatsLabel, alignment=Qt.AlignmentFlag.AlignCenter)
 
         layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setSpacing(12)
-        layout.setContentsMargins(12, 16, 12, 16)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.addWidget(self.inner)
 
-        self.iconLabel = QLabel()
-        self.iconLabel.setPixmap(
-            FIF.FOLDER.icon(Theme.DARK if isDarkTheme() else Theme.AUTO).pixmap(40, 40)
+        self.retheme()
+
+    # -- theming ----------------------------------------------------------
+    def retheme(self):
+        color = (QColor(120, 120, 120) if not isDarkTheme()
+                 else QColor(175, 175, 175))
+        self.iconLabel.setPixmap(FIF.FOLDER_ADD.icon(color).pixmap(42, 42))
+        border = accent_name() if self._hover else muted_text()
+        self.inner.setStyleSheet(
+            f"#dropInner{{ border: 2px dashed {border}; "
+            f"border-radius: 12px; background: transparent; }}"
         )
-        self.iconLabel.setFixedSize(48, 48)
-        self.iconLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.iconLabel.setStyleSheet("background-color: transparent;")
 
-        self.titleLabel = QLabel(tr("convert.drop.title"))
-        self.titleLabel.setObjectName("dropTitle")
-        self.titleLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.titleLabel.setWordWrap(False)
-        self.titleLabel.setStyleSheet("background-color: transparent;")
+    # -- text -------------------------------------------------------------
+    def retranslate(self, title: str = "", hint: str = "", formats: str = ""):
+        if title:
+            self.titleLabel.setText(title)
+        if hint:
+            self.hintLabel.setText(hint)
+        if formats:
+            self.formatsLabel.setText(formats)
 
-        self.hintLabel = QLabel(tr("convert.drop.hint"))
-        self.hintLabel.setObjectName("dropHint")
-        self.hintLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Single line: the drop card is wide enough on a 400px window, so forcing
-        # no-wrap avoids the mid-word break ("文件/文(换行)件夹").
-        self.hintLabel.setWordWrap(False)
-        self.hintLabel.setStyleSheet("background-color: transparent;")
+    # -- interaction ------------------------------------------------------
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self.clicked.emit()
 
-        self.formatsLabel = QLabel(tr("convert.drop.formats"))
-        self.formatsLabel.setObjectName("dropFormats")
-        self.formatsLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.formatsLabel.setWordWrap(False)
-        self.formatsLabel.setStyleSheet("background-color: transparent;")
-
-        layout.addWidget(self.iconLabel, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(self.titleLabel, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(self.hintLabel, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(self.formatsLabel, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-    # -- drag & drop ------------------------------------------------------
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            self.setProperty("drop", "hover")
-            self.style().polish(self)
+            self._hover = True
+            self.retheme()
         else:
             event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self._hover = False
+        self.retheme()
+        super().dragLeaveEvent(event)
 
     def dragMoveEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-
-    def dragLeaveEvent(self, event):
-        self.setProperty("drop", "")
-        self.style().polish(self)
+        else:
+            event.ignore()
 
     def dropEvent(self, event: QDropEvent):
-        urls = event.mimeData().urls()
-        paths = [u.toLocalFile() for u in urls if u.isLocalFile()]
+        self._hover = False
+        self.retheme()
+        paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
         if paths:
+            event.acceptProposedAction()
             self.filesDropped.emit(paths)
-        event.acceptProposedAction()
-        self.setProperty("drop", "")
-        self.style().polish(self)
-
-    def mousePressEvent(self, event):
-        self.clicked.emit()
-        super().mousePressEvent(event)
-
-    def retheme(self):
-        """Refresh the folder icon so it stays visible in dark mode."""
-        self.iconLabel.setPixmap(
-            FIF.FOLDER.icon(Theme.DARK if isDarkTheme() else Theme.AUTO).pixmap(40, 40)
-        )
-
-    def retranslate(self):
-        self.titleLabel.setText(tr("convert.drop.title"))
-        self.hintLabel.setText(tr("convert.drop.hint"))
-        self.formatsLabel.setText(tr("convert.drop.formats"))
+        else:
+            event.ignore()

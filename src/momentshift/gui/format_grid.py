@@ -1,222 +1,155 @@
-"""Card-style format-selection matrix.
+"""Format selection matrix for the Convert screen.
 
-Replaces the old dropdown / checkbox format pickers. Formats are shown as a grid
-of square "cards" grouped by media category (image / audio / video). Each card is
-a custom-painted square with a checkbox indicator (top-left) and a large
-``.PNG``-style suffix in the centre. Clicking a card selects the target format for
-that category (one selection per category) with a clear checked state and a small
-check-draw animation so the user always knows what is selected.
+One target format is chosen per source category (image / audio / video). The
+public API consumed by ``convert_interface`` is preserved:
+
+- ``selectionChanged = Signal(dict)``
+- ``setup(categories, selection)``
+- ``get_selection() -> dict``
+- ``retheme()`` / ``retranslate()``
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtProperty, QPropertyAnimation, QEasingCurve, Qt, QPointF, QRectF
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont
-from ..core.qt_compat import QWidget, QVBoxLayout, QGridLayout, Signal
-from qfluentwidgets import isDarkTheme
+from PyQt6.QtGui import QColor, QPainter, QPen, QFont
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
+
+from qfluentwidgets import FlowLayout, isDarkTheme
+
+from ..core.qt_compat import Signal
 from ..core.presets import TARGET_GROUPS
 from ..i18n.translator import tr
-
-GRID_COLUMNS = 3
-ACCENT = QColor(32, 128, 240)
-GRAY_BORDER = QColor(128, 128, 128, 95)
-GRAY_BORDER_LIGHT = QColor(128, 128, 128, 60)
+from .theme import section_label, muted_text, accent_color, component_bg, RADIUS
 
 
 class FormatCard(QWidget):
-    """A single selectable format button rendered as a painted square card."""
+    """A selectable format chip. Emits ``clicked(category, fmt)``."""
 
-    clicked = Signal(str, str)  # (category, fmt)
+    clicked = Signal(str, str)
 
     def __init__(self, category: str, fmt: str, parent=None):
         super().__init__(parent)
         self.category = category
         self.fmt = fmt
         self._selected = False
-        self._hover = False
-        self._check = 0.0  # 0..1 check-draw animation progress
-
-        # Square card; keep a 2px internal margin so the border is fully
-        # visible even when cards are packed tightly in the grid.
-        self.setFixedSize(88, 88)
+        self.setFixedSize(74, 74)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self._anim = QPropertyAnimation(self, b"checkValue")
-        self._anim.setDuration(170)
-
-    # -- animation property ---------------------------------------------
-    def getCheck(self) -> float:
-        return self._check
-
-    def setCheck(self, v: float) -> None:
-        self._check = v
+    def set_selected(self, b: bool):
+        self._selected = b
         self.update()
 
-    checkValue = pyqtProperty(float, getCheck, setCheck)
+    def _colors(self):
+        if self._selected:
+            accent = accent_color()
+            return accent, "#ffffff" if not isDarkTheme() else "#ffffff"
+        border = QColor(200, 200, 200) if not isDarkTheme() else QColor(80, 80, 80)
+        text = QColor(90, 90, 90) if not isDarkTheme() else QColor(180, 180, 180)
+        return border, text
 
-    def set_selected(self, value: bool) -> None:
-        self._selected = value
-        self._anim.stop()
-        self._anim.setStartValue(self._check)
-        self._anim.setEndValue(1.0 if value else 0.0)
-        self._anim.setEasingCurve(
-            QEasingCurve.Type.OutBack if value else QEasingCurve.Type.InCubic
-        )
-        self._anim.start()
-        self.update()
+    def paintEvent(self, event):
+        from PyQt6.QtCore import QRect
 
-    # -- events -----------------------------------------------------------
-    def enterEvent(self, event):
-        self._hover = True
-        self.update()
-        super().enterEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        border, text = self._colors()
+        if self._selected:
+            painter.setBrush(QBrush(border))
+            painter.setPen(Qt.PenStyle.NoPen)
+        else:
+            painter.setBrush(QBrush(component_bg()))
+            painter.setPen(QPen(border, 1.5))
+        painter.drawRoundedRect(QRect(1, 1, w - 2, h - 2), RADIUS, RADIUS)
 
-    def leaveEvent(self, event):
-        self._hover = False
-        self.update()
-        super().leaveEvent(event)
+        painter.setPen(text)
+        font = QFont()
+        font.setPointSize(13)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.fmt.upper())
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.category, self.fmt)
         super().mousePressEvent(event)
 
-    # -- painting ---------------------------------------------------------
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = self.rect()
-
-        # card background + border
-        if self._selected:
-            bg = QColor(32, 128, 240, 28)
-            border = ACCENT
-            bw = 2
-        else:
-            bg = QColor(128, 128, 128, 13)
-            # A faint grey border is invisible on a dark card, so lighten it
-            # in dark mode; keep the usual grey in light mode.
-            border = ACCENT if self._hover else (
-                QColor(255, 255, 255, 40) if isDarkTheme() else GRAY_BORDER
-            )
-            bw = 2 if self._hover else 1
-        p.setPen(QPen(border, bw))
-        p.setBrush(QBrush(bg))
-        # Inset by 2px on every side so the border stroke is never clipped
-        # by neighbouring cards in the grid.
-        p.drawRoundedRect(r.adjusted(2, 2, -2, -2), 10, 10)
-
-        # checkbox indicator (top-left)
-        cb = QRectF(12, 12, 22, 22)
-        cb_border = QColor(255, 255, 255, 70) if isDarkTheme() else GRAY_BORDER_LIGHT
-        p.setPen(QPen(ACCENT if self._selected else cb_border, 2))
-        p.setBrush(QBrush(ACCENT if self._selected else Qt.GlobalColor.transparent))
-        p.drawRoundedRect(cb, 6, 6)
-        if self._check > 0.01:
-            tick = QColor(255, 255, 255) if isDarkTheme() else QColor(20, 20, 20)
-            p.setPen(QPen(tick, 3,
-                          Qt.PenStyle.SolidLine,
-                          Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-            cx, cy = cb.x() + cb.width() / 2, cb.y() + cb.height() / 2
-            s = self._check
-            p1 = QPointF(cx - 6, cy)
-            p2 = QPointF(cx - 1, cy + 5)
-            p3 = QPointF(cx + 7, cy - 5)
-
-            def lerp(a, b, t):
-                return a + (b - a) * t
-
-            p.drawLine(
-                QPointF(lerp(cx, p1.x(), s), lerp(cy, p1.y(), s)),
-                QPointF(lerp(cx, p2.x(), s), lerp(cy, p2.y(), s)),
-            )
-            p.drawLine(
-                QPointF(lerp(cx, p2.x(), s), lerp(cy, p2.y(), s)),
-                QPointF(lerp(cx, p3.x(), s), lerp(cy, p3.y(), s)),
-            )
-
-        # large suffix text (centre)
-        text = "." + self.fmt.upper()
-        p.setPen(QColor(255, 255, 255) if isDarkTheme() else QColor(20, 20, 20))
-        f = QFont()
-        f.setBold(True)
-        f.setPointSize(18)
-        p.setFont(f)
-        p.drawText(r, Qt.AlignmentFlag.AlignCenter, text)
-
 
 class FormatGrid(QWidget):
-    """Matrix of :class:`FormatCard` grouped by media category."""
-
     selectionChanged = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._selection: dict[str, str] = {}
-        self._cards: dict[str, list[FormatCard]] = {}
-        self.mainLayout = QVBoxLayout(self)
-        self.mainLayout.setContentsMargins(0, 0, 0, 0)
-        self.mainLayout.setSpacing(14)
+        self._categories: list[str] = []
+        self.selection: dict[str, str] = {}
+        self._cards: list[FormatCard] = []
+        self._labels: list[QWidget] = []
+        self.vbox = QVBoxLayout(self)
+        self.vbox.setContentsMargins(0, 0, 0, 0)
+        self.vbox.setSpacing(14)
 
-    def setup(self, categories: list[str], selection: dict[str, str]) -> None:
-        """(Re)build the grid for the given categories."""
+    def setup(self, categories: list[str], selection: dict[str, str]):
         self._clear()
-        self._cards = {}
-        self._selection = dict(selection)
-
+        self._categories = list(categories)
+        self.selection = dict(selection)
         for cat in categories:
-            section = QWidget()
-            vbox = QVBoxLayout(section)
-            vbox.setContentsMargins(0, 0, 0, 0)
-            vbox.setSpacing(8)
-
-            header = QLabelStyle(tr("convert.category." + cat))
-            vbox.addWidget(header)
-
-            grid_widget = QWidget()
-            grid = QGridLayout(grid_widget)
-            grid.setContentsMargins(0, 0, 0, 0)
-            grid.setSpacing(10)
-            grid.setColumnStretch(GRID_COLUMNS - 1, 1)
-
-            cards: list[FormatCard] = []
-            for i, fmt in enumerate(TARGET_GROUPS.get(cat, [])):
+            lbl = section_label(tr(f"category.{cat}"))
+            self._labels.append(lbl)
+            self.vbox.addWidget(lbl)
+            flow = FlowLayout()
+            flow.setContentsMargins(0, 0, 0, 0)
+            flow.setVerticalSpacing(10)
+            flow.setHorizontalSpacing(10)
+            for fmt in TARGET_GROUPS.get(cat, []):
                 card = FormatCard(cat, fmt)
-                card.set_selected(self._selection.get(cat) == fmt)
+                card.set_selected(self.selection.get(cat) == fmt)
                 card.clicked.connect(self._on_card)
-                grid.addWidget(card, i // GRID_COLUMNS, i % GRID_COLUMNS)
-                cards.append(card)
-            vbox.addWidget(grid_widget)
+                self._cards.append(card)
+                flow.addWidget(card)
+            self.vbox.addLayout(flow)
+        self.vbox.addStretch(1)
 
-            self._cards[cat] = cards
-            self.mainLayout.addWidget(section)
-
-    def _on_card(self, cat: str, fmt: str) -> None:
-        self._selection[cat] = fmt
-        for c in self._cards.get(cat, []):
-            c.set_selected(c.fmt == fmt)
-        self.selectionChanged.emit(dict(self._selection))
+    def _on_card(self, cat: str, fmt: str):
+        self.selection[cat] = fmt
+        for card in self._cards:
+            if card.category == cat:
+                card.set_selected(card.fmt == fmt)
+        self.selectionChanged.emit(dict(self.selection))
 
     def get_selection(self) -> dict[str, str]:
-        return dict(self._selection)
+        return dict(self.selection)
 
-    def _clear(self) -> None:
-        while self.mainLayout.count():
-            item = self.mainLayout.takeAt(0)
-            widget = item.widget() if item else None
-            if widget:
-                widget.deleteLater()
-
-    def retheme(self) -> None:
-        """Repaint every card so theme-aware colours (tick/border) refresh."""
-        for card in self.findChildren(FormatCard):
+    def retheme(self):
+        for card in self._cards:
             card.update()
 
     def retranslate(self):
-        if self._cards:
-            self.setup(list(self._cards.keys()), self._selection)
+        self.setup(self._categories, self.selection)
+
+    def _clear(self):
+        from PyQt6.QtWidgets import QLayout
+
+        while self.vbox.count():
+            item = self.vbox.takeAt(0)
+            child = item.widget()
+            if child:
+                child.deleteLater()
+            lay = item.layout()
+            if lay:
+                _clear_layout(lay)
+                lay.deleteLater()
+        self._cards.clear()
+        self._labels.clear()
 
 
-def QLabelStyle(text: str):
-    """A simple strong body label for section headers (avoids extra import)."""
-    from qfluentwidgets import StrongBodyLabel
-    return StrongBodyLabel(text)
+def _clear_layout(layout):
+    while layout.count():
+        item = layout.takeAt(0)
+        # qfluentwidgets FlowLayout.takeAt() returns the widget directly,
+        # while other layouts return a QLayoutItem with .widget().
+        if isinstance(item, QWidget):
+            item.deleteLater()
+            continue
+        w = item.widget() if hasattr(item, "widget") else None
+        if w is not None:
+            w.deleteLater()

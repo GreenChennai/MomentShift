@@ -1,4 +1,10 @@
-"""Settings interface: language, hardware, threads, output, theme, etc."""
+"""Settings interface: language, theme, hardware, threads, ffmpeg, output, etc.
+
+Rebuilt with qfluentwidgets ``SettingCard`` building blocks (no bespoke UI).
+Grouped into General / Conversion / Data sections to match user expectations.
+"""
+
+from __future__ import annotations
 
 from ..core.qt_compat import QFileDialog, QDesktopServices, QUrl
 from qfluentwidgets import (
@@ -19,8 +25,8 @@ from .base import InterfaceBase
 
 
 class ComboSettingCard(SettingCard):
-    """A setting card with a ComboBox whose selected value is stored as the
-    config item *value* (not the display text), via ``userData``."""
+    """Setting card with a ComboBox whose selected value is stored as the config
+    item *value* (via ``userData``), so it works for both plain and option items."""
 
     def __init__(self, configItem, icon, title, content, options, parent=None):
         super().__init__(icon, title, content, parent)
@@ -31,7 +37,7 @@ class ComboSettingCard(SettingCard):
             self.combo.addItem(text, userData=value)
         self.hBoxLayout.addStretch(1)
         self.hBoxLayout.addWidget(self.combo)
-        self.hBoxLayout.addSpacing(8)  # keep a safe distance from the right edge
+        self.hBoxLayout.addSpacing(8)
 
         for i, (text, value) in enumerate(options):
             if value == configItem.value:
@@ -59,77 +65,68 @@ class ComboSettingCard(SettingCard):
 class SettingInterface(InterfaceBase):
     def __init__(self, parent=None):
         super().__init__("Settings", tr("settings.title"), "", parent)
-        self.retheme()
 
-        group = SettingCardGroup(tr("settings.group.general"))
+        # --- General: language + theme + output --------------------------
+        self.g_general = SettingCardGroup(tr("settings.group.general"))
 
         lang_options = [(name, key.value) for key, name in available_languages()]
         self.langCard = ComboSettingCard(
-            cfg.language, FIF.LANGUAGE, tr("settings.language"), "", lang_options
-        )
-        hw_options = [
-            (tr("settings.hardware.auto"), "auto"),
-            (tr("settings.hardware.cpu"), "cpu"),
-            (tr("settings.hardware.gpu"), "gpu"),
-        ]
-        self.hwCard = ComboSettingCard(
-            cfg.hardware, FIF.VIDEO, tr("settings.hardware"),
-            tr("settings.threads.hint"), hw_options,
-        )
-        self.threadsCard = RangeSettingCard(
-            cfg.maxThreads, FIF.IOT, tr("settings.threads"), tr("settings.threads.hint")
-        )
-        ff_options = [
-            (tr("settings.ffmpeg.auto"), "auto"),
-            (tr("settings.ffmpeg.path"), "path"),
-        ]
-        self.ffCard = ComboSettingCard(
-            cfg.ffmpegSource, FIF.ROBOT, tr("settings.ffmpeg"), "", ff_options
-        )
-        self.outCard = PushSettingCard(
-            cfg.outputFolder.value or "", FIF.FOLDER,
-            tr("settings.output"), tr("settings.output.hint"),
-        )
-        self.outCard.button.clicked.connect(self._choose_output)
-
-        theme_options = [
-            (tr("settings.theme.auto"), "auto"),
-            (tr("settings.theme.light"), "light"),
-            (tr("settings.theme.dark"), "dark"),
-        ]
+            cfg.language, FIF.LANGUAGE, tr("settings.language"), "", lang_options)
         self.themeCard = ComboSettingCard(
-            cfg.theme, FIF.SETTING, tr("settings.theme"),
-            tr("settings.restart_hint"), theme_options,
-        )
+            cfg.theme, FIF.PALETTE, tr("settings.theme"),
+            tr("settings.restart_hint"),
+            [(tr("settings.theme.auto"), "auto"),
+             (tr("settings.theme.light"), "light"),
+             (tr("settings.theme.dark"), "dark")])
+        self.outCard = PushSettingCard(
+            cfg.outputFolder.value or tr("settings.output.fixed_hint"),
+            FIF.FOLDER, tr("settings.output"), tr("settings.output.hint"))
+        self.outCard.button.clicked.connect(self._choose_output)
+        for c in (self.langCard, self.themeCard, self.outCard):
+            self.g_general.addSettingCard(c)
+        self.vbox.addWidget(self.g_general)
 
+        # --- Conversion: hardware + threads + ffmpeg source --------------
+        self.g_convert = SettingCardGroup(tr("settings.group.conversion"))
+        self.hwCard = ComboSettingCard(
+            cfg.hardware, FIF.ROBOT, tr("settings.hardware"),
+            tr("settings.threads.hint"),
+            [(tr("settings.hardware.auto"), "auto"),
+             (tr("settings.hardware.cpu"), "cpu"),
+             (tr("settings.hardware.gpu"), "gpu")])
+        self.threadsCard = RangeSettingCard(
+            cfg.maxThreads, FIF.SYNC, tr("settings.threads"), tr("settings.threads.hint"))
+        self.ffCard = ComboSettingCard(
+            cfg.ffmpegSource, FIF.CLOUD, tr("settings.ffmpeg"), "",
+            [(tr("settings.ffmpeg.auto"), "auto"),
+             (tr("settings.ffmpeg.path"), "path")])
+        for c in (self.hwCard, self.threadsCard, self.ffCard):
+            self.g_convert.addSettingCard(c)
+        self.vbox.addWidget(self.g_convert)
+
+        # --- Data: open config + reset -----------------------------------
+        self.g_data = SettingCardGroup(tr("settings.group.data"))
         self.openCfgCard = PushSettingCard(
-            tr("settings.open_config_btn"), FIF.FOLDER, tr("settings.open_config"), ""
-        )
+            tr("settings.open_config_btn"), FIF.FOLDER_ADD, tr("settings.open_config"), "")
         self.openCfgCard.button.clicked.connect(self._open_config)
         self.resetCard = PushSettingCard(
-            tr("settings.reset_btn"), FIF.DELETE, tr("settings.reset"), ""
-        )
+            tr("settings.reset_btn"), FIF.DELETE, tr("settings.reset"), "")
         self.resetCard.button.clicked.connect(self._reset)
+        for c in (self.openCfgCard, self.resetCard):
+            self.g_data.addSettingCard(c)
+        self.vbox.addWidget(self.g_data)
 
-        for card in (
-            self.langCard, self.hwCard, self.threadsCard, self.ffCard,
-            self.outCard, self.themeCard, self.openCfgCard, self.resetCard,
-        ):
-            group.addSettingCard(card)
-
-        self.vbox.addWidget(group)
         self.vbox.addStretch(1)
+        self.retheme()
 
     # -- theme -----------------------------------------------------------
     def retheme(self):
         super().retheme()
-        # Any future setting-page specific theme-aware styles go here.
 
     # -- actions ---------------------------------------------------------
     def _choose_output(self):
         d = QFileDialog.getExistingDirectory(
-            self, tr("settings.output"), cfg.outputFolder.value or ""
-        )
+            self, tr("settings.output"), cfg.outputFolder.value or "")
         if d:
             cfg.outputFolder.value = d
             self.outCard.button.setText(d)
@@ -149,20 +146,21 @@ class SettingInterface(InterfaceBase):
             qconfig.save()
             InfoBar.success(
                 tr("settings.reset"), "", parent=self.window(),
-                duration=2000, position=InfoBarPosition.TOP_RIGHT,
-            )
+                duration=2000, position=InfoBarPosition.TOP_RIGHT)
 
     def retranslateUi(self):
         self.retranslate(tr("settings.title"))
-        if hasattr(self, "group"):
-            self.group.setTitle(tr("settings.group.general"))
+        self.g_general.titleLabel.setText(tr("settings.group.general"))
+        self.g_convert.titleLabel.setText(tr("settings.group.conversion"))
+        self.g_data.titleLabel.setText(tr("settings.group.data"))
         self.langCard.setTitle(tr("settings.language"))
+        self.themeCard.setTitle(tr("settings.theme"))
+        self.themeCard.setContent(tr("settings.restart_hint"))
+        self.outCard.setTitle(tr("settings.output"))
+        self.outCard.setContent(tr("settings.output.hint"))
         self.hwCard.setTitle(tr("settings.hardware"))
         self.threadsCard.setTitle(tr("settings.threads"))
         self.threadsCard.setContent(tr("settings.threads.hint"))
         self.ffCard.setTitle(tr("settings.ffmpeg"))
-        self.outCard.setTitle(tr("settings.output"))
-        self.outCard.setContent(tr("settings.output.hint"))
-        self.themeCard.setTitle(tr("settings.theme"))
         self.openCfgCard.setTitle(tr("settings.open_config"))
         self.resetCard.setTitle(tr("settings.reset"))

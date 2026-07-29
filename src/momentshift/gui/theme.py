@@ -1,26 +1,42 @@
-"""Centralized, theme-aware palette + window background for MomentShift.
+"""Centralized, theme-aware design system for MomentShift.
 
-Previously the app scattered hardcoded greys (``rgba(128,128,128,1)``) across
-several widgets. Those overrides fought qfluentwidgets' own theming and looked
-wrong in dark mode. This module is the single source of truth: every custom
-widget asks for a color here and re-applies it whenever ``qconfig.themeChanged``
-fires (see ``gui.main_window._retheme_all``).
+This module is the single source of truth for the UI's visual language:
+
+- Colour tokens (window bg, component surface, hover/press, accent, text).
+- ``ThemedCard`` — a ``CardWidget`` that paints a *solid* theme-aware surface so
+  labels/icons on it resolve to the card colour (no more #F4F4F4 vs #FBFBFB halo).
+- Shared builders (``panel``, ``field_row``, ``section_label``, buttons) so every
+  screen composes from the same primitives and stays consistent.
+- Two import-time monkey-patches that force transparent label backgrounds (needed
+  because qfluentwidgets installs widget-level stylesheets that would otherwise
+  paint an opaque default fill behind text inside cards, most visible in dark mode).
 """
 
 from __future__ import annotations
 
-from qfluentwidgets import isDarkTheme, qconfig, Theme, CardWidget
 from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame
 
-# Window chrome + content background per theme (neutral Material-like greys).
-# Applied via ``FluentWindow.setCustomBackgroundColor`` so the whole window —
-# including the content area behind transparent scroll views — stays coherent.
+from qfluentwidgets import (
+    isDarkTheme,
+    qconfig,
+    Theme,
+    CardWidget,
+    CaptionLabel,
+    BodyLabel,
+    StrongBodyLabel,
+    PrimaryPushButton,
+    PushButton,
+    TransparentPushButton,
+    TransparentToolButton,
+)
+
+# -- Window chrome + content background --------------------------------------
 LIGHT_BG = QColor(244, 244, 244)
 DARK_BG = QColor(32, 32, 32)
 
-# Uniform "component" background used by cards. This is the colour that any
-# transparent text/icon *inside* a card resolves to, so the patch behind a
-# label always matches the card surface (no more ~#F4F4F4 vs #FBFBFB mismatch).
+# Uniform component (card) surface — the colour any transparent text/icon inside
+# a card resolves to, so the patch behind a label always matches the card.
 COMPONENT_LIGHT = QColor(251, 251, 251)   # #FBFBFB
 COMPONENT_DARK = QColor(43, 43, 43)       # #2B2B2B
 HOVER_LIGHT = QColor(242, 242, 242)
@@ -28,38 +44,32 @@ HOVER_DARK = QColor(54, 54, 54)
 PRESS_LIGHT = QColor(236, 236, 236)
 PRESS_DARK = QColor(38, 38, 38)
 
+# Brand accent (Fluent primary blue), tuned per theme so it stays vivid on both.
+ACCENT_LIGHT = QColor(15, 108, 189)    # #0F6CBD
+ACCENT_DARK = QColor(38, 132, 209)     # brighter on dark
+
+# Shared geometry tokens.
+RADIUS = 12
+SPACING = 12
+CARD_MARGIN = 16
+
 
 def component_bg() -> QColor:
-    """Solid background colour a card (and the text/icons inside it) should use."""
     return COMPONENT_DARK if isDarkTheme() else COMPONENT_LIGHT
 
 
-class ThemedCard(CardWidget):
-    """A ``CardWidget`` that paints a *solid* theme-aware component colour.
-
-    qfluentwidgets' default ``CardWidget`` paints a translucent white overlay
-    over whatever is behind it, so a transparent label inside a card resolved to
-    the content-view colour (e.g. ``#F4F4F4``) instead of the card surface
-    (``#FBFBFB``). Painting an opaque component colour here keeps the whole card,
-    and every label/icon on it, visually uniform.
-    """
-
-    def _normalBackgroundColor(self):
-        return component_bg()
-
-    def _hoverBackgroundColor(self):
-        return HOVER_DARK if isDarkTheme() else HOVER_LIGHT
-
-    def _pressedBackgroundColor(self):
-        return PRESS_DARK if isDarkTheme() else PRESS_LIGHT
-
-
 def content_bg() -> QColor:
-    """Return the solid background color that should fill a content interface."""
     return DARK_BG if isDarkTheme() else LIGHT_BG
 
-# Secondary / hint / muted text. Kept readable on both themes: dark greys on
-# light, lighter greys on dark (a plain near-white would look too loud for a hint).
+
+def accent_color() -> QColor:
+    return ACCENT_DARK if isDarkTheme() else ACCENT_LIGHT
+
+
+def accent_name() -> str:
+    return accent_color().name()
+
+
 def sub_text() -> str:
     return "rgba(96, 96, 96, 1)" if not isDarkTheme() else "rgba(165, 165, 165, 1)"
 
@@ -73,7 +83,6 @@ def muted_text() -> str:
 
 
 def map_theme(value: str) -> Theme:
-    """Map our config value (auto/light/dark) to a qfluentwidgets ``Theme``."""
     return {
         "auto": Theme.AUTO,
         "light": Theme.LIGHT,
@@ -81,13 +90,121 @@ def map_theme(value: str) -> Theme:
     }.get(value, Theme.AUTO)
 
 
+class ThemedCard(CardWidget):
+    """A ``CardWidget`` that paints a solid theme-aware component colour."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setBorderRadius(RADIUS)
+
+    def _normalBackgroundColor(self):
+        return component_bg()
+
+    def _hoverBackgroundColor(self):
+        return HOVER_DARK if isDarkTheme() else HOVER_LIGHT
+
+    def _pressedBackgroundColor(self):
+        return PRESS_DARK if isDarkTheme() else PRESS_LIGHT
+
+
 # ---------------------------------------------------------------------------
-# Workaround: FluentLabelBase installs a widget-level stylesheet for colour
-# (via setCustomStyleSheet). Once a widget has its own stylesheet, ancestor
-# rules such as ``QLabel { background-color: transparent }`` are no longer
-# the only authority for that widget, and some labels pick up a default fill
-# that differs from the card surface. We patch setTextColor so the custom
-# rule always carries ``background-color: transparent`` as well.
+# Shared composition primitives — every screen builds from these so the look
+# stays coherent.
+# ---------------------------------------------------------------------------
+def panel(title: str | None = None, subtitle: str | None = None,
+          parent=None, radius: int = RADIUS) -> tuple[ThemedCard, QVBoxLayout]:
+    """Create a titled card. Returns ``(card, body_layout)``.
+
+    The body layout already has consistent margins/spacing and an optional
+    title + subtitle on top.
+    """
+    card = ThemedCard(parent)
+    card.setBorderRadius(radius)
+    vb = QVBoxLayout(card)
+    vb.setContentsMargins(CARD_MARGIN, 14, CARD_MARGIN, 14)
+    vb.setSpacing(10)
+    if title:
+        t = StrongBodyLabel(title)
+        t.setObjectName("panelTitle")
+        vb.addWidget(t)
+    if subtitle:
+        s = CaptionLabel(subtitle)
+        s.setObjectName("panelSub")
+        vb.addWidget(s)
+    return card, vb
+
+
+def section_label(text: str, parent=None) -> CaptionLabel:
+    """A small, theme-aware section caption used inside cards."""
+    lbl = CaptionLabel(text, parent)
+    lbl.setObjectName("sectionLabel")
+    return lbl
+
+
+def field_row(label_text: str, control, parent=None, label_width: int = 96) -> QWidget:
+    """A left-aligned label + control row (label fixed width, control stretched).
+
+    ``control`` may be a ``QWidget`` or a ``QLayout``.
+    """
+    from PyQt6.QtWidgets import QLayout
+
+    row = QWidget(parent)
+    hb = QHBoxLayout(row)
+    hb.setContentsMargins(0, 0, 0, 0)
+    hb.setSpacing(12)
+    lbl = BodyLabel(label_text)
+    lbl.setObjectName("fieldLabel")
+    lbl.setFixedWidth(label_width)
+    hb.addWidget(lbl)
+    if isinstance(control, QLayout):
+        hb.addLayout(control, 1)
+    else:
+        hb.addWidget(control, 1)
+    return row
+
+
+def hint_label(text: str, parent=None) -> BodyLabel:
+    """A body label tinted with the muted colour (re-set on each update)."""
+    lbl = BodyLabel(text, parent)
+    lbl.setObjectName("hintLabel")
+    lbl.setStyleSheet(f"color: {muted_text()};")
+    return lbl
+
+
+def divider(parent=None) -> QFrame:
+    """A 1px hairline separator tinted with the muted colour."""
+    line = QFrame(parent)
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setFixedHeight(1)
+    line.setStyleSheet(f"color: {muted_text()}; background: {muted_text()};")
+    return line
+
+
+def primary_btn(text: str, icon=None, parent=None) -> PrimaryPushButton:
+    if icon is not None:
+        return PrimaryPushButton(text, icon=icon, parent=parent)
+    return PrimaryPushButton(text, parent=parent)
+
+
+def ghost_btn(text: str, icon=None, parent=None) -> TransparentPushButton:
+    if icon is not None:
+        return TransparentPushButton(text, icon=icon, parent=parent)
+    return TransparentPushButton(text, parent=parent)
+
+
+def icon_btn(icon, tooltip: str = "", parent=None) -> TransparentToolButton:
+    btn = TransparentToolButton(icon, parent)
+    if tooltip:
+        btn.setToolTip(tooltip)
+    return btn
+
+
+# ---------------------------------------------------------------------------
+# Workaround #1: FluentLabelBase installs a widget-level stylesheet for colour.
+# Once a widget has its own stylesheet, ancestor rules such as
+# ``QLabel { background-color: transparent }`` are no longer the only authority,
+# and some labels pick up a default fill that differs from the card surface. We
+# patch setTextColor so the custom rule always carries ``background:transparent``.
 # ---------------------------------------------------------------------------
 def _patch_fluent_label_background():
     from qfluentwidgets.components.widgets.label import FluentLabelBase
@@ -97,8 +214,6 @@ def _patch_fluent_label_background():
 
     def _set_text_color(self, light=QColor(0, 0, 0), dark=QColor(255, 255, 255)):
         _orig(self, light, dark)
-        # Re-apply the custom rule with an explicit transparent background so
-        # the label's own stylesheet never carries an opaque default fill.
         light_qss = (
             f"FluentLabelBase{{"
             f"color:{self.lightColor.name(QColor.NameFormat.HexArgb)};"
@@ -115,12 +230,10 @@ def _patch_fluent_label_background():
 
 
 # ---------------------------------------------------------------------------
-# Workaround #2: SwitchButton's text is a plain QLabel (NOT FluentLabelBase),
-# and SwitchButton.setTextColor applies "SwitchButton>QLabel{color:...}" with no
+# Workaround #2: SwitchButton's text is a plain QLabel (not FluentLabelBase) and
+# SwitchButton.setTextColor applies "SwitchButton>QLabel{color:...}" with no
 # background. That widget-level rule overrides ancestor transparent rules, so the
-# switch's text label picks up a default fill — visible in any card that contains
-# a SwitchButton (e.g. the "压缩设置" and "输出目录" cards). Patch setTextColor to
-# also carry background-color:transparent, exactly like the FluentLabelBase fix.
+# switch's text label picks up a default fill in dark mode. Patch it like #1.
 # ---------------------------------------------------------------------------
 def _patch_switch_button_label_background():
     from qfluentwidgets.components.widgets.switch_button import SwitchButton

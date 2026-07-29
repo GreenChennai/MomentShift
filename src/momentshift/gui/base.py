@@ -1,13 +1,12 @@
 """Base class for scrollable navigation interfaces."""
 
-from ..core.qt_compat import QWidget, QVBoxLayout
-from PyQt6.QtGui import QPalette
+from ..core.qt_compat import QWidget, QVBoxLayout, QFrame
 from qfluentwidgets import ScrollArea, TitleLabel, CaptionLabel, isDarkTheme
-from .theme import LIGHT_BG, DARK_BG
+from .theme import content_bg, LIGHT_BG, DARK_BG, accent_name
 
 
 class InterfaceBase(ScrollArea):
-    """A scrollable interface with a consistent title header."""
+    """A scrollable interface with a consistent, premium title header."""
 
     def __init__(self, object_name: str, title: str, subtitle: str = "", parent=None):
         super().__init__(parent)
@@ -16,37 +15,48 @@ class InterfaceBase(ScrollArea):
 
         self.view = QWidget()
         self.setWidget(self.view)
-        # The content area must have a solid theme-aware background. Cards from
-        # qfluentwidgets are painted as semi-transparent white overlays; they
-        # only look like subtle grey cards when the background beneath them is
-        # dark. Making everything transparent left the content area white in
-        # dark mode (the stacked widget's default background showed through).
-        self.retheme()
 
         self.vbox = QVBoxLayout(self.view)
-        # Tight margins for the narrow 400px portrait window.
         self.vbox.setContentsMargins(16, 14, 16, 14)
         self.vbox.setSpacing(12)
 
+        # --- header -------------------------------------------------------
         self.header = QWidget()
         hb = QVBoxLayout(self.header)
         hb.setContentsMargins(0, 0, 0, 0)
-        hb.setSpacing(2)
+        hb.setSpacing(4)
         self.titleLabel = TitleLabel(title)
         hb.addWidget(self.titleLabel)
         if subtitle:
             self.subLabel = CaptionLabel(subtitle)
             hb.addWidget(self.subLabel)
+        # subtle accent underline beneath the title
+        self.accentRule = QFrame()
+        self.accentRule.setFrameShape(QFrame.Shape.HLine)
+        self.accentRule.setFixedHeight(3)
+        self.accentRule.setFixedWidth(38)
+        self._style_accent()
+        hb.addWidget(self.accentRule)
+        hb.addSpacing(4)
         self.vbox.addWidget(self.header)
 
-    def retheme(self):
-        """Apply a solid theme background to the scroll view and viewport.
+        # Apply only the base (scroll-view) theme here. Calling ``self.retheme()``
+        # would dispatch to a subclass override that may touch widgets not yet
+        # created (the subclass __init__ runs *after* this). Subclasses call their
+        # own ``retheme()`` at the end of __init__ to theme their children.
+        InterfaceBase.retheme(self)
 
-        Using a stylesheet is more reliable than QPalette because qfluentwidgets
-        may install a global stylesheet that reverts palette colours.
-        QLabel is forced transparent so labels that set ``color`` don't paint a
-        black background box (issue seen in dark mode where text labels got a
-        #202020 patch behind them).
+    def _style_accent(self):
+        self.accentRule.setStyleSheet(
+            f"QFrame{{ background: {accent_name()}; border: none; border-radius: 2px; }}"
+        )
+
+    def retheme(self):
+        """Apply a solid theme background to the scroll view + viewport.
+
+        A stylesheet is more reliable than QPalette because qfluentwidgets may
+        install a global stylesheet that reverts palette colours. QLabel is forced
+        transparent so labels that set ``color`` don't paint a dark background box.
         """
         bg = DARK_BG if isDarkTheme() else LIGHT_BG
         css = (
@@ -57,9 +67,7 @@ class InterfaceBase(ScrollArea):
         self.view.setStyleSheet(css)
         if self.viewport():
             self.viewport().setStyleSheet(css)
-        # Do not set a stylesheet on ``self`` (the ScrollArea) so child widgets
-        # with their own paintEvent (CardWidget, SettingCard, etc.) keep their
-        # semi-transparent overlays instead of inheriting a flat colour.
+        self._style_accent()
 
     def retranslate(self, title: str = None, subtitle: str = None):
         if title is not None:

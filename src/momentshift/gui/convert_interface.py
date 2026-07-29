@@ -1,572 +1,312 @@
-"""The primary "Convert" interface.
+"""Convert screen — rebuilt UI. Wires to ``ConversionManager`` (no UI logic in core)."""
 
-New flow (per product spec):
-  1. Add files (drop / pick files / pick folder) -> they land in a *staging*
-     list (the "file conversion queue").
-  2. Pick a target format from the card-style matrix (one format per media
-     category present in the staging list).
-  3. "Add to task queue" promotes the staged files into runnable tasks.
-  4. Start the conversion, or keep adding more files (the loop repeats).
+from __future__ import annotations
 
-The output location is chosen up-front via a card placed directly beneath the
-FFmpeg status card: either a fixed output folder, or "next to the source file"
-with a custom suffix to keep originals intact.
-"""
-
+import os
 from pathlib import Path
 
-from ..core.qt_compat import QFileDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, Signal, Qt
-from qfluentwidgets import (
-    FluentIcon as FIF,
-    PrimaryPushButton,
-    PushButton,
-    TransparentToolButton,
-    LineEdit,
-    StrongBodyLabel,
-    BodyLabel,
-    CaptionLabel,
-    InfoBar,
-    InfoBarPosition,
-    MessageBox,
-    SwitchButton,
-    ScrollArea,
-    isDarkTheme,
-    Theme,
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QFileDialog, QScrollArea,
+    QMessageBox, QLabel,
 )
+from PyQt6.QtCore import Qt
+
+from qfluentwidgets import (
+    FluentIcon as FIF, PushButton, PrimaryPushButton, SwitchButton,
+    CaptionLabel, StrongBodyLabel, isDarkTheme,
+)
+
 from ..core.config import cfg
-from ..core.presets import TARGET_GROUPS, PROFILES, guess_category, IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS
+from ..core.presets import TARGET_GROUPS, guess_category, IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS
 from ..core.models import Task
 from ..i18n.translator import tr
+from .theme import (
+    ThemedCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
+    muted_text, sub_text, CARD_MARGIN,
+)
 from .base import InterfaceBase
 from .drop_area import DropArea
 from .queue_widget import QueueListWidget
-from .ffmpeg_card import FfmpegCard
 from .format_grid import FormatGrid
 from .advanced_panel import AdvancedPanel
-from .theme import sub_text, hint_text, muted_text, ThemedCard
-
-ALL_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
-CATEGORY_ICON = {"image": FIF.PHOTO, "audio": FIF.MUSIC, "video": FIF.VIDEO}
+from .ffmpeg_card import FfmpegCard
 
 
 class ConvertInterface(InterfaceBase):
     def __init__(self, manager, parent=None):
-        super().__init__("Convert", tr("nav.convert"), tr("app.tagline"), parent)
+        super().__init__("Convert", tr("nav.convert"), tr("convert.subtitle"), parent)
         self.manager = manager
-        self._staged: list[str] = []            # raw files awaiting a format
-        self._format_by_cat: dict[str, str] = {}  # category -> chosen format
-        self._run_active = False
+        self._staged: list[str] = []
+        self._selection = {"image": "jpg", "audio": "mp3", "video": "mp4"}
 
-        self.retheme()
-
-        # ---- ffmpeg status / acquisition card (start screen) ----
-        self.ffmpegCard = FfmpegCard()
+        # --- ffmpeg status -------------------------------------------------
+        self.ffmpegCard = FfmpegCard(self)
+        self.ffmpegCard.ffmpeg_ready.connect(self._on_ffmpeg_ready)
         self.vbox.addWidget(self.ffmpegCard)
 
-        # ---- output location card (directly under the ffmpeg card) ----
-        self._build_output_card()
-        self.vbox.addWidget(self.outputCard)
+        # --- input --------------------------------------------------------
+        card, vb, self.tInput = self._card("convert.input.title", "convert.input.subtitle")
+        self.dropArea = DropArea(self)
+        self.dropArea.filesDropped.connect(self._on_files)
+        self.dropArea.clicked.connect(self._pick_files)
+        vb.addWidget(self.dropArea)
 
-        # ---- drop area ----
-        self.drop = DropArea()
-        self.vbox.addWidget(self.drop)
-
-        # ---- add toolbar (files / folder) ----
-        # Stacked vertically so both buttons remain usable on a 400px wide window.
-        toolbar = QVBoxLayout()
-        toolbar.setSpacing(8)
-        self.addBtn = PushButton(FIF.ADD, tr("convert.btn.add"))
-        self.addFolderBtn = PushButton(FIF.FOLDER, tr("convert.add_folder"))
-        toolbar.addWidget(self.addBtn)
-        toolbar.addWidget(self.addFolderBtn)
-        self.vbox.addLayout(toolbar)
-
-        # ---- staging card (files waiting for a format) ----
-        self._build_staging_card()
-        self.vbox.addWidget(self.stagingCard)
-
-        # ---- format matrix card ----
-        self._build_format_card()
-        self.vbox.addWidget(self.formatCard)
-
-        # ---- task queue card ----
-        self._build_queue_card()
-        self.vbox.addWidget(self.queueCard, 1)
-
-        # ---- connections ----
-        self.drop.filesDropped.connect(self._on_paths)
-        self.drop.clicked.connect(self._pick_files)
-        self.addBtn.clicked.connect(self._pick_files)
+        tools = QHBoxLayout()
+        self.addFilesBtn = ghost_btn(tr("convert.add.files"), icon=FIF.ADD)
+        self.addFilesBtn.clicked.connect(self._pick_files)
+        self.addFolderBtn = ghost_btn(tr("convert.add.folder"), icon=FIF.FOLDER_ADD)
         self.addFolderBtn.clicked.connect(self._pick_folder)
-        self.startBtn.clicked.connect(self._on_start)
-        self.pauseBtn.clicked.connect(self._on_pause)
-        self.clearBtn.clicked.connect(self._on_clear)
-        self.stagingClear.clicked.connect(self._clear_staging)
+        tools.addWidget(self.addFilesBtn)
+        tools.addWidget(self.addFolderBtn)
+        vb.addLayout(tools)
+
+        self.stagingCount = CaptionLabel(tr("convert.staging.empty"))
+        self.stagingCount.setStyleSheet(f"color: {muted_text()};")
+        vb.addWidget(self.stagingCount)
+
+        self.stagingScroll = self._scroll()
+        self.stagingList = QWidget()
+        self.stagingLayout = QVBoxLayout(self.stagingList)
+        self.stagingLayout.setContentsMargins(0, 0, 0, 0)
+        self.stagingLayout.setSpacing(6)
+        self.stagingLayout.addStretch(1)
+        self.stagingScroll.setWidget(self.stagingList)
+        self.stagingScroll.setMaximumHeight(170)
+        vb.addWidget(self.stagingScroll)
+
+        self.addQueueBtn = primary_btn(tr("convert.queue.add"), icon=FIF.UP)
+        self.addQueueBtn.clicked.connect(self._on_add_to_queue)
+        vb.addWidget(self.addQueueBtn)
+        self.vbox.addWidget(card)
+
+        # --- output location ---------------------------------------------
+        ocard, ovb, self.tOutput = self._card("convert.output.title")
+        self.outputSwitch = SwitchButton(tr("convert.output.same"))
+        self.outputSwitch.checkedChanged.connect(self._on_output_mode)
+        ovb.addWidget(field_row(tr("convert.output.mode"), self.outputSwitch))
+        self.suffixEdit = QLineEdit(cfg.outputSuffix.value)
+        self.suffixEdit.setPlaceholderText(tr("convert.output.suffix.ph"))
+        self.suffixEdit.textChanged.connect(lambda t: setattr(cfg.outputSuffix, "value", t))
+        self.suffixRow = field_row(tr("convert.output.suffix"), self.suffixEdit)
+        ovb.addWidget(self.suffixRow)
+        self.folderEdit = QLineEdit(cfg.outputFolder.value)
+        self.folderEdit.setReadOnly(True)
+        self.browseBtn = icon_btn(FIF.FOLDER, tr("convert.output.browse"))
+        self.browseBtn.clicked.connect(self._pick_output)
+        frow = QHBoxLayout()
+        frow.addWidget(self.folderEdit, 1)
+        frow.addWidget(self.browseBtn)
+        self.folderRow = field_row(tr("convert.output.folder"), frow)
+        ovb.addWidget(self.folderRow)
+        self._apply_output_mode()
+        self.vbox.addWidget(ocard)
+
+        # --- format selection --------------------------------------------
+        fcard, fvb, self.tFormat = self._card("convert.format.title", "convert.format.subtitle")
+        self.formatGrid = FormatGrid(self)
+        self.formatGrid.selectionChanged.connect(self._on_selection)
+        fvb.addWidget(self.formatGrid)
+        self.vbox.addWidget(fcard)
+
+        # --- advanced -----------------------------------------------------
+        acard, avb, self.tAdvanced = self._card("convert.advanced.title", "convert.advanced.subtitle")
+        self.advancedPanel = AdvancedPanel(self)
+        avb.addWidget(self.advancedPanel)
+        self.vbox.addWidget(acard)
+
+        # --- queue --------------------------------------------------------
+        qcard, qvb, self.tQueue = self._card("convert.queue.title")
+        self.queueList = QueueListWidget(self)
         self.queueList.removeRequested.connect(self.manager.remove)
         self.queueList.retryRequested.connect(self.manager.retry)
         self.queueList.formatChanged.connect(self._on_row_format)
+        self.queueScroll = self._scroll()
+        self.queueScroll.setWidget(self.queueList)
+        self.queueScroll.setMaximumHeight(320)
+        qvb.addWidget(self.queueScroll)
+
+        ctrl = QHBoxLayout()
+        self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
+        self.startBtn.clicked.connect(self._on_start)
+        self.pauseBtn = ghost_btn(tr("convert.pause"), icon=FIF.PAUSE)
+        self.pauseBtn.clicked.connect(self._on_pause)
+        self.clearBtn = ghost_btn(tr("convert.clear"), icon=FIF.DELETE)
+        self.clearBtn.clicked.connect(self._on_clear)
+        ctrl.addWidget(self.startBtn, 1)
+        ctrl.addWidget(self.pauseBtn)
+        ctrl.addWidget(self.clearBtn)
+        qvb.addLayout(ctrl)
+        self.vbox.addWidget(qcard)
+
+        # --- manager wiring ----------------------------------------------
         self.manager.queue_changed.connect(self._sync_queue)
         self.manager.progress_updated.connect(self.queueList.update_progress)
         self.manager.task_finished.connect(self._on_finished)
         self.manager.state_changed.connect(self._on_state_changed)
-        self.ffmpegCard.ffmpeg_ready.connect(self._on_ffmpeg_ready)
 
-        self._apply_output_mode()
-        self._refresh_staging()
+        self._render_staging()
+        self._refresh_format_grid()
+        self._update_controls()
+        self.retheme()
 
-    # ================================================================== #
-    # Theme
-    # ================================================================== #
-    def _content_stylesheet(self) -> str:
-        """Theme-aware secondary/hint text colors (re-applied on theme change)."""
-        return f"""
-        FluentLabelBase {{ background-color: transparent; }}
-        #dropTitle {{ font-size: 18px; font-weight: 600; }}
-        #dropHint  {{ color: {sub_text()}; }}
-        #dropFormats {{ color: {hint_text()}; font-size: 12px; }}
-        #queueSub {{ color: {sub_text()}; background-color: transparent; }}
-        #queueEmpty {{ color: {muted_text()}; padding: 30px; background-color: transparent; }}
-        #queueStatus {{ color: {sub_text()}; }}
-        #stagedSub {{ color: {sub_text()}; background-color: transparent; }}
-        """
+    # -- helpers ----------------------------------------------------------
+    def _card(self, title_key, subtitle_key=None):
+        card = ThemedCard(self)
+        vb = QVBoxLayout(card)
+        vb.setContentsMargins(CARD_MARGIN, 14, CARD_MARGIN, 14)
+        vb.setSpacing(10)
+        titleLbl = StrongBodyLabel(tr(title_key))
+        vb.addWidget(titleLbl)
+        if subtitle_key:
+            vb.addWidget(CaptionLabel(tr(subtitle_key)))
+        return card, vb, titleLbl
 
-    def retheme(self):
-        """Re-apply theme-aware styles (called on every theme change)."""
-        super().retheme()
-        self.setStyleSheet(self._content_stylesheet())
-        # Guard: at __init__ time these children may not exist yet; the
-        # themeChanged signal re-runs retheme() once everything is built.
-        if hasattr(self, "advancedPanel"):
-            self.advancedPanel.retheme()
-        if hasattr(self, "formatGrid"):
-            self.formatGrid.retheme()
-        if hasattr(self, "drop"):
-            self.drop.retheme()
+    def _scroll(self) -> QScrollArea:
+        s = QScrollArea()
+        s.setWidgetResizable(True)
+        s.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        s.setStyleSheet("QScrollArea{border:none; background:transparent;}")
+        s.viewport().setStyleSheet("background:transparent;")
+        return s
 
-    # ================================================================== #
-    # Output location card
-    # ================================================================== #
-    def _build_output_card(self):
-        self.outputCard = ThemedCard()
-        ocv = QVBoxLayout(self.outputCard)
-        ocv.setContentsMargins(16, 14, 16, 14)
-        ocv.setSpacing(10)
+    def _expand(self, paths: list[str]) -> list[str]:
+        exts = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
+        out: list[str] = []
+        for p in paths:
+            if os.path.isdir(p):
+                for root, _, files in os.walk(p):
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        if Path(fp).suffix.lower() in exts:
+                            out.append(fp)
+            elif os.path.isfile(p) and Path(p).suffix.lower() in exts:
+                out.append(p)
+        # de-dupe, preserve order
+        seen, uniq = set(), []
+        for p in out:
+            if p not in seen:
+                seen.add(p)
+                uniq.append(p)
+        return uniq
 
-        head = QHBoxLayout()
-        self.outputTitle = StrongBodyLabel(tr("convert.output.label"))
-        head.addWidget(self.outputTitle)
-        head.addStretch(1)
-        ocv.addLayout(head)
+    # -- staging ---------------------------------------------------------
+    def _on_files(self, paths: list[str]):
+        self._add_staged(self._expand(paths))
 
-        # Output mode switch (same visual style as the Compress interface).
-        self.modeFixed = SwitchButton()
-        self.modeFixed.setText(tr("convert.output.mode.fixed"))
-        self.modeFixed.setChecked(cfg.outputMode.value == "fixed")
-        self.modeFixed.checkedChanged.connect(self._on_mode_fixed)
-        ocv.addWidget(self._row(tr("convert.output.mode"), self.modeFixed))
+    def _pick_files(self):
+        exts = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
+        flt = "Media (" + " ".join(f"*{e}" for e in sorted(exts)) + ")"
+        files, _ = QFileDialog.getOpenFileNames(self, tr("convert.add.files"), "", flt)
+        if files:
+            self._add_staged(self._expand(files))
 
-        # Same-dir suffix (left label + stretched edit).
-        self.suffixEdit = LineEdit()
-        self.suffixEdit.setPlaceholderText(tr("convert.output.suffix_hint"))
-        self.suffixEdit.setText(cfg.outputSuffix.value)
-        ocv.addWidget(self._row(tr("convert.output.suffix"), self.suffixEdit))
-
-        # Fixed output folder (left label + edit + choose button).
-        self.outputLine = LineEdit()
-        self.outputLine.setReadOnly(True)
-        self.outputLine.setPlaceholderText(tr("convert.output.same_dir"))
-        self.outputLine.setText(cfg.outputFolder.value)
-        self.outputChoose = PushButton(FIF.FOLDER, tr("convert.output.choose"))
-        self.outputChoose.clicked.connect(self._choose_output)
-        frow = QHBoxLayout()
-        frow.setContentsMargins(0, 0, 0, 0)
-        frow.setSpacing(8)
-        frow.addWidget(self.outputLine, 1)
-        frow.addWidget(self.outputChoose)
-        ocv.addWidget(self._row(tr("convert.output.fixed_label"), frow))
-
-        self.sameHint = CaptionLabel(tr("convert.output.same_hint"))
-        self.sameHint.setObjectName("stagedSub")
-        ocv.addWidget(self.sameHint)
-
-    def _row(self, label: str, control):
-        """Left-aligned label + control row (mirrors Compress interface)."""
-        row = QWidget()
-        h = QHBoxLayout(row)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(10)
-        lab = BodyLabel(label)
-        lab.setFixedWidth(96)
-        h.addWidget(lab)
-        if isinstance(control, (QHBoxLayout, QVBoxLayout)):
-            h.addLayout(control, 1)
-        else:
-            h.addWidget(control, 1)
-        return row
-
-    def _on_mode_fixed(self, fixed: bool):
-        cfg.outputMode.value = "fixed" if fixed else "same"
-        self._apply_output_mode()
-
-    def _apply_output_mode(self):
-        fixed = cfg.outputMode.value == "fixed"
-        self.outputLine.setEnabled(fixed)
-        self.outputChoose.setEnabled(fixed)
-        self.suffixEdit.setEnabled(not fixed)
-        self.sameHint.setEnabled(not fixed)
-
-    def _choose_output(self):
-        d = QFileDialog.getExistingDirectory(
-            self, tr("convert.output.choose"), cfg.outputFolder.value or ""
-        )
+    def _pick_folder(self):
+        d = QFileDialog.getExistingDirectory(self, tr("convert.add.folder"), "")
         if d:
-            cfg.outputFolder.value = d
-            self.outputLine.setText(d)
+            self._add_staged(self._expand([d]))
 
-    # ================================================================== #
-    # Staging card
-    # ================================================================== #
-    def _build_staging_card(self):
-        self.stagingCard = ThemedCard()
-        scv = QVBoxLayout(self.stagingCard)
-        scv.setContentsMargins(16, 14, 16, 14)
-        scv.setSpacing(10)
+    def _add_staged(self, paths: list[str]):
+        if not paths:
+            return
+        self._staged.extend(paths)
+        self._render_staging()
+        self._refresh_format_grid()
 
-        head = QHBoxLayout()
-        self.stagingTitle = StrongBodyLabel(tr("convert.staging.title"))
-        self.stagingCount = CaptionLabel("")
-        self.stagingClear = PushButton(tr("convert.staging.clear"))
-        head.addWidget(self.stagingTitle)
-        head.addWidget(self.stagingCount)
-        head.addStretch(1)
-        head.addWidget(self.stagingClear)
-        scv.addLayout(head)
-
-        self.stagingList = QVBoxLayout()
-        self.stagingList.setContentsMargins(0, 0, 0, 0)
-        self.stagingList.setSpacing(6)
-        # Wrap the staging list in an internal scroll area so many "待处理文件"
-        # scroll inside the card instead of pushing the whole page.
-        self.stagingWidget = QWidget()
-        self.stagingWidget.setLayout(self.stagingList)
-        self.stagingScroll = ScrollArea()
-        self.stagingScroll.setWidgetResizable(True)
-        self.stagingScroll.setWidget(self.stagingWidget)
-        self.stagingScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.stagingScroll.setStyleSheet("background-color: transparent; border: none;")
-        self.stagingScroll.setMaximumHeight(420)
-        scv.addWidget(self.stagingScroll, 1)
-
-        self.advancedPanel = AdvancedPanel()
-        scv.addWidget(self.advancedPanel)
-
-        self.stagingCard.setVisible(False)
-
-    def _refresh_staging(self):
-        while self.stagingList.count():
-            item = self.stagingList.takeAt(0)
-            w = item.widget() if item else None
+    def _render_staging(self):
+        while self.stagingLayout.count():
+            item = self.stagingLayout.takeAt(0)
+            w = item.widget()
             if w:
                 w.deleteLater()
+        if not self._staged:
+            self.stagingCount.setText(tr("convert.staging.empty"))
+            self.stagingLayout.addStretch(1)
+            return
+        self.stagingCount.setText(tr("convert.staging.count", count=len(self._staged)))
         for p in self._staged:
-            self.stagingList.addWidget(self._make_staged_row(p))
-        n = len(self._staged)
-        self.stagingCount.setText(f"（{n}）" if n else "")
-        self.stagingCard.setVisible(n > 0)
-        cats = sorted({guess_category(p) for p in self._staged if guess_category(p)})
-        self._refresh_format_cards(cats)
-        self.advancedPanel.refresh(cats)
-
-    def _make_staged_row(self, path: str) -> QWidget:
-        row = QWidget()
-        h = QHBoxLayout(row)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(8)
-
-        cat = guess_category(path) or "image"
-        icon = QLabel()
-        icon.setPixmap(
-            CATEGORY_ICON.get(cat, FIF.DOCUMENT)
-            .icon(Theme.DARK if isDarkTheme() else Theme.AUTO)
-            .pixmap(22, 22)
-        )
-        icon.setFixedSize(26, 26)
-        icon.setStyleSheet("background-color: transparent;")
-
-        name = StrongBodyLabel(Path(path).name)
-        sub = CaptionLabel(str(Path(path).parent))
-        sub.setObjectName("stagedSub")
-        text_col = QVBoxLayout()
-        text_col.setContentsMargins(0, 0, 0, 0)
-        text_col.setSpacing(1)
-        text_col.addWidget(name)
-        text_col.addWidget(sub)
-
-        remove = TransparentToolButton(FIF.DELETE, self)
-        remove.setFixedSize(30, 30)
-        remove.setToolTip(tr("convert.action.remove"))
-        remove.clicked.connect(lambda _=None, p=path: self._remove_staged(p))
-
-        h.addWidget(icon)
-        h.addLayout(text_col, 1)
-        h.addWidget(remove)
-        return row
+            row = QWidget()
+            hb = QHBoxLayout(row)
+            hb.setContentsMargins(4, 4, 4, 4)
+            name = QLabel(Path(p).name)
+            name.setObjectName("stagedName")
+            name.setToolTip(p)
+            name.setStyleSheet(f"color: {sub_text()};")
+            hb.addWidget(name, 1)
+            rm = icon_btn(FIF.DELETE, tr("convert.action.remove"))
+            rm.clicked.connect(lambda _, path=p: self._remove_staged(path))
+            hb.addWidget(rm)
+            self.stagingLayout.insertWidget(self.stagingLayout.count() - 1, row)
+        self.stagingLayout.addStretch(1)
 
     def _remove_staged(self, path: str):
         if path in self._staged:
             self._staged.remove(path)
-        self._refresh_staging()
+        self._render_staging()
+        self._refresh_format_grid()
 
-    def _clear_staging(self):
-        self._staged.clear()
-        self._refresh_staging()
+    # -- format grid -----------------------------------------------------
+    def _refresh_format_grid(self):
+        cats = sorted({guess_category(p) for p in self._staged if guess_category(p)})
+        self.formatGrid.setup(cats, self._selection)
 
-    # ================================================================== #
-    # Format matrix card
-    # ================================================================== #
-    def _build_format_card(self):
-        self.formatCard = ThemedCard()
-        fcv = QVBoxLayout(self.formatCard)
-        fcv.setContentsMargins(16, 14, 16, 14)
-        fcv.setSpacing(10)
+    def _on_selection(self, selection: dict):
+        self._selection.update(selection)
 
-        head = QHBoxLayout()
-        self.formatTitle = StrongBodyLabel(tr("convert.format.title"))
-        self.formatHint = CaptionLabel(tr("convert.format.hint"))
-        head.addWidget(self.formatTitle)
-        head.addStretch(1)
-        head.addWidget(self.formatHint)
-        fcv.addLayout(head)
+    # -- output ----------------------------------------------------------
+    def _on_output_mode(self, checked: bool):
+        cfg.outputMode.value = "same" if checked else "fixed"
+        self._apply_output_mode()
 
-        self.formatGrid = FormatGrid()
-        self.formatGrid.selectionChanged.connect(self._on_grid_selection)
-        fcv.addWidget(self.formatGrid)
+    def _apply_output_mode(self):
+        same = cfg.outputMode.value == "same"
+        self.outputSwitch.setChecked(same)
+        self.outputSwitch.setText(tr("convert.output.same") if same else tr("convert.output.fixed"))
+        self.suffixRow.setVisible(same)
+        self.folderRow.setVisible(not same)
 
-        self.addQueueBtn = PrimaryPushButton(tr("convert.format.add", n=0))
-        self.addQueueBtn.clicked.connect(self._on_add_to_queue)
-        fcv.addWidget(self.addQueueBtn)
-        self.formatCard.setVisible(False)
-
-    def _refresh_format_cards(self, cats=None):
-        if cats is None:
-            cats = sorted({guess_category(p) for p in self._staged if guess_category(p)})
-        for cat in cats:
-            if cat not in self._format_by_cat:
-                self._format_by_cat[cat] = TARGET_GROUPS[cat][0]
-        # Drop stale category selections no longer present.
-        self._format_by_cat = {c: f for c, f in self._format_by_cat.items() if c in cats}
-        if cats:
-            self.formatGrid.setup(cats, self._format_by_cat)
-            self.addQueueBtn.setText(tr("convert.format.add", n=len(self._staged)))
-            self.formatCard.setVisible(True)
-        else:
-            self.formatCard.setVisible(False)
-
-    def _on_grid_selection(self, sel: dict[str, str]):
-        self._format_by_cat.update(sel)
-        self.addQueueBtn.setText(tr("convert.format.add", n=len(self._staged)))
-
-    # ================================================================== #
-    # Task queue card
-    # ================================================================== #
-    def _build_queue_card(self):
-        self.queueCard = ThemedCard()
-        qcv = QVBoxLayout(self.queueCard)
-        qcv.setContentsMargins(16, 14, 16, 14)
-        qcv.setSpacing(10)
-
-        q_head = QHBoxLayout()
-        self.queueTitle = StrongBodyLabel(tr("convert.queue.title"))
-        q_head.addWidget(self.queueTitle)
-        q_head.addStretch(1)
-
-        self.queueList = QueueListWidget()
-
-        # Internal scrollbar: queue items scroll inside the card instead of
-        # pushing the whole Convert interface downward.
-        self.queueScroll = ScrollArea()
-        self.queueScroll.setWidgetResizable(True)
-        self.queueScroll.setWidget(self.queueList)
-        self.queueScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.queueScroll.setStyleSheet("background-color: transparent; border: none;")
-        self.queueScroll.setMaximumHeight(420)
-
-        # Portrait layout: control buttons stacked vertically.
-        self.controls = QVBoxLayout()
-        self.controls.setSpacing(8)
-        self.startBtn = PrimaryPushButton(FIF.PLAY, tr("convert.btn.start"))
-        self.pauseBtn = PushButton(FIF.PAUSE, tr("convert.btn.pause"))
-        self.pauseBtn.setEnabled(False)
-        self.clearBtn = PushButton(tr("convert.btn.clear"))
-        self.controls.addWidget(self.startBtn)
-        self.controls.addWidget(self.pauseBtn)
-        self.controls.addWidget(self.clearBtn)
-
-        qcv.addLayout(q_head)
-        qcv.addWidget(self.queueScroll, 1)
-        qcv.addLayout(self.controls)
-
-    # ================================================================== #
-    # Adding files
-    # ================================================================== #
-    def _expand(self, paths):
-        out = []
-        for p in paths:
-            pp = Path(p)
-            if pp.is_dir():
-                for f in pp.iterdir():
-                    if f.is_file() and f.suffix.lower() in ALL_EXTS:
-                        out.append(str(f))
-            elif pp.is_file() and pp.suffix.lower() in ALL_EXTS:
-                out.append(str(pp))
-        return out
-
-    def _gpu_enabled(self) -> bool:
-        hw = self.manager.hw
-        has_gpu = any(hw.get(k) for k in ("h264", "hevc"))
-        mode = cfg.hardware.value
-        if mode == "gpu":
-            return True
-        if mode == "cpu":
-            return False
-        return bool(has_gpu)
-
-    def _file_filter(self) -> str:
-        exts = " ".join(f"*{e}" for e in sorted(ALL_EXTS))
-        return f"Media Files ({exts});;All Files (*.*)"
-
-    def _on_paths(self, paths):
-        expanded = self._expand(paths)
-        if not expanded:
-            InfoBar.warning(
-                tr("convert.toast.empty"), "", parent=self.window(),
-                duration=2000, position=InfoBarPosition.TOP_RIGHT,
-            )
-            return
-        self._add_to_staging(expanded)
-
-    def _add_to_staging(self, paths):
-        added = 0
-        for p in paths:
-            if p not in self._staged:
-                self._staged.append(p)
-                added += 1
-        if added:
-            InfoBar.success(
-                tr("convert.toast.staged", n=added), "", parent=self.window(),
-                duration=2000, position=InfoBarPosition.TOP_RIGHT,
-            )
-        self._refresh_staging()
-
-    def _pick_files(self):
-        files, _ = QFileDialog.getOpenFileNames(
-            self, tr("convert.btn.add"), "", self._file_filter()
-        )
-        if files:
-            self._on_paths(files)
-
-    def _pick_folder(self):
-        d = QFileDialog.getExistingDirectory(
-            self, tr("convert.add_folder"), cfg.outputFolder.value or ""
-        )
+    def _pick_output(self):
+        d = QFileDialog.getExistingDirectory(self, tr("convert.output.browse"), cfg.outputFolder.value or "")
         if d:
-            self._on_paths([d])
+            cfg.outputFolder.value = d
+            self.folderEdit.setText(d)
 
+    # -- queue actions ---------------------------------------------------
     def _on_add_to_queue(self):
         if not self._staged:
             return
         mode = cfg.outputMode.value
-        folder = cfg.outputFolder.value
-        suffix = self.suffixEdit.text().strip()
-        cfg.outputSuffix.value = suffix
-        if mode == "fixed" and not folder:
-            InfoBar.warning(
-                tr("convert.output.fixed_empty"), "", parent=self.window(),
-                duration=3000, position=InfoBarPosition.TOP_RIGHT,
-            )
-            return
-
-        # Group staged files by category and enqueue per chosen format.
-        groups: dict[str, list[str]] = {}
+        suffix = cfg.outputSuffix.value
+        folder = cfg.outputFolder.value or ""
+        by_cat: dict[str, list[str]] = {}
         for p in self._staged:
             c = guess_category(p)
             if c:
-                groups.setdefault(c, []).append(p)
-
-        added_total = 0
-        skipped_total: list[str] = []
-        for cat, ps in groups.items():
-            fmt = self._format_by_cat.get(cat) or TARGET_GROUPS[cat][0]
-            added, skipped = self.manager.add_files(
-                ps, fmt, folder, self._gpu_enabled(), mode, suffix
+                by_cat.setdefault(c, []).append(p)
+        for cat, paths in by_cat.items():
+            fmt = self._selection.get(cat)
+            if not fmt:
+                continue
+            self.manager.add_files(
+                paths, fmt, folder if mode == "fixed" else None,
+                self._gpu_enabled(), mode, suffix,
             )
-            added_total += len(added)
-            skipped_total += skipped
+        self._staged = []
+        self._render_staging()
+        self._refresh_format_grid()
 
-        self._staged.clear()
-        self._refresh_staging()
-
-        if added_total:
-            InfoBar.success(
-                tr("convert.toast.added", n=added_total), "", parent=self.window(),
-                duration=2000, position=InfoBarPosition.TOP_RIGHT,
-            )
-        if skipped_total:
-            names = ", ".join(skipped_total[:3])
-            InfoBar.warning(
-                tr("convert.warn.unsupported", name=names), "", parent=self.window(),
-                duration=3000, position=InfoBarPosition.TOP_RIGHT,
-            )
-
-    # ================================================================== #
-    # Run controls
-    # ================================================================== #
-    def _on_start(self):
-        if not self.manager.has_ffmpeg:
-            InfoBar.error(
-                tr("convert.toast.no_ffmpeg"), "", parent=self.window(),
-                duration=3000, position=InfoBarPosition.TOP_RIGHT,
-            )
-            return
-        if not self.manager.tasks:
-            InfoBar.warning(
-                tr("convert.toast.empty"), "", parent=self.window(),
-                duration=2000, position=InfoBarPosition.TOP_RIGHT,
-            )
-            return
-        # Same-format conversions are allowed but deserve a heads-up.
-        same = self.manager.pending_same_format()
-        if same:
-            names = ", ".join(Path(t.input_path).name for t in same[:5])
-            box = MessageBox(
-                tr("convert.warn.same_format_start_title"),
-                tr("convert.warn.same_format_start", n=len(same)) + "\n" + names,
-                self.window(),
-            )
-            if not box.exec():
-                return
-        self._run_active = True
-        self.manager.start()
-
-    def _on_pause(self):
-        if self.manager.is_running and not self.manager.is_paused:
-            self.manager.pause()
-        else:
-            self.manager.resume()
-
-    def _on_clear(self):
-        box = MessageBox(tr("common.confirm_clear_title"), tr("common.confirm_clear"), self.window())
-        if box.exec():
-            self.manager.clear()
+    def _gpu_enabled(self) -> bool:
+        if cfg.hardware.value == "cpu":
+            return False
+        if cfg.hardware.value == "gpu":
+            return True
+        return bool(self.manager.hw)
 
     def _on_row_format(self, task_id: str, fmt: str):
         self.manager.set_task_target(task_id, fmt)
 
-    # ================================================================== #
-    # Manager signal handlers
-    # ================================================================== #
     def _on_ffmpeg_ready(self):
         self.manager.refresh_ffmpeg()
+        self._update_controls()
 
     def _sync_queue(self):
         self.queueList.sync(self.manager.tasks)
@@ -575,66 +315,81 @@ class ConvertInterface(InterfaceBase):
     def _on_finished(self, task_id: str, ok: bool, log: str):
         self.queueList.update_status(task_id, Task.DONE if ok else Task.FAILED, log)
         self._update_count()
-        if not ok:
-            task = self.manager.get_task(task_id)
-            name = Path(task.input_path).name if task else task_id
-            InfoBar.error(
-                tr("convert.toast.fail_one", name=name), "", parent=self.window(),
-                duration=3000, position=InfoBarPosition.TOP_RIGHT,
-            )
 
     def _on_state_changed(self):
         self._update_controls()
         self._update_count()
-        if self._run_active and not self.manager.is_running:
-            self._run_active = False
-            if self.manager.counts()["done"]:
-                InfoBar.success(
-                    tr("convert.toast.done"), "", parent=self.window(),
-                    duration=2500, position=InfoBarPosition.TOP_RIGHT,
-                )
+
+    def _update_count(self):
+        pass  # queueList owns its own stats; nothing extra needed here
 
     def _update_controls(self):
         running = self.manager.is_running
-        paused = self.manager.is_paused
-        self.startBtn.setEnabled(not running)
+        has = bool(self.manager.tasks)
+        self.startBtn.setEnabled(not running and has and self.manager.has_ffmpeg)
         self.pauseBtn.setEnabled(running)
-        if running and paused:
-            self.pauseBtn.setText(tr("convert.btn.resume"))
-            self.pauseBtn.setIcon(FIF.PLAY)
+        self.clearBtn.setEnabled(has)
+        if running and self.manager.is_paused:
+            self.pauseBtn.setText(tr("convert.resume"))
         else:
-            self.pauseBtn.setText(tr("convert.btn.pause"))
-            self.pauseBtn.setIcon(FIF.PAUSE)
+            self.pauseBtn.setText(tr("convert.pause"))
 
-    def _update_count(self):
-        c = self.manager.counts()
-        self.queueList._update_stats(c)
+    def _on_start(self):
+        if not self.manager.has_ffmpeg:
+            QMessageBox.warning(self, tr("common.warning"), tr("convert.start.no_ffmpeg"))
+            return
+        if not self.manager.tasks:
+            return
+        same = self.manager.pending_same_format()
+        if same:
+            ans = QMessageBox.question(
+                self, tr("common.warning"), tr("convert.start.same_format"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if ans != QMessageBox.StandardButton.Yes:
+                return
+        self.manager.start()
+        self._update_controls()
 
-    # ================================================================== #
-    # i18n
-    # ================================================================== #
+    def _on_pause(self):
+        if self.manager.is_running and not self.manager.is_paused:
+            self.manager.pause()
+        else:
+            self.manager.resume()
+        self._update_controls()
+
+    def _on_clear(self):
+        self.manager.clear()
+        self._update_controls()
+
+    # -- theme / i18n ----------------------------------------------------
+    def retheme(self):
+        self.dropArea.retheme()
+        self.formatGrid.retheme()
+        self.advancedPanel.retheme()
+
     def retranslateUi(self):
-        self.retranslate(tr("nav.convert"), tr("app.tagline"))
-        self.drop.retranslate()
+        self.titleLabel.setText(tr("nav.convert"))
+        self.subLabel.setText(tr("convert.subtitle"))
+        self.tInput.setText(tr("convert.input.title"))
+        self.tOutput.setText(tr("convert.output.title"))
+        self.tFormat.setText(tr("convert.format.title"))
+        self.tAdvanced.setText(tr("convert.advanced.title"))
+        self.tQueue.setText(tr("convert.queue.title"))
+
         self.ffmpegCard.retranslateUi()
-        self.outputTitle.setText(tr("convert.output.label"))
-        self.modeFixed.setText(tr("convert.output.mode.fixed"))
-        self.outputLine.setPlaceholderText(tr("convert.output.same_dir"))
-        self.outputChoose.setText(tr("convert.output.choose"))
-        self.suffixEdit.setPlaceholderText(tr("convert.output.suffix_hint"))
-        self.sameHint.setText(tr("convert.output.same_hint"))
-        self.stagingTitle.setText(tr("convert.staging.title"))
-        self.stagingClear.setText(tr("convert.staging.clear"))
-        self.formatTitle.setText(tr("convert.format.title"))
-        self.formatHint.setText(tr("convert.format.hint"))
-        self.addQueueBtn.setText(tr("convert.format.add", n=len(self._staged)))
-        self.addBtn.setText(tr("convert.btn.add"))
-        self.addFolderBtn.setText(tr("convert.add_folder"))
-        self.queueTitle.setText(tr("convert.queue.title"))
-        self.startBtn.setText(tr("convert.btn.start"))
-        self.pauseBtn.setText(tr("convert.btn.pause"))
-        self.clearBtn.setText(tr("convert.btn.clear"))
-        self.queueList.retranslate()
+        self.dropArea.retranslate(
+            tr("convert.drop.title"), tr("convert.drop.hint"), tr("convert.drop.formats"))
+        self.addFilesBtn.setText(tr("convert.add.files"))
+        self.addFolderBtn.setText(tr("convert.add.folder"))
+        self.addQueueBtn.setText(tr("convert.queue.add"))
+        self.suffixEdit.setPlaceholderText(tr("convert.output.suffix.ph"))
+        self._apply_output_mode()
         self.formatGrid.retranslate()
         self.advancedPanel.retranslate()
-        self._update_count()
+        self.queueList.retranslate()
+        self.startBtn.setText(tr("convert.start"))
+        self.pauseBtn.setText(tr("convert.pause"))
+        self.clearBtn.setText(tr("convert.clear"))
+        self._render_staging()
+        self._update_controls()
