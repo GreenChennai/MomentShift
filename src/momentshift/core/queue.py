@@ -26,6 +26,53 @@ from . import advanced
 log = get_logger("queue")
 
 
+def compress_after_conversion(task: "Task") -> None:
+    """Optional post-step: compress an image output if the user opted in.
+
+    Runs only for image tasks whose advanced ``compress`` flag is set. Never
+    raises — a compression failure must not fail an otherwise-good conversion;
+    we just keep the ffmpeg output and log a warning.
+    """
+    adv = task.adv or {}
+    if not adv.get("compress"):
+        return
+    if task.category != "image":
+        return
+
+    from pathlib import Path as _Path
+    from . import compressor
+
+    mode = adv.get("compress_mode", "lossless")
+    preferred = adv.get("compress_backend", "auto")
+    preferred = None if preferred == "auto" else preferred
+    quality = int(adv.get("quality", 100))
+    fmt = _Path(task.output_path).suffix.lower().lstrip(".")
+
+    opts: dict = {}
+    if fmt == "png":
+        opts = dict(adv.get("png_oxipng", {}))
+    elif fmt in ("jpg", "jpeg"):
+        opts = dict(adv.get("jpg_mozjpeg", {}))
+
+    tmp = str(task.output_path) + ".cmp.tmp"
+    try:
+        ok, detail, saved = compressor.compress_auto(
+            task.output_path, tmp, mode, quality, opts, preferred=preferred
+        )
+        if ok and _Path(tmp).exists():
+            _Path(tmp).replace(task.output_path)
+            task.dst_size = _Path(task.output_path).stat().st_size
+            log.info("compressed %s -> %s (saved %d bytes)", task.input_path, detail, saved)
+        else:
+            log.warning("image compression skipped: %s", detail)
+            if _Path(tmp).exists():
+                _Path(tmp).unlink()
+    except Exception:  # pragma: no cover - defensive
+        log.exception("image compression failed for %s", task.output_path)
+        if _Path(tmp).exists():
+            _Path(tmp).unlink()
+
+
 class WorkerSignals(QObject):
     """Signals tunneled out of a worker thread."""
 
@@ -65,6 +112,8 @@ class ConversionWorker(QRunnable):
                 cancel_event=self.cancel_event,
             )
             ok = returncode == 0
+            if ok and self.task.category == "image":
+                compress_after_conversion(self.task)
             self.signals.finished.emit(self.task.id, ok, (err or "") if not ok else "")
         except Exception:
             get_logger("queue").exception("Worker crashed for task %s", self.task.id)

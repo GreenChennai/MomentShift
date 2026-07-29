@@ -28,8 +28,21 @@ def default_options() -> dict:
     """Return a fresh copy of the default advanced options for every category."""
     return {
         "image": {
-            "quality": 95,        # 1..100, higher = better (for lossy targets)
+            # Output quality 1..100 (higher = better). Default 100 so every
+            # image is produced at the best possible quality / lossless-first.
+            "quality": 100,
             "lossless": True,     # png stays lossless
+            # --- image compression (post-conversion / dedicated Compress) ---
+            "compress": True,          # enable compression for image outputs
+            "compress_mode": "lossless",   # lossless | lossy
+            "compress_backend": "auto",    # auto | pillow | oxipng | optipng | mozjpeg
+            # per-backend parameter groups (only the relevant ones are used)
+            "png_oxipng": {"level": 2, "interlace": False, "strip": "safe"},
+            "png_optipng": {"level": 2, "strip": "all"},
+            "jpg_mozjpeg": {
+                "quality": 100, "progressive": True,
+                "strip": True, "arithmetic": False,
+            },
         },
         "video": {
             "resolution": "original",

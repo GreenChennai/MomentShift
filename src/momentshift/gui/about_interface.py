@@ -2,7 +2,6 @@
 
 from ..core.qt_compat import QVBoxLayout, QDesktopServices, QUrl
 from qfluentwidgets import (
-    CardWidget,
     FluentIcon as FIF,
     TitleLabel,
     BodyLabel,
@@ -14,13 +13,14 @@ from qfluentwidgets import (
 from ..i18n.translator import tr
 from ..metadata import APP_NAME, VERSION, AUTHOR, REPO_URL, RELEASE_URL
 from .base import InterfaceBase
+from .theme import ThemedCard
 
 
 class AboutInterface(InterfaceBase):
     def __init__(self, parent=None):
         super().__init__("About", tr("about.title"), "", parent)
 
-        card = CardWidget()
+        card = ThemedCard()
         cv = QVBoxLayout(card)
         cv.setContentsMargins(22, 22, 22, 22)
         cv.setSpacing(10)

@@ -21,6 +21,7 @@ from qfluentwidgets import (
     isDarkTheme,
     Theme,
 )
+from .theme import ThemedCard
 from ..i18n.translator import tr
 from ..core.presets import TARGET_GROUPS
 from ..core.models import Task
@@ -64,6 +65,38 @@ class ClickLabel(QLabel):
     def mousePressEvent(self, event):
         self.clicked.emit()
         super().mousePressEvent(event)
+
+
+class StatusPill(QLabel):
+    """A compact, color-coded status chip.
+
+    Replaces the old column header: each task card is now self-describing, so a
+    status pill (plus the visible filename / format / progress) makes the queue
+    readable without a separate, hard-to-align table header on a 400px window.
+    """
+
+    _COLORS = {
+        "pending":  ("rgba(128,128,128,32)", "rgba(120,120,120,1)"),
+        "running":  ("rgba(32,128,240,46)", "rgba(28,110,210,1)"),
+        "done":     ("rgba(80,180,100,46)", "rgba(46,140,70,1)"),
+        "failed":   ("rgba(220,80,80,50)",  "rgba(200,60,60,1)"),
+        "canceled": ("rgba(128,128,128,32)", "rgba(120,120,120,1)"),
+    }
+
+    def __init__(self, status: str = "pending", parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFixedHeight(20)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.set_status(status)
+
+    def set_status(self, status: str):
+        bg, fg = self._COLORS.get(status, self._COLORS["pending"])
+        self.setText(tr(f"convert.status.{status}"))
+        self.setStyleSheet(
+            f"padding: 0 9px; border-radius: 10px; font-size: 11px;"
+            f" background-color: {bg}; color: {fg};"
+        )
 
 
 class ProgressBar(QWidget):
@@ -112,7 +145,7 @@ class ProgressBar(QWidget):
             p.drawRoundedRect(fill_rect, 4, 4)
 
 
-class QueueItemWidget(CardWidget):
+class QueueItemWidget(ThemedCard):
     """A single task row inside the queue (portrait-friendly layout)."""
 
     removeRequested = Signal(str)
@@ -146,9 +179,7 @@ class QueueItemWidget(CardWidget):
         self.nameLabel = StrongBodyLabel(Path(task.input_path).name)
         self.nameLabel.setToolTip(str(task.input_path))
 
-        self.statusLabel = CaptionLabel(tr(f"convert.status.{task.status}"))
-        self.statusLabel.setObjectName("queueStatus")
-        self.statusLabel.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.statusLabel = StatusPill(task.status)
 
         self.retryBtn = TransparentToolButton(FIF.SYNC, self)
         self.retryBtn.setToolTip(tr("convert.action.retry"))
@@ -253,7 +284,7 @@ class QueueItemWidget(CardWidget):
 
     def set_status(self, status: str, error: str = ""):
         self.task.status = status
-        self.statusLabel.setText(tr(f"convert.status.{status}"))
+        self.statusLabel.set_status(status)
         self.retryBtn.setVisible(status == Task.FAILED)
         self.copyBtn.setVisible(status == Task.DONE)
         self.progress.set_error(status == Task.FAILED)
@@ -283,7 +314,7 @@ class QueueItemWidget(CardWidget):
         )
 
     def retranslate(self):
-        self.statusLabel.setText(tr(f"convert.status.{self.task.status}"))
+        self.statusLabel.set_status(self.task.status)
         self.retryBtn.setToolTip(tr("convert.action.retry"))
         self.removeBtn.setToolTip(tr("convert.action.remove"))
         self.copyBtn.setToolTip(tr("convert.result.copy"))
@@ -316,27 +347,6 @@ class QueueListWidget(QWidget):
             stats.addWidget(label)
         stats.addStretch(1)
         self.layout.addLayout(stats)
-
-        # ---- header ----
-        header = QHBoxLayout()
-        header.setSpacing(6)
-        header.setContentsMargins(4, 0, 4, 0)
-        self.headerName = QLabel(tr("convert.queue.header.name"))
-        self.headerStatus = QLabel(tr("convert.queue.header.status"))
-        self.headerFormat = QLabel(tr("convert.queue.header.format"))
-        self.headerProgress = QLabel(tr("convert.queue.header.progress"))
-        for label in (self.headerName, self.headerStatus, self.headerFormat, self.headerProgress):
-            label.setObjectName("queueSub")
-        self.headerName.setFixedWidth(110)
-        self.headerStatus.setFixedWidth(46)
-        self.headerFormat.setFixedWidth(50)
-        self.headerProgress.setFixedWidth(52)
-        header.addWidget(self.headerName)
-        header.addWidget(self.headerStatus)
-        header.addWidget(self.headerFormat)
-        header.addWidget(self.headerProgress)
-        header.addStretch(1)
-        self.layout.addLayout(header)
 
         # ---- list ----
         self.listLayout = QVBoxLayout()
@@ -415,9 +425,5 @@ class QueueListWidget(QWidget):
         self.statTotal.setText(tr("convert.queue.stats.total", n=0))
         self.statRunning.setText(tr("convert.queue.stats.running", n=0))
         self.statError.setText(tr("convert.queue.stats.error", n=0))
-        self.headerName.setText(tr("convert.queue.header.name"))
-        self.headerStatus.setText(tr("convert.queue.header.status"))
-        self.headerFormat.setText(tr("convert.queue.header.format"))
-        self.headerProgress.setText(tr("convert.queue.header.progress"))
         for w in self.items.values():
             w.retranslate()

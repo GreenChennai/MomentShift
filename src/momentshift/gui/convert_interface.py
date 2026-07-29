@@ -43,7 +43,7 @@ from .queue_widget import QueueListWidget
 from .ffmpeg_card import FfmpegCard
 from .format_grid import FormatGrid
 from .advanced_panel import AdvancedPanel
-from .theme import sub_text, hint_text, muted_text
+from .theme import sub_text, hint_text, muted_text, ThemedCard
 
 ALL_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
 CATEGORY_ICON = {"image": FIF.PHOTO, "audio": FIF.MUSIC, "video": FIF.VIDEO}
@@ -146,7 +146,7 @@ class ConvertInterface(InterfaceBase):
     # Output location card
     # ================================================================== #
     def _build_output_card(self):
-        self.outputCard = CardWidget()
+        self.outputCard = ThemedCard()
         ocv = QVBoxLayout(self.outputCard)
         ocv.setContentsMargins(16, 14, 16, 14)
         ocv.setSpacing(10)
@@ -228,7 +228,7 @@ class ConvertInterface(InterfaceBase):
     # Staging card
     # ================================================================== #
     def _build_staging_card(self):
-        self.stagingCard = CardWidget()
+        self.stagingCard = ThemedCard()
         scv = QVBoxLayout(self.stagingCard)
         scv.setContentsMargins(16, 14, 16, 14)
         scv.setSpacing(10)
@@ -316,7 +316,7 @@ class ConvertInterface(InterfaceBase):
     # Format matrix card
     # ================================================================== #
     def _build_format_card(self):
-        self.formatCard = CardWidget()
+        self.formatCard = ThemedCard()
         fcv = QVBoxLayout(self.formatCard)
         fcv.setContentsMargins(16, 14, 16, 14)
         fcv.setSpacing(10)
@@ -361,7 +361,7 @@ class ConvertInterface(InterfaceBase):
     # Task queue card
     # ================================================================== #
     def _build_queue_card(self):
-        self.queueCard = CardWidget()
+        self.queueCard = ThemedCard()
         qcv = QVBoxLayout(self.queueCard)
         qcv.setContentsMargins(16, 14, 16, 14)
         qcv.setSpacing(10)

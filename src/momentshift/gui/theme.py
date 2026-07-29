@@ -9,7 +9,7 @@ fires (see ``gui.main_window._retheme_all``).
 
 from __future__ import annotations
 
-from qfluentwidgets import isDarkTheme, qconfig, Theme
+from qfluentwidgets import isDarkTheme, qconfig, Theme, CardWidget
 from PyQt6.QtGui import QColor
 
 # Window chrome + content background per theme (neutral Material-like greys).
@@ -17,6 +17,41 @@ from PyQt6.QtGui import QColor
 # including the content area behind transparent scroll views — stays coherent.
 LIGHT_BG = QColor(244, 244, 244)
 DARK_BG = QColor(32, 32, 32)
+
+# Uniform "component" background used by cards. This is the colour that any
+# transparent text/icon *inside* a card resolves to, so the patch behind a
+# label always matches the card surface (no more ~#F4F4F4 vs #FBFBFB mismatch).
+COMPONENT_LIGHT = QColor(251, 251, 251)   # #FBFBFB
+COMPONENT_DARK = QColor(43, 43, 43)       # #2B2B2B
+HOVER_LIGHT = QColor(242, 242, 242)
+HOVER_DARK = QColor(54, 54, 54)
+PRESS_LIGHT = QColor(236, 236, 236)
+PRESS_DARK = QColor(38, 38, 38)
+
+
+def component_bg() -> QColor:
+    """Solid background colour a card (and the text/icons inside it) should use."""
+    return COMPONENT_DARK if isDarkTheme() else COMPONENT_LIGHT
+
+
+class ThemedCard(CardWidget):
+    """A ``CardWidget`` that paints a *solid* theme-aware component colour.
+
+    qfluentwidgets' default ``CardWidget`` paints a translucent white overlay
+    over whatever is behind it, so a transparent label inside a card resolved to
+    the content-view colour (e.g. ``#F4F4F4``) instead of the card surface
+    (``#FBFBFB``). Painting an opaque component colour here keeps the whole card,
+    and every label/icon on it, visually uniform.
+    """
+
+    def _normalBackgroundColor(self):
+        return component_bg()
+
+    def _hoverBackgroundColor(self):
+        return HOVER_DARK if isDarkTheme() else HOVER_LIGHT
+
+    def _pressedBackgroundColor(self):
+        return PRESS_DARK if isDarkTheme() else PRESS_LIGHT
 
 
 def content_bg() -> QColor:

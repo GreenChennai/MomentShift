@@ -2,3 +2,6 @@
 # GUI toolkit: PyQt6 + PyQt6-Fluent-Widgets (package name is `qfluentwidgets`)
 PyQt6>=6.6.0
 PyQt6-Fluent-Widgets>=1.6.0
+# Image compression engine (always-available backend for the Compress feature).
+# oxipng / OptiPNG / mozjpeg are optional external binaries detected at runtime.
+Pillow>=10.0.0

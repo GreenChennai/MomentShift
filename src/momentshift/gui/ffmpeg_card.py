@@ -8,7 +8,6 @@ executable (the install root).
 
 from ..core.qt_compat import QHBoxLayout, QVBoxLayout, Signal, QDesktopServices, QUrl, QThreadPool
 from qfluentwidgets import (
-    CardWidget,
     FluentIcon as FIF,
     StrongBodyLabel,
     CaptionLabel,
@@ -21,11 +20,12 @@ from qfluentwidgets import (
 from ..core.ffmpeg import find_ffmpeg, ffmpeg_install_dir
 from ..core.ffmpeg_download import FfmpegDownloadWorker
 from ..i18n.translator import tr
+from .theme import ThemedCard
 
 FFMPEG_DOWNLOAD_PAGE = "https://ffmpeg.org/download.html"
 
 
-class FfmpegCard(CardWidget):
+class FfmpegCard(ThemedCard):
     """Compact banner: ffmpeg status + link / one-click download."""
 
     ffmpeg_ready = Signal()

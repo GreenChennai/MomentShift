@@ -13,6 +13,8 @@ venv/
 build/
 dist/
 dist_build/
+dist_build_*/
+build_work_*/
 release/
 *.manifest
 *.spec.bak

@@ -16,6 +16,7 @@ from qfluentwidgets import ConfigItem
 from qfluentwidgets import qconfig
 from .theme import LIGHT_BG, DARK_BG
 from .convert_interface import ConvertInterface
+from .compress_interface import CompressInterface
 from .setting_interface import SettingInterface
 from .about_interface import AboutInterface
 
@@ -29,6 +30,7 @@ class MainWindow(FluentWindow):
         self.themeListener = SystemThemeListener(self)
 
         self.convertInterface = ConvertInterface(manager, self)
+        self.compressInterface = CompressInterface(self)
         self.settingInterface = SettingInterface(self)
         self.aboutInterface = AboutInterface(self)
 
@@ -62,6 +64,7 @@ class MainWindow(FluentWindow):
 
     def _retheme_all(self):
         self.convertInterface.retheme()
+        self.compressInterface.retheme()
         self.settingInterface.retheme()
         self.aboutInterface.retheme()
 
@@ -74,11 +77,13 @@ class MainWindow(FluentWindow):
 
     def retranslate_all(self):
         self.convertInterface.retranslateUi()
+        self.compressInterface.retranslateUi()
         self.settingInterface.retranslateUi()
         self.aboutInterface.retranslateUi()
         nav = self.navigationInterface
         if hasattr(nav, "setItemText"):
             nav.setItemText("Convert", tr("nav.convert"))
+            nav.setItemText("Compress", tr("nav.compress"))
             nav.setItemText("Settings", tr("nav.settings"))
             nav.setItemText("About", tr("nav.about"))
         self.setWindowTitle(tr("app.title"))
@@ -86,6 +91,7 @@ class MainWindow(FluentWindow):
     # -- navigation ------------------------------------------------------
     def initNavigation(self):
         self.addSubInterface(self.convertInterface, FIF.HOME, tr("nav.convert"))
+        self.addSubInterface(self.compressInterface, FIF.PHOTO, tr("nav.compress"))
         self.addSubInterface(
             self.settingInterface, FIF.SETTING, tr("nav.settings"),
             position=NavigationItemPosition.BOTTOM,

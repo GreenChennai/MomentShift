@@ -17,6 +17,7 @@ from qfluentwidgets import (
     CaptionLabel,
 )
 from ..core import advanced
+from ..core import compressor
 from ..i18n.translator import tr
 from .theme import sub_text
 
@@ -133,7 +134,7 @@ class AdvancedPanel(QWidget):
         if cat == "image":
             slider = Slider(Qt.Orientation.Horizontal)
             slider.setRange(1, 100)
-            slider.setValue(int(opt.get("quality", 95)))
+            slider.setValue(int(opt.get("quality", 100)))
             val_label = CaptionLabel(f"{slider.value()}")
             val_label.setFixedWidth(34)
             slider.valueChanged.connect(
@@ -150,6 +151,8 @@ class AdvancedPanel(QWidget):
             panel.body_layout.addWidget(
                 CaptionLabel(tr("convert.advanced.quality_hint"))
             )
+            # --- image compression controls (feature: Compress) ---
+            panel.body_layout.addWidget(self._build_image_compress(cat))
 
         elif cat == "video":
             panel.body_layout.addWidget(self._combo_row(
@@ -168,6 +171,161 @@ class AdvancedPanel(QWidget):
                 cat, "merge", tr("convert.advanced.merge")))
 
         return panel
+
+    def _build_image_compress(self, cat: str) -> QWidget:
+        """Compression controls for the image advanced panel.
+
+        Adds: a compress on/off switch, a lossless/lossy mode selector, a backend
+        picker (auto + whatever is installed), and a nested expander exposing the
+        per-backend tuning knobs (oxipng / OptiPNG / mozjpeg).
+        """
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(10)
+
+        img = advanced.adv[cat]
+
+        # compress on/off
+        sw = SwitchButton()
+        sw.setChecked(bool(img.get("compress", True)))
+        sw.checkedChanged.connect(lambda b: advanced.adv[cat].__setitem__("compress", bool(b)))
+        v.addWidget(self._row(tr("compress.advanced.enable"), sw))
+
+        # mode (lossless / lossy)
+        mode_combo = ComboBox()
+        for text, val in ((tr("compress.mode.lossless"), "lossless"),
+                          (tr("compress.mode.lossy"), "lossy")):
+            mode_combo.addItem(text, userData=val)
+        for i in range(mode_combo.count()):
+            mode_combo.setCurrentIndex(i)
+            if mode_combo.currentData() == img.get("compress_mode", "lossless"):
+                break
+        mode_combo.currentIndexChanged.connect(
+            lambda _i, cb=mode_combo: advanced.adv[cat].__setitem__("compress_mode", cb.currentData())
+        )
+        v.addWidget(self._row(tr("compress.mode"), mode_combo))
+
+        # backend picker
+        backend_combo = ComboBox()
+        backend_combo.addItem(tr("compress.backend.auto"), userData="auto")
+        for bid, b in compressor.available_backends().items():
+            backend_combo.addItem(b["name"], userData=bid)
+        for i in range(backend_combo.count()):
+            backend_combo.setCurrentIndex(i)
+            if backend_combo.currentData() == img.get("compress_backend", "auto"):
+                break
+        backend_combo.currentIndexChanged.connect(
+            lambda _i, cb=backend_combo: advanced.adv[cat].__setitem__("compress_backend", cb.currentData())
+        )
+        v.addWidget(self._row(tr("compress.backend"), backend_combo))
+
+        # per-backend advanced params
+        exp = ExpandWidget(tr("compress.advanced.params"), expanded=False)
+        exp.body_layout.addWidget(self._oxipng_params())
+        exp.body_layout.addWidget(self._optipng_params())
+        exp.body_layout.addWidget(self._mozjpeg_params())
+        v.addWidget(exp)
+        return container
+
+    def _oxipng_params(self) -> QWidget:
+        grp = QWidget()
+        v = QVBoxLayout(grp)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(8)
+        v.addWidget(BodyLabel(tr("compress.advanced.oxipng")))
+        opt = advanced.adv["image"]["png_oxipng"]
+
+        lvl = Slider(Qt.Orientation.Horizontal)
+        lvl.setRange(0, 6)
+        lvl.setValue(int(opt.get("level", 2)))
+        lvl_val = CaptionLabel(str(lvl.value()))
+        lvl_val.setFixedWidth(34)
+        lvl.valueChanged.connect(
+            lambda val: (opt.__setitem__("level", val), lvl_val.setText(str(val)))
+        )
+        lr = QWidget(); lrh = QHBoxLayout(lr); lrh.setContentsMargins(0,0,0,0)
+        lrh.setSpacing(10); lrh.addWidget(lvl, 1); lrh.addWidget(lvl_val)
+        v.addWidget(self._row(tr("compress.advanced.level"), lr))
+
+        inter = SwitchButton(); inter.setChecked(bool(opt.get("interlace", False)))
+        inter.checkedChanged.connect(lambda b: opt.__setitem__("interlace", bool(b)))
+        v.addWidget(self._row(tr("compress.advanced.interlace"), inter))
+
+        strip = ComboBox()
+        for t in ("safe", "all"):
+            strip.addItem(t, userData=t)
+        for i in range(strip.count()):
+            strip.setCurrentIndex(i)
+            if strip.currentData() == opt.get("strip", "safe"):
+                break
+        strip.currentIndexChanged.connect(lambda _i, cb=strip: opt.__setitem__("strip", cb.currentData()))
+        v.addWidget(self._row(tr("compress.advanced.strip"), strip))
+        return grp
+
+    def _optipng_params(self) -> QWidget:
+        grp = QWidget()
+        v = QVBoxLayout(grp)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(8)
+        v.addWidget(BodyLabel(tr("compress.advanced.optipng")))
+        opt = advanced.adv["image"]["png_optipng"]
+
+        lvl = Slider(Qt.Orientation.Horizontal)
+        lvl.setRange(0, 7)
+        lvl.setValue(int(opt.get("level", 2)))
+        lvl_val = CaptionLabel(str(lvl.value()))
+        lvl_val.setFixedWidth(34)
+        lvl.valueChanged.connect(
+            lambda val: (opt.__setitem__("level", val), lvl_val.setText(str(val)))
+        )
+        lr = QWidget(); lrh = QHBoxLayout(lr); lrh.setContentsMargins(0,0,0,0)
+        lrh.setSpacing(10); lrh.addWidget(lvl, 1); lrh.addWidget(lvl_val)
+        v.addWidget(self._row(tr("compress.advanced.level"), lr))
+
+        strip = ComboBox()
+        for t in ("all", "safe", "none"):
+            strip.addItem(t, userData=t)
+        for i in range(strip.count()):
+            strip.setCurrentIndex(i)
+            if strip.currentData() == opt.get("strip", "all"):
+                break
+        strip.currentIndexChanged.connect(lambda _i, cb=strip: opt.__setitem__("strip", cb.currentData()))
+        v.addWidget(self._row(tr("compress.advanced.strip"), strip))
+        return grp
+
+    def _mozjpeg_params(self) -> QWidget:
+        grp = QWidget()
+        v = QVBoxLayout(grp)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(8)
+        v.addWidget(BodyLabel(tr("compress.advanced.mozjpeg")))
+        opt = advanced.adv["image"]["jpg_mozjpeg"]
+
+        q = Slider(Qt.Orientation.Horizontal)
+        q.setRange(1, 100)
+        q.setValue(int(opt.get("quality", 100)))
+        q_val = CaptionLabel(str(q.value()))
+        q_val.setFixedWidth(34)
+        q.valueChanged.connect(
+            lambda val: (opt.__setitem__("quality", val), q_val.setText(str(val)))
+        )
+        qr = QWidget(); qrh = QHBoxLayout(qr); qrh.setContentsMargins(0,0,0,0)
+        qrh.setSpacing(10); qrh.addWidget(q, 1); qrh.addWidget(q_val)
+        v.addWidget(self._row(tr("compress.quality"), qr))
+
+        prog = SwitchButton(); prog.setChecked(bool(opt.get("progressive", True)))
+        prog.checkedChanged.connect(lambda b: opt.__setitem__("progressive", bool(b)))
+        v.addWidget(self._row(tr("compress.advanced.progressive"), prog))
+
+        arith = SwitchButton(); arith.setChecked(bool(opt.get("arithmetic", False)))
+        arith.checkedChanged.connect(lambda b: opt.__setitem__("arithmetic", bool(b)))
+        v.addWidget(self._row(tr("compress.advanced.arithmetic"), arith))
+
+        strip = SwitchButton(); strip.setChecked(bool(opt.get("strip", True)))
+        strip.checkedChanged.connect(lambda b: opt.__setitem__("strip", bool(b)))
+        v.addWidget(self._row(tr("compress.advanced.strip_meta"), strip))
+        return grp
 
     def _combo_row(self, cat: str, key: str, label: str, options: list[str]) -> QWidget:
         combo = ComboBox()
