@@ -25,7 +25,6 @@ from qfluentwidgets import (
     LineEdit,
     StrongBodyLabel,
     CaptionLabel,
-    FlowLayout,
     InfoBar,
     InfoBarPosition,
     MessageBox,
