@@ -313,6 +313,8 @@ class CompressInterface(InterfaceBase):
 
         # 通用压缩参数（目标格式 + 质量）
         self.paramsGroup = QWidget()
+        # 强制透明背景，防止在深/浅色主题下出现异常色块 (v0.3.1, #6)
+        self.paramsGroup.setStyleSheet("background: transparent;")
         fq = QVBoxLayout(self.paramsGroup)
         fq.setContentsMargins(0, 0, 0, 0)
         fq.setSpacing(6)
@@ -545,7 +547,7 @@ class CompressInterface(InterfaceBase):
         try:
             d = QFileDialog.getExistingDirectory(
                 self, tr("compress.output.browse"), self._folder or "",
-                QFileDialog.Option.DontUseNativeDialog)
+                )
             if d:
                 self._folder = d
                 cfg.compressFolder.value = d
@@ -587,7 +589,7 @@ class CompressInterface(InterfaceBase):
             flt = "Images (" + " ".join(f"*{e}" for e in sorted(IMAGE_EXTS)) + ")"
             files, _ = QFileDialog.getOpenFileNames(
                 self, tr("compress.add.files"), "", flt, "",
-                QFileDialog.Option.DontUseNativeDialog,
+                ""
             )
             if files:
                 self._on_files(files)
@@ -602,7 +604,7 @@ class CompressInterface(InterfaceBase):
         try:
             d = QFileDialog.getExistingDirectory(
                 self, tr("compress.add.folder"), "",
-                QFileDialog.Option.DontUseNativeDialog)
+                )
             if d:
                 self._on_files([d])
         finally:

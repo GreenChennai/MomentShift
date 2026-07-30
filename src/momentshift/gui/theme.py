@@ -46,14 +46,26 @@ _PALETTE_LIGHT = {
     "red500": "#FF7279", "red900": "#B4324B", "green500": "#3EB68F",
 }
 _PALETTE_DARK = {
-    "bg000": "#171619", "bg100": "#292929", "bg200": "#424242",
-    "surface_base": "#10131A", "surface_raised": "#11122F",
-    "text900": "#EFEFEF", "text600": "#C7C7C7", "text500": "#767577",
-    "text_primary": "#878A91", "text_secondary": "#74777E", "text400": "#8B8B93",
-    "border300": "#575757", "border_default": "#1A1835",
-    "brand": "#238636", "blue900": "#4AAEFF", "accent": "#030036",
-    "red500": "#E46D70", "red900": "#F6BFBF", "green500": "#27B17D",
-    "success": "#A3D4AD",
+    "bg000": "#0d0d0d",       # 窗口背景 (VS Code 风格)
+    "bg100": "#1e1e1e",       # 卡片/组件表面
+    "bg200": "#2d2d2d",       # hover 态表面
+    "surface_base": "#1a1a1a",    # 备用表面 (原为暗蓝 #10131A)
+    "surface_raised": "#252525",  # 浮起表面 (原为暗蓝 #11122F)
+    "text900": "#f0f0f0",     # 主文字 (接近纯白)
+    "text600": "#cdcdcd",     # 次要文字 (原 #C7C7C7，微提亮)
+    "text500": "#8a8a8a",     # 占位符文字 (原 #767577 对比度不足)
+    "text_primary": "#d0d0d0",   # 标签主文字 (原 #878A91 太暗)
+    "text_secondary": "#a0a0a0", # 标签次要文字 (原 #74777E 几乎不可见)
+    "text400": "#7e7e7e",     # 禁用/弱化文字 (原 #8B8B93)
+    "border300": "#484848",   # 边框 (原 #575757，加亮使可见)
+    "border_default": "#2a2a2a", # 默认/微弱边框
+    "brand": "#238636",       # 品牌绿 (不变)
+    "blue900": "#4AAEFF",     # 链接蓝 (不变)
+    "accent": "#238636",      # 强调色 = 品牌绿 (原为 #030036 诡异暗蓝)
+    "red500": "#E46D70",      # 危险色 (不变)
+    "red900": "#F6BFBF",      # 危险文字 (不变)
+    "green500": "#27B17D",     # 成功色 (不变)
+    "success": "#A3D4AD",      # 成功文字 (不变)
 }
 
 

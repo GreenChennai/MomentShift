@@ -1,25 +1,44 @@
 """Entry point: ``python -m momentshift`` or the installed ``momentshift`` CLI.
 
 v0.2.9: ``--quick <task> <files...>`` mode for Windows right-click context menu.
-"""
+v0.3.1: single-instance enforcement via QSharedMemory."""
 
 import sys
 import threading
 import traceback
+import os
 
-# NOTE: use ABSOLUTE imports here. PyInstaller freezes this file as the
-# top-level script ``__main__`` (no parent package context), so relative
-# imports (``from .core ...``) raise "attempted relative import with no known
-# parent package". Absolute imports work both frozen and via ``python -m momentshift``.
 from momentshift.core.logger import init_logging, get_logger
 from PyQt6.QtGui import QColor
 from momentshift.core.qt_compat import QApplication, Qt
+from PyQt6.QtCore import QSharedMemory
+from PyQt6.QtWidgets import QMessageBox
 from qfluentwidgets import setTheme, Theme, setThemeColor
 from momentshift.core.config import cfg
 from momentshift.i18n.translator import translator, LocaleKey
 from momentshift.core.queue import ConversionManager
 from momentshift.gui.main_window import MainWindow
 from momentshift.metadata import APP_NAME, VERSION
+
+
+# ---------------------------------------------------------------------------
+# 单实例守卫（v0.3.1）：同一时刻只允许运行一个 MomentShift 进程
+# ---------------------------------------------------------------------------
+_instance_lock = QSharedMemory("MomentShift_SingleInstance_v031")
+_IS_FIRST_INSTANCE = False
+
+def _check_single_instance():
+    """尝试获取共享内存锁。失败表示已有一个实例在运行。"""
+    global _IS_FIRST_INSTANCE
+    if _instance_lock.attach():
+        # 已存在 → 不是第一个实例
+        _IS_FIRST_INSTANCE = False
+        return False
+    if _instance_lock.create(1):
+        _IS_FIRST_INSTANCE = True
+        return True
+    _IS_FIRST_INSTANCE = False
+    return False
 
 
 class Application(QApplication):
@@ -177,7 +196,7 @@ def main():
     threading.excepthook = _threading_excepthook
 
     log = get_logger("app")
-    log.info("Starting %s %s", APP_NAME, VERSION)
+    log.info("Starting %s %s (pid=%d)", APP_NAME, VERSION, os.getpid())
 
     # =========================================================================
     # 快速调用模式（v0.2.9）：无 GUI，右键菜单触发
@@ -193,6 +212,17 @@ def main():
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
         sys.exit(_quick_launch_task(task, files))
+
+    # =========================================================================
+    # 单实例检查（v0.3.1）：禁止重复启动
+    # =========================================================================
+    if not _check_single_instance():
+        log.warning("Another instance is running (pid=%d), exiting.", os.getpid())
+        app = QApplication.instance() or QApplication(sys.argv)
+        QMessageBox.warning(
+            None, APP_NAME,
+            "MomentShift 已在运行。\n\n如需重新打开，请从系统托盘唤起或退出后再启动。")
+        sys.exit(0)
 
     # =========================================================================
     # 正常 GUI 模式

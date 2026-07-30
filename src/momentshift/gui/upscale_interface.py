@@ -493,7 +493,7 @@ class UpscaleInterface(InterfaceBase):
             flt = "Media (" + " ".join(f"*{e}" for e in sorted(_UPSCALE_EXTS)) + ")"
             files, _ = QFileDialog.getOpenFileNames(
                 self, tr("upscale.btn.add"), "", flt, "",
-                QFileDialog.Option.DontUseNativeDialog,
+                ""
             )
             if files:
                 self._add_to_queue(self._expand_paths(files, _UPSCALE_EXTS))
@@ -508,7 +508,7 @@ class UpscaleInterface(InterfaceBase):
         try:
             d = QFileDialog.getExistingDirectory(
                 self, tr("upscale.add_folder"), "",
-                QFileDialog.Option.DontUseNativeDialog)
+                )
             if d:
                 self._add_to_queue(self._expand_paths([d], _UPSCALE_EXTS))
         finally:
@@ -555,7 +555,7 @@ class UpscaleInterface(InterfaceBase):
         try:
             d = QFileDialog.getExistingDirectory(
                 self, tr("convert.output.browse"), self._folder or "",
-                QFileDialog.Option.DontUseNativeDialog)
+                )
             if d:
                 self._folder = d
                 cfg.upscaleFolder.value = d

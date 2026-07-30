@@ -184,7 +184,7 @@ class ConvertInterface(InterfaceBase):
             flt = "Media (" + " ".join(f"*{e}" for e in sorted(_CONVERT_EXTS)) + ")"
             files, _ = QFileDialog.getOpenFileNames(
                 self, tr("convert.add.files"), "", flt, "",
-                QFileDialog.Option.DontUseNativeDialog,
+                ""
             )
             if files:
                 self._open_setup(files)
@@ -199,7 +199,7 @@ class ConvertInterface(InterfaceBase):
         try:
             d = QFileDialog.getExistingDirectory(
                 self, tr("convert.add.folder"), "",
-                QFileDialog.Option.DontUseNativeDialog)
+                )
             if d:
                 self._open_setup([d])
         finally:
@@ -231,7 +231,7 @@ class ConvertInterface(InterfaceBase):
         try:
             d = QFileDialog.getExistingDirectory(
                 self, tr("convert.output.browse"), cfg.outputFolder.value or "",
-                QFileDialog.Option.DontUseNativeDialog)
+                )
             if d:
                 cfg.outputFolder.value = d
                 self.folderEdit.setText(d)

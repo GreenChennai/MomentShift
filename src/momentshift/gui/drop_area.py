@@ -76,6 +76,9 @@ class DropArea(ThemedCard):
 
         # format chips row
         self.chipsWrap = QWidget(self)
+        # Transparent background prevents any inherited colour from showing
+        # between format capsules or at rounded corners (v0.3.1, #4).
+        self.chipsWrap.setStyleSheet("background: transparent;")
         self.chipsLayout = QHBoxLayout(self.chipsWrap)
         self.chipsLayout.setContentsMargins(0, 0, 0, 0)
         self.chipsLayout.setSpacing(6)
@@ -192,10 +195,10 @@ class DropArea(ThemedCard):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Clip the whole card to its rounded rect so no child background (or the
-        # view behind it) bleeds past the corners — clean, closed rounding (#6).
-        r = int(self.borderRadius)
-        self.setMask(QRegion(self.rect(), r, r))
+        # v0.3.1: REMOVED setMask — it makes corners truly transparent,
+        # revealing the white view background behind the card. ThemedCard's
+        # paintEvent already draws rounded rect borders; CSS border-radius
+        # handles the visual rounding without transparency artifacts.
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
