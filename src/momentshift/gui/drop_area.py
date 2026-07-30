@@ -39,6 +39,13 @@ class DropArea(ThemedCard):
         self._hover = False
         self._pressed = False
         self._formats = ""
+        # Re-entrancy guard for the click→file-dialog path (v0.2.8, #2). Set while
+        # a pick is in flight and cleared only AFTER the modal dialog returns, so
+        # the synthetic mouse-release that Windows/Qt deliver on focus-return (which
+        # would otherwise re-enter mouseReleaseEvent and open a second picker) is
+        # swallowed. Cleared via a short timer, not at click time, so it covers the
+        # replay regardless of how long the user kept the first dialog open.
+        self._click_guard = False
 
         # NOTE: a QGraphicsDropShadowEffect is intentionally NOT used here — it
         # cannot coexist with a widget mask (the effect draws outside the widget
@@ -185,10 +192,22 @@ class DropArea(ThemedCard):
         super().mouseReleaseEvent(event)
         self._pressed = False
         self._apply_style()
-        # Defer the click so the file dialog opens OUTSIDE the mouse-event handler.
-        # Opening a modal native dialog synchronously here makes Windows replay the
-        # mouse-release, which re-emits ``clicked`` and re-opens the dialog (v0.2.6, #3).
-        QTimer.singleShot(0, self.clicked.emit)
+        # Re-entrancy guard (v0.2.8, #2): a synthetic mouse-release is delivered by
+        # Windows/Qt when the modal file dialog closes and focus returns to this
+        # widget. Without the guard that replay re-enters this handler and opens a
+        # SECOND picker. We arm the guard on the real click and only re-arm for a
+        # genuine future click after the dialog has fully returned (see _emit_clicked).
+        if self._click_guard:
+            return
+        self._click_guard = True
+        # Defer so the dialog opens outside the mouse-event handler.
+        QTimer.singleShot(0, self._emit_clicked)
+
+    def _emit_clicked(self):
+        self.clicked.emit()
+        # The picker has just returned. Swallow the synthetic release that follows
+        # focus-return for a brief window, then re-arm for a real next click.
+        QTimer.singleShot(200, lambda: setattr(self, "_click_guard", False))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

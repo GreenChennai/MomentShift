@@ -336,7 +336,6 @@ class UpscaleInterface(InterfaceBase):
     def __init__(self, parent=None):
         super().__init__("Upscale", tr("nav.upscale"), tr("upscale.tagline"), parent)
 
-        self._staged: list[str] = []
         self._items: dict[str, dict] = {}
         self._active: set[str] = set()
         self._pending: list[str] = []
@@ -371,31 +370,8 @@ class UpscaleInterface(InterfaceBase):
         self.vbox.addWidget(card)
         self._inputCard = card
 
-        # --- staging ------------------------------------------------------
-        scap, svb, self.tStage = self._card("upscale.staging.title")
-        self.stagingCount = CaptionLabel(tr("upscale.staging.empty"))
-        self.stagingCount.setStyleSheet(f"color: {muted_text()};")
-        svb.addWidget(self.stagingCount)
-        self.stagingScroll = self._scroll()
-        self.stagingList = QWidget()
-        self.stagingLayout = QVBoxLayout(self.stagingList)
-        self.stagingLayout.setContentsMargins(0, 0, 0, 0)
-        self.stagingLayout.setSpacing(6)
-        self.stagingLayout.addStretch(1)
-        self.stagingScroll.setWidget(self.stagingList)
-        self.stagingScroll.setMinimumHeight(140)
-        svb.addWidget(self.stagingScroll)
-        sctrl = QHBoxLayout()
-        self.stageAddBtn = primary_btn(tr("upscale.staging.add", n=0), icon=FIF.UP)
-        self.stageAddBtn.clicked.connect(self._on_stage_to_queue)
-        self.stageClearBtn = ghost_btn(tr("upscale.staging.clear"), icon=FIF.DELETE)
-        self.stageClearBtn.clicked.connect(self._clear_staging)
-        sctrl.addWidget(self.stageAddBtn, 1)
-        sctrl.addWidget(self.stageClearBtn)
-        svb.addLayout(sctrl)
-        self.vbox.addWidget(scap)
+        # --- settings (replaces the old staging step: files go straight to the queue) ---
 
-        # --- settings -----------------------------------------------------
         setc, setvb, self.tSettings = self._card("upscale.settings.title")
         self.modelCombo = ComboBox()
         for mid, meta in upscaler.MODELS.items():
@@ -471,13 +447,12 @@ class UpscaleInterface(InterfaceBase):
         self.vbox.addWidget(qcard)
 
         # Cards that auto-collapse when a batch finishes (queue stays open).
-        self._auto_fold = [self._inputCard, scap, setc]
+        self._auto_fold = [self._inputCard, setc]
 
         # --- compare ------------------------------------------------------
         self.compareWidget = CompareWidget(self)
         self.vbox.addWidget(self.compareWidget)
 
-        self._render_staging()
         self._update_controls()
         self.vbox.addStretch(1)
         self._collapse_ready = True
@@ -532,9 +507,9 @@ class UpscaleInterface(InterfaceBase):
                 uniq.append(p)
         return uniq
 
-    # -- input / staging --------------------------------------------------
+    # -- input (files go straight to the queue; settings apply to all items) -
     def _on_files(self, paths):
-        self._add_staged(self._expand(paths))
+        self._add_to_queue(self._expand(paths))
 
     def _pick_files(self):
         exts = upscaler.IMAGE_EXTS | upscaler.ANIM_EXTS | VIDEO_EXTS
@@ -544,70 +519,23 @@ class UpscaleInterface(InterfaceBase):
             QFileDialog.Option.DontUseNativeDialog,
         )
         if files:
-            self._add_staged(self._expand(files))
+            self._add_to_queue(self._expand(files))
 
     def _pick_folder(self):
         d = QFileDialog.getExistingDirectory(
             self, tr("upscale.add_folder"), "", QFileDialog.Option.DontUseNativeDialog)
         if d:
-            self._add_staged(self._expand([d]))
+            self._add_to_queue(self._expand([d]))
 
-    def _add_staged(self, paths):
+    def _add_to_queue(self, paths):
         if not paths:
             return
         for p in paths:
-            if p not in self._staged:
-                self._staged.append(p)
-        self._render_staging()
-        self._auto_expand_cards()
-
-    def _render_staging(self):
-        while self.stagingLayout.count():
-            item = self.stagingLayout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-        if not self._staged:
-            self.stagingCount.setText(tr("upscale.staging.empty"))
-            self.stagingLayout.addStretch(1)
-        else:
-            self.stagingCount.setText(tr("upscale.staging.count", n=len(self._staged)))
-            for p in self._staged:
-                row = QWidget()
-                hb = QHBoxLayout(row)
-                hb.setContentsMargins(4, 4, 4, 4)
-                name = QLabel(Path(p).name)
-                name.setObjectName("stagedName")
-                name.setToolTip(p)
-                name.setStyleSheet(f"color: {sub_text()};")
-                hb.addWidget(name, 1)
-                rm = icon_btn(FIF.DELETE, tr("convert.action.remove"))
-                rm.clicked.connect(lambda _, path=p: self._remove_staged(path))
-                hb.addWidget(rm)
-                self.stagingLayout.insertWidget(self.stagingLayout.count() - 1, row)
-            self.stagingLayout.addStretch(1)
-        self.stageAddBtn.setText(tr("upscale.staging.add", n=len(self._staged)))
-        self.stageAddBtn.setEnabled(bool(self._staged))
-
-    def _remove_staged(self, path):
-        if path in self._staged:
-            self._staged.remove(path)
-        self._render_staging()
-
-    def _clear_staging(self):
-        self._staged = []
-        self._render_staging()
-
-    def _on_stage_to_queue(self):
-        if not self._staged:
-            return
-        for p in self._staged:
             if p not in self._items:
                 self._items[p] = {"src": p, "out": self._out_path(p),
                                   "status": "pending", "saved": 0}
                 self.listWidget.add_item(p, p)
-        self._staged = []
-        self._render_staging()
+        self._auto_expand_cards()
         self._update_controls()
 
     # -- settings --------------------------------------------------------
@@ -764,20 +692,16 @@ class UpscaleInterface(InterfaceBase):
         self.titleLabel.setText(tr("nav.upscale"))
         self.subLabel.setText(tr("upscale.tagline"))
         self.tInput.setText(tr("upscale.input.title"))
-        self.tStage.setText(tr("upscale.staging.title"))
         self.tSettings.setText(tr("upscale.settings.title"))
         self.tQueue.setText(tr("upscale.queue.title"))
         self.engineCard.retranslateUi()
         self.dropArea.retranslate(tr("upscale.drop.title"), tr("upscale.drop.hint"),
                                   tr("upscale.drop.formats"))
         self.addFolderBtn.setText(tr("upscale.add_folder"))
-        self.stageAddBtn.setText(tr("upscale.staging.add", n=len(self._staged)))
-        self.stageClearBtn.setText(tr("upscale.staging.clear"))
         self.gpuSwitch.setText(tr("upscale.gpu.auto") if self._gpu else tr("upscale.gpu.cpu"))
         self._apply_output_mode()
         self.startBtn.setText(tr("convert.start"))
         self.pauseBtn.setText(tr("convert.pause"))
         self.clearBtn.setText(tr("convert.clear"))
         self.listWidget.retranslate()
-        self._render_staging()
         self._update_controls()

@@ -88,6 +88,8 @@ class ConvertInterface(InterfaceBase):
         ovb.addWidget(self.folderRow)
         self._apply_output_mode()
         self.vbox.addWidget(ocard)
+        # v0.2.8, #3: "输出位置" starts collapsed — the queue is the focus on open.
+        ocard.setCollapsed(True)
 
         # --- queue --------------------------------------------------------
         qcard, qvb, self.tQueue = self._card("convert.queue.title")

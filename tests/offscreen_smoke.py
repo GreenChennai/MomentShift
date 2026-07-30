@@ -113,11 +113,11 @@ def main():
     same = mgr2.pending_same_format()
     assert len(same) >= 1 and same[0].target_format == "png"
 
-    step("Upscale: staging accepts media")
+    step("Upscale: files go straight to queue (no staging)")
     img = os.path.join(src, "big.png")
     open(img, "wb").write(b"\x89PNG\r\n\x1a\n")
     upscale._on_files([img])
-    assert len(upscale._staged) == 1, upscale._staged
+    assert len(upscale._items) == 1, upscale._items
 
     step("Compress: staging accepts images")
     cimg = os.path.join(src, "c.png")
