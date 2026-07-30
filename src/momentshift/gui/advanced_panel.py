@@ -133,7 +133,7 @@ class AdvancedPanel(QWidget):
         """v0.3.7 重构：复用压缩设置代码。压缩后端 + 质量 + 后端专用参数。"""
         ex = ExpandWidget(tr("category.image"), expanded=True)
         adv = advanced.adv["image"]
-        if "compress" not in adv:
+        if not isinstance(adv.get("compress"), dict):
             adv["compress"] = {"backend": "pillow", "level": 3, "interlace": False,
                                "strip": "safe", "quality": 95, "progressive": False,
                                "arithmetic": False}
