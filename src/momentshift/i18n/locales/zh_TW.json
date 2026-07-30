@@ -349,5 +349,17 @@
   "convert.setup.empty": "未選擇檔案",
   "convert.setup.confirm": "加入佇列",
   "convert.setup.cancel": "取消",
-  "convert.setup.hint": "選擇目標格式並調整參數，然後加入佇列"
+  "convert.setup.hint": "選擇目標格式並調整參數，然後加入佇列",
+  "quicklaunch.title": "快速呼叫",
+  "quicklaunch.subtitle": "管理 Windows 右鍵功能表捷徑",
+  "quicklaunch.group.main": "總控制",
+  "quicklaunch.group.tasks": "功能開關",
+  "quicklaunch.master": "啟用快速呼叫",
+  "quicklaunch.master.hint": "啟用後可在檔案總管右鍵功能表中快速呼叫功能",
+  "quicklaunch.bind": "綁定右鍵功能表",
+  "quicklaunch.bind.hint": "在 Windows 右鍵功能表中註冊快捷操作（需要程式內啟用）",
+  "quicklaunch.convert.hint": "右鍵功能表 → 轉換",
+  "quicklaunch.compress.hint": "右鍵功能表 → 壓縮",
+  "quicklaunch.upscale.hint": "右鍵功能表 → 放大",
+  "quicklaunch.status.title": "註冊狀態"
 }

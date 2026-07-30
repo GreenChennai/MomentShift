@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame, QSizePolicy
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame, QSizePolicy, QLineEdit, QFileDialog
 
 from qfluentwidgets import (
     isDarkTheme,
@@ -257,47 +257,41 @@ class ThemedCard(CardWidget):
 
 
 class CollapsibleCard(ThemedCard):
-    """A ``ThemedCard`` with a toggle button in the title bar.
+    """折叠式卡片，标题栏始终可见，主体内容可折叠/展开（带动画过渡）。
 
-    - **Title bar** (always visible): title + SVG arrow toggle button.
-    - **Body** (collapsible): subtitle (if any) + user content.
+    - **标题栏**（始终可见）：标题 + SVG 箭头按钮
+    - **主体**（可折叠）：副标题 + 用户内容，折叠/展开有 250ms 缓出动效
 
-    When collapsed only the compact title bar is visible, keeping the card
-    height minimal. The subtitle lives in the body so it collapses together
-    with the content — it does NOT stay in the title bar (avoiding the visual
-    glitch where a separate subtitle line shifts when the body toggles).
-
-    Usage (replaces ``_card()``):
-    ::
+    用法::
 
         card = CollapsibleCard(tr("my.title"), tr("my.sub"))
-        card.body.addWidget(...)   # card.body is a QVBoxLayout
+        card.body.addWidget(...)   # card.body 是 QVBoxLayout
         return card, card.body, card.titleLabel
     """
 
     _ICON_W = _ICON_H = 20
+    _ANIM_DURATION = 250  # 折叠/展开动效时长 (ms)
 
     def __init__(self, title: str = "", subtitle: str = "",
                  parent=None, collapsed: bool = False):
         super().__init__(parent)
         self._collapsed = collapsed
+        self._anim = None  # 懒创建 QPropertyAnimation
+        self._content_height = 0  # 上次展开时记录的实际内容高度
 
-        # Force ALL descendant labels to have transparent backgrounds so the
-        # card's painted surface (#FBFBFB / #2B2B2B) shows through cleanly.
-        # The ``> QWidget`` rule covers intermediate containers; explicit
-        # label-type rules catch deeper descendants regardless of depth.
+        # 强制所有后代 QLabel 背景透明，让卡片表面色干净透出
         self.setStyleSheet(
             "CollapsibleCard > QWidget { background-color: transparent; }"
             "QLabel, FluentLabelBase, BodyLabel, CaptionLabel, StrongBodyLabel,"
             " TitleLabel, SubtitleLabel { background-color: transparent; }"
         )
 
-        # ---- outer layout ------------------------------------------------
+        # ---- 外层布局 ----
         self._outer = QVBoxLayout(self)
         self._outer.setContentsMargins(0, 0, 0, 0)
         self._outer.setSpacing(0)
 
-        # ---- title bar (always visible, compact) -------------------------
+        # ---- 标题栏（始终可见） ----
         self._bar = QWidget()
         hb = QHBoxLayout(self._bar)
         hb.setContentsMargins(CARD_MARGIN, 10, 6, 10)
@@ -307,7 +301,7 @@ class CollapsibleCard(ThemedCard):
         hb.addWidget(self.titleLabel, 1)
         hb.addStretch()
 
-        # arrow toggle button using SVG icons
+        # SVG 箭头切换按钮
         self._toggleBtn = TransparentToolButton(self._toggle_icon(), self)
         self._toggleBtn.setIconSize(QSize(self._ICON_W, self._ICON_H))
         self._toggleBtn.setFixedSize(30, 30)
@@ -317,20 +311,19 @@ class CollapsibleCard(ThemedCard):
 
         self._outer.addWidget(self._bar)
 
-        # ---- body (collapsible, hides when collapsed) --------------------
+        # ---- 主体（可折叠，带动效） ----
         self._body = QWidget()
         self._body_layout = QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(CARD_MARGIN, 0, CARD_MARGIN, 14)
         self._body_layout.setSpacing(10)
 
-        # Preserve QLineEdit borders — the parent transparent-background rules
-        # can make input boxes appear borderless on some themes.
+        # QLineEdit 在透明背景下需要保留自身边框
         self._body.setStyleSheet(
             "QLineEdit { border: 1px solid #d0d0d0; border-radius: 4px;"
             " padding: 4px 8px; background: #ffffff; }"
         )
 
-        # Optional subtitle lives inside the body so it hides on collapse.
+        # 副标题放在主体内，随折叠一起隐藏
         self.subtitleLabel = None
         if subtitle:
             self.subtitleLabel = CaptionLabel(subtitle)
@@ -338,38 +331,61 @@ class CollapsibleCard(ThemedCard):
 
         self._outer.addWidget(self._body)
 
-        # Guard consulted before collapsing: returns True to allow, False to
-        # refuse (e.g. when this is the last expanded card in its group).
+        # 折叠守卫：防止最后一张展开卡片被折叠
         self._toggle_guard = None
-        # Cards never stretch to fill the window — they keep their content
-        # height and stay top-aligned (collapsed => title bar only).
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
 
         if collapsed:
             self._apply_collapsed()
 
-    # -- helpers ------------------------------------------------------------
+    # -- 动效引擎 ----------------------------------------------------------
 
     def _toggle_icon(self) -> QIcon:
-        """Return the appropriate SVG icon for the current state."""
+        """返回当前状态对应的 SVG 箭头图标。"""
         path = ICON_EXPAND if self._collapsed else ICON_COLLAPSE
         return QIcon(path) if os.path.exists(path) else QIcon()
 
+    def _anim_target(self, target_h: int):
+        """驱动 _body.maximumHeight 从当前值 → target_h 的缓出动效。"""
+        cur = self._body.maximumHeight()
+        # 用很简单的启发式确定目标：collapse→0，expand→算出的或估出的内容高
+        real_target = target_h
+        if target_h <= 0:
+            real_target = 0
+        elif target_h == 16777215:
+            # expanding: 如果 _content_height > 0 用它，否则用 sizeHint
+            if self._content_height > 0:
+                real_target = self._content_height
+            else:
+                real_target = self._body.sizeHint().height()
+                if real_target <= 0:
+                    real_target = 200  # fallback
+        self._content_height = real_target if real_target > 0 else self._content_height
+        self._body.show()  # 确保可见才能在动画中看到
+        self._anim = QPropertyAnimation(self._body, b"maximumHeight", self)
+        self._anim.setDuration(self._ANIM_DURATION)
+        self._anim.setStartValue(cur)
+        self._anim.setEndValue(real_target)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.start()
+
     def _apply_collapsed(self):
-        """Apply the collapsed visual state without re-emitting the toggle signal."""
-        self._body.setVisible(False)
-        # Setting a fixed height of 0 ensures the layout truly shrinks the
-        # card to title-bar height, avoiding the "collapsed but still tall" bug.
-        self._body.setFixedHeight(0)
+        """折叠主体（带动效）：先捕获当前高度，再动画到 0。"""
+        h = self._body.height()
+        if h > 0:
+            self._content_height = h
+        self._anim_target(0)
+        # 动效结束后隐藏 body
+        if self._anim is not None:
+            self._anim.finished.connect(lambda: self._body.setVisible(False))
+        else:
+            self._body.setVisible(False)
         self._toggleBtn.setIcon(self._toggle_icon())
 
     def _apply_expanded(self):
-        """Apply the expanded visual state."""
-        self._body.setFixedHeight(self._body.sizeHint().height() if False else 16777215)
-        # ^ use QWIDGETSIZE_MAX to unrestrict height — qt constant is 16777215
-        self._body.setMinimumHeight(0)
-        self._body.setMaximumHeight(16777215)
+        """展开主体（带动效）：先显示，再动画到内容高度。"""
         self._body.setVisible(True)
+        self._anim_target(16777215)
         self._toggleBtn.setIcon(self._toggle_icon())
 
     # -- public API ---------------------------------------------------------

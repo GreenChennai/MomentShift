@@ -349,5 +349,17 @@
   "convert.setup.empty": "No files selected",
   "convert.setup.confirm": "Add to queue",
   "convert.setup.cancel": "Cancel",
-  "convert.setup.hint": "Pick a target format and tweak options, then add to the queue"
+  "convert.setup.hint": "Pick a target format and tweak options, then add to the queue",
+  "quicklaunch.title": "Quick Launch",
+  "quicklaunch.subtitle": "Manage Windows right-click context menu shortcuts",
+  "quicklaunch.group.main": "General",
+  "quicklaunch.group.tasks": "Functions",
+  "quicklaunch.master": "Enable Quick Launch",
+  "quicklaunch.master.hint": "Add functions to File Explorer right-click menu",
+  "quicklaunch.bind": "Register in context menu",
+  "quicklaunch.bind.hint": "Add items to the Windows right-click menu",
+  "quicklaunch.convert.hint": "Right-click → Convert",
+  "quicklaunch.compress.hint": "Right-click → Compress",
+  "quicklaunch.upscale.hint": "Right-click → Upscale",
+  "quicklaunch.status.title": "Registration status"
 }

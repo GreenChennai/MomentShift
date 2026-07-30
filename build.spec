@@ -65,6 +65,8 @@ hiddenimports = [
     "momentshift.gui.about_interface",
     "momentshift.gui.main_window",
     "momentshift.gui.theme",
+    "momentshift.gui.quick_launch_interface",
+    "momentshift.core.quick_launch",
     "momentshift.i18n",
     "momentshift.i18n.translator",
 ]

@@ -65,10 +65,11 @@ def main():
     os.makedirs(src)
     os.makedirs(out)
 
-    step("Convert: expand() filters out unsupported files")
+    step("Convert: expand_paths() filters out unsupported files")
     bad = os.path.join(tmp, "secret_file.xyz")
     open(bad, "wb").write(b"nope")
-    assert convert._expand([bad]) == [], "unsupported file must be filtered"
+    from momentshift.core.presets import IMAGE_EXTS
+    assert convert._expand_paths([bad], IMAGE_EXTS) == [], "unsupported file must be filtered"
 
     step("Convert: FormatGrid seeded from default selection")
     from momentshift.gui.format_grid import FormatGrid

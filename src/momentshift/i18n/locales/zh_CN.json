@@ -349,5 +349,17 @@
   "convert.setup.empty": "未选择文件",
   "convert.setup.confirm": "加入队列",
   "convert.setup.cancel": "取消",
-  "convert.setup.hint": "选择目标格式并调整参数，然后加入队列"
+  "convert.setup.hint": "选择目标格式并调整参数，然后加入队列",
+  "quicklaunch.title": "快速调用",
+  "quicklaunch.subtitle": "管理 Windows 右键菜单快捷方式",
+  "quicklaunch.group.main": "总控制",
+  "quicklaunch.group.tasks": "功能开关",
+  "quicklaunch.master": "启用快速调用",
+  "quicklaunch.master.hint": "启用后可在文件管理器右键菜单中快速调用功能",
+  "quicklaunch.bind": "绑定右键菜单",
+  "quicklaunch.bind.hint": "在 Windows 右键菜单中注册快捷操作（需要程序内启用）",
+  "quicklaunch.convert.hint": "右键菜单 → 转换",
+  "quicklaunch.compress.hint": "右键菜单 → 压缩",
+  "quicklaunch.upscale.hint": "右键菜单 → 放大",
+  "quicklaunch.status.title": "注册状态"
 }

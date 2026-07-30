@@ -112,6 +112,13 @@ class Config(QConfig):
     # System tray: minimise to tray on close instead of quitting (v0.2.7, #3).
     closeToTray = ConfigItem("UI", "CloseToTray", True)
 
+    # Quick Launch (v0.2.9): Windows right-click context menu integration.
+    quickLaunchEnabled = ConfigItem("QuickLaunch", "Enabled", False)
+    quickLaunchBindMenu = ConfigItem("QuickLaunch", "BindMenu", True)
+    quickLaunchConvert = ConfigItem("QuickLaunch", "Convert", False)
+    quickLaunchCompress = ConfigItem("QuickLaunch", "Compress", False)
+    quickLaunchUpscale = ConfigItem("QuickLaunch", "Upscale", False)
+
 
 cfg = Config()
 

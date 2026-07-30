@@ -55,11 +55,13 @@ class MainWindow(FluentWindow):
         self.upscaleInterface = None
         self.settingInterface = None
         self.aboutInterface = None
+        self.quickLaunchInterface = None
         # (attr, module, class, icon, title_key, position) — module/class are
         # strings so the heavy imports are deferred past the first paint.
         self._lazy = [
             ("compress", "compress_interface", "CompressInterface", FIF.PHOTO, "nav.compress", None),
             ("upscale", "upscale_interface", "UpscaleInterface", FIF.ZOOM, "nav.upscale", None),
+            ("quickLaunch", "quick_launch_interface", "QuickLaunchInterface", FIF.SEND, "quicklaunch.title", None),
             ("settings", "setting_interface", "SettingInterface", FIF.SETTING, "nav.settings", NavigationItemPosition.BOTTOM),
             ("about", "about_interface", "AboutInterface", FIF.INFO, "nav.about", NavigationItemPosition.BOTTOM),
         ]
@@ -117,7 +119,7 @@ class MainWindow(FluentWindow):
     def _all_interfaces(self):
         out = []
         for attr in ("convertInterface", "compressInterface", "upscaleInterface",
-                    "settingInterface", "aboutInterface"):
+                    "quickLaunchInterface", "settingInterface", "aboutInterface"):
             iface = getattr(self, attr, None)
             if iface is not None:
                 out.append(iface)
@@ -161,6 +163,7 @@ class MainWindow(FluentWindow):
                 "Convert": tr("nav.convert"),
                 "Compress": tr("nav.compress"),
                 "Upscale": tr("nav.upscale"),
+                "QuickLaunch": tr("quicklaunch.title"),
                 "Settings": tr("nav.settings"),
                 "About": tr("nav.about"),
             }.items():

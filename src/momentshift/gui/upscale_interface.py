@@ -1,9 +1,7 @@
-"""Upscale screen — rebuilt UI. Self-managed batch AI upscaling.
+"""放大界面 —— 批量 AI 超分辨率放大（v0.2.9 重写）。
 
-Mirrors :mod:`compress_interface` for the self-managed worker loop (capped at
-``min(cfg.maxThreads, 4)``) and :mod:`convert_interface` for the staging → queue
-flow. Wires to :mod:`core.upscaler` (engine detect + one-click download) and the
-shared :class:`CompareWidget` for before/after preview.
+自管任务队列（QRunnable 线程池模型），使用 Real-ESRGAN 引擎。
+v0.2.9 改动：使用 InterfaceBase 共享组件构建器，精简代码；媒体直传队列（无暂存）。
 """
 
 from __future__ import annotations
@@ -36,14 +34,17 @@ from .drop_area import DropArea
 from .queue_widget import ProgressBar, StatusPill, human_size
 from .compare_widget import CompareWidget
 
+# 放大模块支持的视频格式
+_VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".flv", ".wmv"}
+# 放大模块总支持格式
+_UPSCALE_EXTS = upscaler.IMAGE_EXTS | upscaler.ANIM_EXTS | _VIDEO_EXTS
 
-VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".flv", ".wmv"}
 
-
-# --------------------------------------------------------------------------
-# Engine card (mirror of FfmpegCard)
-# --------------------------------------------------------------------------
+# =============================================================================
+# 引擎状态卡片
+# =============================================================================
 class EngineCard(ThemedCard):
+    """Real-ESRGAN 引擎检测与一键下载。"""
     engine_ready = Signal()
 
     def __init__(self, parent=None):
@@ -63,8 +64,10 @@ class EngineCard(ThemedCard):
         top.addWidget(self.statusLbl, 1)
         vb.addLayout(top)
 
-        self.linkBtn = HyperlinkButton(upscaler.ENGINE_PAGE, tr("upscale.engine.open_site"))
-        self.dlBtn = PrimaryPushButton(tr("upscale.engine.oneclick"), icon=FIF.DOWNLOAD)
+        self.linkBtn = HyperlinkButton(
+            upscaler.ENGINE_PAGE, tr("upscale.engine.open_site"))
+        self.dlBtn = PrimaryPushButton(
+            tr("upscale.engine.oneclick"), icon=FIF.DOWNLOAD)
         self.dlBtn.clicked.connect(self._download)
         row = QHBoxLayout()
         row.addWidget(self.linkBtn)
@@ -76,8 +79,10 @@ class EngineCard(ThemedCard):
         self.prog.setRange(0, 0)
         self.prog.setFixedHeight(4)
         self.prog.setStyleSheet(
-            f"QProgressBar{{background:{border_color()}; border:none; border-radius:2px;}} "
-            f"QProgressBar::chunk{{background:{accent_color().name()}; border-radius:2px;}}")
+            f"QProgressBar{{background:{border_color()}; border:none;"
+            f" border-radius:2px;}} "
+            f"QProgressBar::chunk{{background:{accent_color().name()};"
+            f" border-radius:2px;}}")
         self.prog.hide()
         vb.addWidget(self.prog)
 
@@ -89,15 +94,16 @@ class EngineCard(ThemedCard):
             n = len(upscaler.available_models())
             self.statusLbl.setText(tr("upscale.engine.ok", n=n))
             self.statusLbl.setStyleSheet(f"color:{success_color().name()};")
-            self.dot.setStyleSheet(f"background:{success_color().name()}; border-radius:5px;")
-            # Collapse download / link when engine is ready
+            self.dot.setStyleSheet(
+                f"background:{success_color().name()}; border-radius:5px;")
             self.linkBtn.hide()
             self.dlBtn.hide()
             self.prog.hide()
         else:
             self.statusLbl.setText(tr("upscale.engine.missing"))
             self.statusLbl.setStyleSheet(f"color:{sub_text()};")
-            self.dot.setStyleSheet(f"background:{danger_color().name()}; border-radius:5px;")
+            self.dot.setStyleSheet(
+                f"background:{danger_color().name()}; border-radius:5px;")
             self.linkBtn.show()
             self.dlBtn.show()
 
@@ -122,15 +128,17 @@ class EngineCard(ThemedCard):
         self._refresh()
 
 
-# --------------------------------------------------------------------------
-# Worker
-# --------------------------------------------------------------------------
+# =============================================================================
+# 放大 Worker / 队列组件
+# =============================================================================
 class _WorkerSignals(QObject):
     progress = Signal(str, int)
-    finished = Signal(str, bool, int, str)  # id, ok, saved_bytes, detail
+    finished = Signal(str, bool, int, str)
 
 
 class UpscaleWorker(QRunnable):
+    """单个放大任务，在 QThreadPool 线程中执行。"""
+
     def __init__(self, item_id, src, out, model, scale, tile, gpu):
         super().__init__()
         self.setAutoDelete(True)
@@ -148,7 +156,7 @@ class UpscaleWorker(QRunnable):
         try:
             ok, detail = upscaler.upscale_media(
                 self.src, self.out, self.model, self.scale, self.tile, self.gpu)
-        except Exception as exc:  # defensive
+        except Exception as exc:
             ok, detail = False, str(exc)
         saved = 0
         try:
@@ -159,10 +167,8 @@ class UpscaleWorker(QRunnable):
         self.signals.finished.emit(self.item_id, ok, saved, detail)
 
 
-# --------------------------------------------------------------------------
-# Item + list
-# --------------------------------------------------------------------------
 class UpscaleItemWidget(ThemedCard):
+    """放大队列中的单个任务卡片。"""
     removeRequested = Signal(str)
     compareRequested = Signal(str)
 
@@ -215,9 +221,7 @@ class UpscaleItemWidget(ThemedCard):
             dst_size = src_size - saved
             pct = f"{(dst_size - src_size) / src_size * 100:+.0f}%" if src_size else ""
             self.detailLbl.setText(tr("upscale.result.saved",
-                                     before=human_size(src_size),
-                                     after=human_size(dst_size),
-                                     pct=pct))
+                before=human_size(src_size), after=human_size(dst_size), pct=pct))
         elif status == "failed":
             self.detailLbl.setText((detail or tr("convert.status.failed"))[:80])
         elif status == "running":
@@ -233,6 +237,7 @@ class UpscaleItemWidget(ThemedCard):
 
 
 class UpscaleListWidget(QWidget):
+    """放大任务列表（带统计栏）。"""
     removeRequested = Signal(str)
     compareRequested = Signal(str)
 
@@ -269,19 +274,12 @@ class UpscaleListWidget(QWidget):
         self._refresh_empty()
 
     def _refresh_empty(self):
-        # The "queue empty" hint text was removed by design; keep the label
-        # hidden so no empty gap is left behind.
         self.emptyHint.setVisible(False)
 
     def _update_stats(self):
         total = len(self.items)
-        done = 0
-        failed = 0
-        for w in self.items.values():
-            if w._status == "done":
-                done += 1
-            elif w._status == "failed":
-                failed += 1
+        done = sum(1 for w in self.items.values() if w._status == "done")
+        failed = sum(1 for w in self.items.values() if w._status == "failed")
         self.statTotal.setText(tr("upscale.queue.stats.total", n=total))
         self.statDone.setText(tr("upscale.queue.stats.done", n=done))
         self.statErr.setText(tr("upscale.queue.stats.error", n=failed))
@@ -329,10 +327,16 @@ class UpscaleListWidget(QWidget):
         self._update_stats()
 
 
-# --------------------------------------------------------------------------
-# Interface
-# --------------------------------------------------------------------------
+# =============================================================================
+# 放大界面
+# =============================================================================
 class UpscaleInterface(InterfaceBase):
+    """AI 超分辨率放大标签页。
+
+    自管任务队列（QRunnable + QThreadPool），使用 Real-ESRGAN 引擎。
+    媒体文件直传队列（无暂存步骤），全局设置驱动整队参数。
+    """
+
     def __init__(self, parent=None):
         super().__init__("Upscale", tr("nav.upscale"), tr("upscale.tagline"), parent)
 
@@ -342,6 +346,7 @@ class UpscaleInterface(InterfaceBase):
         self._running = False
         self._paused = False
 
+        # 放大参数默认值
         self._model = "realesrgan-x4plus"
         self._scale = 4
         self._fmt = "png"
@@ -351,13 +356,17 @@ class UpscaleInterface(InterfaceBase):
         self._suffix = cfg.upscaleSuffix.value
         self._folder = cfg.upscaleFolder.value or ""
 
-        # --- engine -------------------------------------------------------
+        # =====================================================================
+        # 引擎状态卡片
+        # =====================================================================
         self.engineCard = EngineCard(self)
         self.engineCard.engine_ready.connect(self._update_controls)
         self.vbox.addWidget(self.engineCard)
 
-        # --- input --------------------------------------------------------
-        card, vb, self.tInput = self._card("upscale.input.title")
+        # =====================================================================
+        # 输入卡片
+        # =====================================================================
+        card, vb, self.tInput = self._make_card("upscale.input.title")
         self.dropArea = DropArea(self)
         self.dropArea.filesDropped.connect(self._on_files)
         self.dropArea.clicked.connect(self._pick_files)
@@ -370,9 +379,12 @@ class UpscaleInterface(InterfaceBase):
         self.vbox.addWidget(card)
         self._inputCard = card
 
-        # --- settings (replaces the old staging step: files go straight to the queue) ---
+        # =====================================================================
+        # 放大设置卡片（全局参数，驱动整队）
+        # =====================================================================
+        setc, setvb, self.tSettings = self._make_card("upscale.settings.title")
 
-        setc, setvb, self.tSettings = self._card("upscale.settings.title")
+        # AI 模型选择
         self.modelCombo = ComboBox()
         for mid, meta in upscaler.MODELS.items():
             self.modelCombo.addItem(meta["label"])
@@ -382,18 +394,18 @@ class UpscaleInterface(InterfaceBase):
             lambda t: setattr(self, "_model", self._model_map.get(t, self._model)))
         setvb.addWidget(field_row(tr("upscale.model"), self.modelCombo))
 
-        self.scaleCombo = self._opt_combo(
+        self.scaleCombo = self._make_combo(
             [("2x", 2), ("3x", 3), ("4x", 4)], self._scale,
             lambda v: setattr(self, "_scale", v))
         setvb.addWidget(field_row(tr("upscale.scale"), self.scaleCombo))
 
-        self.fmtCombo = self._opt_combo(
+        self.fmtCombo = self._make_combo(
             [(tr("upscale.fmt.png"), "png"), (tr("upscale.fmt.jpg"), "jpg"),
              (tr("upscale.fmt.webp"), "webp")], self._fmt,
             lambda v: setattr(self, "_fmt", v))
         setvb.addWidget(field_row(tr("upscale.output.fmt"), self.fmtCombo))
 
-        self.tileCombo = self._opt_combo(
+        self.tileCombo = self._make_combo(
             [(tr("upscale.tile.auto"), 0), ("256", 256), ("512", 512)], self._tile,
             lambda v: setattr(self, "_tile", v))
         setvb.addWidget(field_row(tr("upscale.tile"), self.tileCombo))
@@ -403,13 +415,15 @@ class UpscaleInterface(InterfaceBase):
         self.gpuSwitch.checkedChanged.connect(self._on_gpu)
         setvb.addWidget(field_row(tr("upscale.gpu"), self.gpuSwitch))
 
+        # 输出位置
         self.outputSwitch = SwitchButton(tr("convert.output.same"))
         self.outputSwitch.checkedChanged.connect(self._on_output_mode)
         setvb.addWidget(field_row(tr("upscale.output.mode"), self.outputSwitch))
         self.suffixEdit = QLineEdit(self._suffix)
         self.suffixEdit.setPlaceholderText(tr("upscale.output.suffix_hint"))
         self.suffixEdit.textChanged.connect(
-            lambda t: (setattr(self, "_suffix", t), setattr(cfg.upscaleSuffix, "value", t)))
+            lambda t: (setattr(self, "_suffix", t),
+                       setattr(cfg.upscaleSuffix, "value", t)))
         self.suffixRow = field_row(tr("upscale.output.suffix"), self.suffixEdit)
         setvb.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(self._folder)
@@ -424,14 +438,16 @@ class UpscaleInterface(InterfaceBase):
         self._apply_output_mode()
         self.vbox.addWidget(setc)
 
-        # --- queue --------------------------------------------------------
-        qcard, qvb, self.tQueue = self._card("upscale.queue.title", "upscale.queue.hint")
+        # =====================================================================
+        # 队列卡片
+        # =====================================================================
+        qcard, qvb, self.tQueue = self._make_card(
+            "upscale.queue.title", "upscale.queue.hint")
         self.listWidget = UpscaleListWidget(self)
         self.listWidget.removeRequested.connect(self._on_remove)
         self.listWidget.compareRequested.connect(self._on_compare)
-        self.queueScroll = self._scroll()
+        self.queueScroll = self._make_scroll(280)
         self.queueScroll.setWidget(self.listWidget)
-        self.queueScroll.setMinimumHeight(280)
         qvb.addWidget(self.queueScroll)
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
@@ -446,10 +462,11 @@ class UpscaleInterface(InterfaceBase):
         qvb.addLayout(ctrl)
         self.vbox.addWidget(qcard)
 
-        # Cards that auto-collapse when a batch finishes (queue stays open).
         self._auto_fold = [self._inputCard, setc]
 
-        # --- compare ------------------------------------------------------
+        # =====================================================================
+        # 前后对比组件
+        # =====================================================================
         self.compareWidget = CompareWidget(self)
         self.vbox.addWidget(self.compareWidget)
 
@@ -458,74 +475,28 @@ class UpscaleInterface(InterfaceBase):
         self._collapse_ready = True
         self.retheme()
 
-    # -- helpers ----------------------------------------------------------
-    def _card(self, title_key, subtitle_key=None):
-        title_text = tr(title_key)
-        sub_text = tr(subtitle_key) if subtitle_key else ""
-        card = CollapsibleCard(title_text, sub_text, self)
-        self.register_collapsible(card)
-        return card, card.body, card.titleLabel
+    # =========================================================================
+    # 输入处理（文件直传队列，无暂存）
+    # =========================================================================
 
-    def _scroll(self) -> QScrollArea:
-        s = QScrollArea()
-        s.setWidgetResizable(True)
-        s.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        s.setStyleSheet(
-            f"QScrollArea{{border:none; background:transparent;}} {scrollbar_qss()}"
-        )
-        s.viewport().setStyleSheet("background:transparent;")
-        return s
-
-    def _opt_combo(self, mapping, current, on_change) -> ComboBox:
-        combo = ComboBox()
-        for disp, val in mapping:
-            combo.addItem(disp)
-        for i, (disp, val) in enumerate(mapping):
-            if val == current:
-                combo.setCurrentIndex(i)
-                break
-        combo._mapping = dict(mapping)
-        combo.currentTextChanged.connect(lambda t: on_change(combo._mapping.get(t, t)))
-        return combo
-
-    def _expand(self, paths) -> list[str]:
-        exts = upscaler.IMAGE_EXTS | upscaler.ANIM_EXTS | VIDEO_EXTS
-        out: list[str] = []
-        for p in paths:
-            if os.path.isdir(p):
-                for root, _, files in os.walk(p):
-                    for f in files:
-                        fp = os.path.join(root, f)
-                        if Path(fp).suffix.lower() in exts:
-                            out.append(fp)
-            elif os.path.isfile(p) and Path(p).suffix.lower() in exts:
-                out.append(p)
-        seen, uniq = set(), []
-        for p in out:
-            if p not in seen:
-                seen.add(p)
-                uniq.append(p)
-        return uniq
-
-    # -- input (files go straight to the queue; settings apply to all items) -
     def _on_files(self, paths):
-        self._add_to_queue(self._expand(paths))
+        self._add_to_queue(self._expand_paths(paths, _UPSCALE_EXTS))
 
     def _pick_files(self):
-        exts = upscaler.IMAGE_EXTS | upscaler.ANIM_EXTS | VIDEO_EXTS
-        flt = "Media (" + " ".join(f"*{e}" for e in sorted(exts)) + ")"
+        flt = "Media (" + " ".join(f"*{e}" for e in sorted(_UPSCALE_EXTS)) + ")"
         files, _ = QFileDialog.getOpenFileNames(
             self, tr("upscale.btn.add"), "", flt, "",
             QFileDialog.Option.DontUseNativeDialog,
         )
         if files:
-            self._add_to_queue(self._expand(files))
+            self._add_to_queue(self._expand_paths(files, _UPSCALE_EXTS))
 
     def _pick_folder(self):
         d = QFileDialog.getExistingDirectory(
-            self, tr("upscale.add_folder"), "", QFileDialog.Option.DontUseNativeDialog)
+            self, tr("upscale.add_folder"), "",
+            QFileDialog.Option.DontUseNativeDialog)
         if d:
-            self._add_to_queue(self._expand([d]))
+            self._add_to_queue(self._expand_paths([d], _UPSCALE_EXTS))
 
     def _add_to_queue(self, paths):
         if not paths:
@@ -535,13 +506,17 @@ class UpscaleInterface(InterfaceBase):
                 self._items[p] = {"src": p, "out": self._out_path(p),
                                   "status": "pending", "saved": 0}
                 self.listWidget.add_item(p, p)
-        self._auto_expand_cards()
+        self._auto_expand(*self._auto_fold)
         self._update_controls()
 
-    # -- settings --------------------------------------------------------
+    # =========================================================================
+    # 设置交互
+    # =========================================================================
+
     def _on_gpu(self, checked):
         self._gpu = checked
-        self.gpuSwitch.setText(tr("upscale.gpu.auto") if checked else tr("upscale.gpu.cpu"))
+        self.gpuSwitch.setText(
+            tr("upscale.gpu.auto") if checked else tr("upscale.gpu.cpu"))
 
     def _on_output_mode(self, checked):
         self._output_mode = "same" if checked else "fixed"
@@ -551,7 +526,8 @@ class UpscaleInterface(InterfaceBase):
     def _apply_output_mode(self):
         same = self._output_mode == "same"
         self.outputSwitch.setChecked(same)
-        self.outputSwitch.setText(tr("convert.output.same") if same else tr("convert.output.fixed"))
+        self.outputSwitch.setText(
+            tr("convert.output.same") if same else tr("convert.output.fixed"))
         self.suffixRow.setVisible(same)
         self.folderRow.setVisible(not same)
 
@@ -584,16 +560,23 @@ class UpscaleInterface(InterfaceBase):
     def _max_threads(self) -> int:
         return max(1, min(int(cfg.maxThreads.value), 4))
 
-    # -- compare ---------------------------------------------------------
+    # =========================================================================
+    # 前后对比
+    # =========================================================================
+
     def _on_compare(self, item_id):
         item = self._items.get(item_id)
         if item:
             self.compareWidget.set_paths(item["src"], item.get("out", ""))
 
-    # -- run management --------------------------------------------------
+    # =========================================================================
+    # 任务运行管理（自管线程池循环）
+    # =========================================================================
+
     def _on_start(self):
         if not upscaler.find_upscaler():
-            QMessageBox.warning(self, tr("common.warning"), tr("upscale.toast.no_engine"))
+            QMessageBox.warning(
+                self, tr("common.warning"), tr("upscale.toast.no_engine"))
             return
         if not self._items:
             return
@@ -614,8 +597,8 @@ class UpscaleInterface(InterfaceBase):
             self._items[src]["out"] = out
             self._items[src]["status"] = "running"
             self.listWidget.set_status(src, "running")
-            worker = UpscaleWorker(src, src, out, self._model, self._scale,
-                                   self._tile, self._gpu)
+            worker = UpscaleWorker(
+                src, src, out, self._model, self._scale, self._tile, self._gpu)
             worker.signals.progress.connect(self.listWidget.set_progress)
             worker.signals.finished.connect(self._on_finished)
             QThreadPool.globalInstance().start(worker)
@@ -630,7 +613,7 @@ class UpscaleInterface(InterfaceBase):
             self._launch_next()
         if not self._pending and not self._active:
             self._running = False
-            self._auto_collapse_cards()
+            self._auto_collapse(*self._auto_fold)
         self._update_controls()
 
     def _on_pause(self):
@@ -660,29 +643,18 @@ class UpscaleInterface(InterfaceBase):
 
     def _update_controls(self):
         ready = bool(upscaler.find_upscaler())
-        self.startBtn.setEnabled(ready and bool(self._items)
-                                 and not (self._running and not self._paused))
+        self.startBtn.setEnabled(
+            ready and bool(self._items)
+            and not (self._running and not self._paused))
         self.pauseBtn.setEnabled(self._running)
         self.clearBtn.setEnabled(bool(self._items))
-        self.pauseBtn.setText(tr("convert.resume") if (self._running and self._paused)
-                              else tr("convert.pause"))
+        self.pauseBtn.setText(tr("convert.resume")
+            if (self._running and self._paused) else tr("convert.pause"))
 
-    # -- auto-collapse / expand -------------------------------------------
-    def _auto_collapse_cards(self):
-        """Collapse input/settings cards when a batch finishes (if enabled)."""
-        if not cfg.autoCollapse.value:
-            return
-        for c in self._auto_fold:
-            c.setCollapsed(True)
+    # =========================================================================
+    # 主题 / i18n
+    # =========================================================================
 
-    def _auto_expand_cards(self):
-        """Expand all cards when user stages new files (if enabled)."""
-        if not cfg.autoCollapse.value:
-            return
-        for c in self._auto_fold:
-            c.setCollapsed(False)
-
-    # -- theme / i18n ----------------------------------------------------
     def retheme(self):
         super().retheme()
         self.dropArea.retheme()
@@ -695,10 +667,12 @@ class UpscaleInterface(InterfaceBase):
         self.tSettings.setText(tr("upscale.settings.title"))
         self.tQueue.setText(tr("upscale.queue.title"))
         self.engineCard.retranslateUi()
-        self.dropArea.retranslate(tr("upscale.drop.title"), tr("upscale.drop.hint"),
-                                  tr("upscale.drop.formats"))
+        self.dropArea.retranslate(
+            tr("upscale.drop.title"), tr("upscale.drop.hint"),
+            tr("upscale.drop.formats"))
         self.addFolderBtn.setText(tr("upscale.add_folder"))
-        self.gpuSwitch.setText(tr("upscale.gpu.auto") if self._gpu else tr("upscale.gpu.cpu"))
+        self.gpuSwitch.setText(
+            tr("upscale.gpu.auto") if self._gpu else tr("upscale.gpu.cpu"))
         self._apply_output_mode()
         self.startBtn.setText(tr("convert.start"))
         self.pauseBtn.setText(tr("convert.pause"))

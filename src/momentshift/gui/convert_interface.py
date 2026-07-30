@@ -1,11 +1,10 @@
-"""Convert screen — rebuilt UI (v0.2.7, #4).
+"""转换界面 —— 多媒体格式转换（v0.2.9 重写）。
 
-Flow: the input card (DropArea + Add folder) stays on the main screen. After
-files are picked, a dedicated 800x500 setup dialog (ConvertSetupDialog) opens
-with the pending files, target-format picker and advanced options. Confirming
-pushes the configured tasks straight into the conversion queue (QueueListWidget),
-which also lives on the main screen. The staging / format / advanced UI was
-moved out of the main body into that popup per the redesign spec.
+流程：输入卡（DropArea + 添加文件夹）→ 选取文件 → 800×500 设置弹窗
+（ConvertSetupDialog）→ 确认后入队 → ConversionManager 驱动转换队列。
+
+v0.2.9 改动：使用 InterfaceBase 共享组件构建器（_make_card / _make_scroll /
+_expand_paths / _auto_collapse），消除与 Compress/Upscale 的重复代码。
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ import os
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QFileDialog, QLabel, QScrollArea,
+    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QFileDialog, QScrollArea,
     QMessageBox,
 )
 from PyQt6.QtCore import Qt
@@ -29,7 +28,7 @@ from ..core.models import Task
 from ..core.presets import IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS
 from ..i18n.translator import tr
 from .theme import (
-    CollapsibleCard, field_row, primary_btn, ghost_btn, scrollbar_qss,
+    CollapsibleCard, field_row, primary_btn, ghost_btn,
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
@@ -37,21 +36,34 @@ from .queue_widget import QueueListWidget
 from .convert_setup_dialog import ConvertSetupDialog
 from .ffmpeg_card import FfmpegCard
 
+# 转换模块支持的所有媒体类型
+_CONVERT_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
+
 
 class ConvertInterface(InterfaceBase):
+    """格式转换标签页。
+
+    使用 ConversionManager（集中式队列管理器）驱动转换任务。
+    选文件后弹窗选格式 + 高级参数，确认即入队。
+    """
+
     def __init__(self, manager, parent=None):
         super().__init__("Convert", tr("nav.convert"), tr("convert.subtitle"), parent)
         self.manager = manager
-        # Default target format per category, used to seed the setup dialog.
+        # 默认目标格式（按媒体大类）
         self._selection = {"image": "jpg", "audio": "mp3", "video": "mp4"}
 
-        # --- ffmpeg status -------------------------------------------------
+        # =====================================================================
+        # ffmpeg 状态卡片
+        # =====================================================================
         self.ffmpegCard = FfmpegCard(self)
         self.ffmpegCard.ffmpeg_ready.connect(self._on_ffmpeg_ready)
         self.vbox.addWidget(self.ffmpegCard)
 
-        # --- input (add media) --------------------------------------------
-        card, vb, self.tInput = self._card("convert.input.title")
+        # =====================================================================
+        # 输入卡片（拖拽区 + 添加文件夹按钮）
+        # =====================================================================
+        card, vb, self.tInput = self._make_card("convert.input.title")
         self.dropArea = DropArea(self)
         self.dropArea.filesDropped.connect(self._open_setup)
         self.dropArea.clicked.connect(self._pick_files)
@@ -65,16 +77,22 @@ class ConvertInterface(InterfaceBase):
         self.vbox.addWidget(card)
         self._inputCard = card
 
-        # --- output location ---------------------------------------------
-        ocard, ovb, self.tOutput = self._card("convert.output.title")
+        # =====================================================================
+        # 输出位置卡片（默认折叠）
+        # =====================================================================
+        ocard, ovb, self.tOutput = self._make_card("convert.output.title", collapsed=True)
+        # 输出模式切换开关
         self.outputSwitch = SwitchButton(tr("convert.output.same"))
         self.outputSwitch.checkedChanged.connect(self._on_output_mode)
         ovb.addWidget(field_row(tr("convert.output.mode"), self.outputSwitch))
+        # 文件名后缀
         self.suffixEdit = QLineEdit(cfg.outputSuffix.value)
         self.suffixEdit.setPlaceholderText(tr("convert.output.suffix.ph"))
-        self.suffixEdit.textChanged.connect(lambda t: setattr(cfg.outputSuffix, "value", t))
+        self.suffixEdit.textChanged.connect(
+            lambda t: setattr(cfg.outputSuffix, "value", t))
         self.suffixRow = field_row(tr("convert.output.suffix"), self.suffixEdit)
         ovb.addWidget(self.suffixRow)
+        # 固定输出目录
         self.folderEdit = QLineEdit(cfg.outputFolder.value)
         self.folderEdit.setReadOnly(True)
         self.browseBtn = TransparentToolButton(FIF.FOLDER, self)
@@ -88,20 +106,20 @@ class ConvertInterface(InterfaceBase):
         ovb.addWidget(self.folderRow)
         self._apply_output_mode()
         self.vbox.addWidget(ocard)
-        # v0.2.8, #3: "输出位置" starts collapsed — the queue is the focus on open.
-        ocard.setCollapsed(True)
 
-        # --- queue --------------------------------------------------------
-        qcard, qvb, self.tQueue = self._card("convert.queue.title")
+        # =====================================================================
+        # 转��队列卡片
+        # =====================================================================
+        qcard, qvb, self.tQueue = self._make_card("convert.queue.title")
         self.queueList = QueueListWidget(self)
         self.queueList.removeRequested.connect(self.manager.remove)
         self.queueList.retryRequested.connect(self.manager.retry)
         self.queueList.formatChanged.connect(self._on_row_format)
-        self.queueScroll = self._scroll()
+        self.queueScroll = self._make_scroll(280)
         self.queueScroll.setWidget(self.queueList)
-        self.queueScroll.setMinimumHeight(280)  # ~3 items visible
         qvb.addWidget(self.queueScroll)
 
+        # 队列控制按钮
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
         self.startBtn.clicked.connect(self._on_start)
@@ -115,77 +133,48 @@ class ConvertInterface(InterfaceBase):
         qvb.addLayout(ctrl)
         self.vbox.addWidget(qcard)
 
-        # Cards that auto-collapse when a batch finishes (queue stays open).
+        # 批次完成后自动折叠的卡片（队列始终展开）
         self._auto_fold = [self._inputCard, ocard]
 
-        # --- manager wiring ----------------------------------------------
+        # =====================================================================
+        # 连接 ConversionManager 信号
+        # =====================================================================
         self.manager.queue_changed.connect(self._sync_queue)
         self.manager.progress_updated.connect(self.queueList.update_progress)
         self.manager.task_finished.connect(self._on_finished)
         self.manager.state_changed.connect(self._on_state_changed)
 
         self._update_controls()
-        # Cards stay top-aligned; extra vertical space is absorbed by this spacer
-        # so a collapsed/short layout never stretches a card to fill the window.
         self.vbox.addStretch(1)
         self._collapse_ready = True
         self.retheme()
 
-    # -- helpers ----------------------------------------------------------
-    def _card(self, title_key, subtitle_key=None):
-        title_text = tr(title_key)
-        sub_text = tr(subtitle_key) if subtitle_key else ""
-        card = CollapsibleCard(title_text, sub_text, self)
-        self.register_collapsible(card)
-        return card, card.body, card.titleLabel
+    # =========================================================================
+    # 文件选取 → 设置弹窗流程
+    # =========================================================================
 
-    def _scroll(self) -> QScrollArea:
-        s = QScrollArea()
-        s.setWidgetResizable(True)
-        s.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        s.setStyleSheet(
-            f"QScrollArea{{border:none; background:transparent;}} {scrollbar_qss()}"
-        )
-        s.viewport().setStyleSheet("background:transparent;")
-        return s
+    def _gpu_enabled(self) -> bool:
+        """判断 GPU 加速是否可用。"""
+        if cfg.hardware.value == "cpu":
+            return False
+        if cfg.hardware.value == "gpu":
+            return True
+        return bool(self.manager.hw)
 
-    def _expand(self, paths: list[str]) -> list[str]:
-        exts = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
-        out: list[str] = []
-        for p in paths:
-            if os.path.isdir(p):
-                for root, _, files in os.walk(p):
-                    for f in files:
-                        fp = os.path.join(root, f)
-                        if Path(fp).suffix.lower() in exts:
-                            out.append(fp)
-            elif os.path.isfile(p) and Path(p).suffix.lower() in exts:
-                out.append(p)
-        # de-dupe, preserve order
-        seen, uniq = set(), []
-        for p in out:
-            if p not in seen:
-                seen.add(p)
-                uniq.append(p)
-        return uniq
-
-    # -- setup dialog flow ----------------------------------------------
     def _open_setup(self, paths: list[str]):
-        """Expand the picked paths and open the 800x500 setup popup."""
-        expanded = self._expand(paths)
+        """展开路径列表，打开 800×500「转换设置」弹窗。"""
+        expanded = self._expand_paths(paths, _CONVERT_EXTS)
         if not expanded:
             return
-        dlg = ConvertSetupDialog(self, self.manager, expanded, self._selection, self._gpu_enabled)
+        dlg = ConvertSetupDialog(self, self.manager, expanded,
+                                 self._selection, self._gpu_enabled)
         if dlg.exec():
-            # Remember the chosen formats as the seed for next time.
             self._selection.update(dlg.get_selection())
         self._update_controls()
 
     def _pick_files(self):
-        exts = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
-        flt = "Media (" + " ".join(f"*{e}" for e in sorted(exts)) + ")"
-        # Non-native dialog: the native Windows picker replays a mouse-up after
-        # closing and re-opens itself (v0.2.7, #3).
+        """点击 DropArea 弹出文件选择器。"""
+        flt = "Media (" + " ".join(f"*{e}" for e in sorted(_CONVERT_EXTS)) + ")"
         files, _ = QFileDialog.getOpenFileNames(
             self, tr("convert.add.files"), "", flt, "",
             QFileDialog.Option.DontUseNativeDialog,
@@ -194,24 +183,33 @@ class ConvertInterface(InterfaceBase):
             self._open_setup(files)
 
     def _pick_folder(self):
+        """弹出文件夹选择器。"""
         d = QFileDialog.getExistingDirectory(
-            self, tr("convert.add.folder"), "", QFileDialog.Option.DontUseNativeDialog)
+            self, tr("convert.add.folder"), "",
+            QFileDialog.Option.DontUseNativeDialog)
         if d:
             self._open_setup([d])
 
-    # -- output ----------------------------------------------------------
+    # =========================================================================
+    # 输出位置设置
+    # =========================================================================
+
     def _on_output_mode(self, checked: bool):
+        """切换输出模式：同目录 + 后缀 vs 固定目录。"""
         cfg.outputMode.value = "same" if checked else "fixed"
         self._apply_output_mode()
 
     def _apply_output_mode(self):
+        """根据当前输出模式显示/隐藏对应 UI 行。"""
         same = cfg.outputMode.value == "same"
         self.outputSwitch.setChecked(same)
-        self.outputSwitch.setText(tr("convert.output.same") if same else tr("convert.output.fixed"))
+        self.outputSwitch.setText(
+            tr("convert.output.same") if same else tr("convert.output.fixed"))
         self.suffixRow.setVisible(same)
         self.folderRow.setVisible(not same)
 
     def _pick_output(self):
+        """浏览选择固定输出目录。"""
         d = QFileDialog.getExistingDirectory(
             self, tr("convert.output.browse"), cfg.outputFolder.value or "",
             QFileDialog.Option.DontUseNativeDialog)
@@ -219,42 +217,40 @@ class ConvertInterface(InterfaceBase):
             cfg.outputFolder.value = d
             self.folderEdit.setText(d)
 
-    # -- queue actions ---------------------------------------------------
-    def _gpu_enabled(self) -> bool:
-        if cfg.hardware.value == "cpu":
-            return False
-        if cfg.hardware.value == "gpu":
-            return True
-        return bool(self.manager.hw)
+    # =========================================================================
+    # 队列操作
+    # =========================================================================
 
     def _on_row_format(self, task_id: str, fmt: str):
+        """队列行内格式变更 → 同步到 manager。"""
         self.manager.set_task_target(task_id, fmt)
 
     def _on_ffmpeg_ready(self):
+        """ffmpeg 就绪后刷新引擎并更新控件。"""
         self.manager.refresh_ffmpeg()
         self._update_controls()
 
     def _sync_queue(self):
+        """manager 队列变更 → 同步到 UI 列表。"""
         self.queueList.sync(self.manager.tasks)
-        self._update_count()
 
     def _on_finished(self, task_id: str, ok: bool, log: str):
-        self.queueList.update_status(task_id, Task.DONE if ok else Task.FAILED, log)
-        self._update_count()
+        """单个任务完成 → 更新 UI 状态。"""
+        self.queueList.update_status(task_id,
+            Task.DONE if ok else Task.FAILED, log)
 
     def _on_state_changed(self):
+        """manager 状态变更 → 更新按钮 + 自动折叠。"""
         self._update_controls()
-        self._update_count()
         if not self.manager.is_running and self.manager.tasks:
-            self._auto_collapse_cards()
-
-    def _update_count(self):
-        pass  # queueList owns its own stats; nothing extra needed here
+            self._auto_collapse(*self._auto_fold)
 
     def _update_controls(self):
+        """根据 manager 状态刷新各按钮的启用/文案。"""
         running = self.manager.is_running
         has = bool(self.manager.tasks)
-        self.startBtn.setEnabled(not running and has and self.manager.has_ffmpeg)
+        self.startBtn.setEnabled(
+            not running and has and self.manager.has_ffmpeg)
         self.pauseBtn.setEnabled(running)
         self.clearBtn.setEnabled(has)
         if running and self.manager.is_paused:
@@ -262,24 +258,19 @@ class ConvertInterface(InterfaceBase):
         else:
             self.pauseBtn.setText(tr("convert.pause"))
 
-    # -- auto-collapse / expand -------------------------------------------
-    def _auto_collapse_cards(self):
-        """Collapse input/settings cards when a batch finishes (if enabled)."""
-        if not cfg.autoCollapse.value:
-            return
-        for c in self._auto_fold:
-            c.setCollapsed(True)
-
     def _on_start(self):
+        """开始转换：检查 ffmpeg 就绪 + 同格式警告后启动。"""
         if not self.manager.has_ffmpeg:
-            QMessageBox.warning(self, tr("common.warning"), tr("convert.start.no_ffmpeg"))
+            QMessageBox.warning(
+                self, tr("common.warning"), tr("convert.start.no_ffmpeg"))
             return
         if not self.manager.tasks:
             return
         same = self.manager.pending_same_format()
         if same:
             ans = QMessageBox.question(
-                self, tr("common.warning"), tr("convert.start.same_format"),
+                self, tr("common.warning"),
+                tr("convert.start.same_format"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if ans != QMessageBox.StandardButton.Yes:
@@ -288,6 +279,7 @@ class ConvertInterface(InterfaceBase):
         self._update_controls()
 
     def _on_pause(self):
+        """暂停 / 继续转换。"""
         if self.manager.is_running and not self.manager.is_paused:
             self.manager.pause()
         else:
@@ -295,15 +287,20 @@ class ConvertInterface(InterfaceBase):
         self._update_controls()
 
     def _on_clear(self):
+        """清空转换队列。"""
         self.manager.clear()
         self._update_controls()
 
-    # -- theme / i18n ----------------------------------------------------
+    # =========================================================================
+    # 主题 / i18n
+    # =========================================================================
+
     def retheme(self):
         super().retheme()
         self.dropArea.retheme()
 
     def retranslateUi(self):
+        """更新所有 UI 文字（语言切换时触发）。"""
         self.titleLabel.setText(tr("nav.convert"))
         self.subLabel.setText(tr("convert.subtitle"))
         self.tInput.setText(tr("convert.input.title"))
@@ -312,7 +309,8 @@ class ConvertInterface(InterfaceBase):
 
         self.ffmpegCard.retranslateUi()
         self.dropArea.retranslate(
-            tr("convert.drop.title"), tr("convert.drop.hint"), tr("convert.drop.formats"))
+            tr("convert.drop.title"), tr("convert.drop.hint"),
+            tr("convert.drop.formats"))
         self.addFolderBtn.setText(tr("convert.add.folder"))
         self.suffixEdit.setPlaceholderText(tr("convert.output.suffix.ph"))
         self._apply_output_mode()

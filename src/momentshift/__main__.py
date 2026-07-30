@@ -1,4 +1,7 @@
-"""Entry point: ``python -m momentshift`` or the installed ``momentshift`` CLI."""
+"""Entry point: ``python -m momentshift`` or the installed ``momentshift`` CLI.
+
+v0.2.9: ``--quick <task> <files...>`` mode for Windows right-click context menu.
+"""
 
 import sys
 import threading
@@ -48,6 +51,126 @@ def _threading_excepthook(args):
     )
 
 
+# =============================================================================
+# 快速调用（无 GUI 模式，v0.2.9）
+# =============================================================================
+def _quick_launch_task(task: str, files: list[str]) -> int:
+    """处理来自右键菜单的快速调用请求。
+
+    使用 QCoreApplication 事件循环驱动，不使用 MainWindow。
+    所有输出文件默认保存到源文件同目录。
+    """
+    from pathlib import Path
+    from PyQt6.QtCore import QCoreApplication, QTimer
+    from momentshift.core.qt_compat import QCoreApplication as QA
+
+    log = get_logger("quick")
+    log.info("Quick launch: task=%s files=%d first=%s", task, len(files),
+             files[0] if files else "")
+
+    app = QA.instance() or QA(sys.argv)
+
+    if task == "convert":
+        from momentshift.core.presets import IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS, guess_category
+
+        valid_exts = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
+        valid_files = [f for f in files if Path(f).suffix.lower() in valid_exts]
+        if not valid_files:
+            log.warning("quick: no valid media files for convert")
+            return 1
+        manager = ConversionManager()
+        gpu = True
+        if cfg.hardware.value == "cpu":
+            gpu = False
+        elif cfg.hardware.value == "auto":
+            gpu = bool(manager.hw)
+        manager.add_files(valid_files, None, None, gpu, "same", "_converted")
+        # 任务队列空闲时退出事件循环
+        def _quit_when_idle():
+            if not manager.is_running and not manager.tasks:
+                QCoreApplication.quit()
+        manager.state_changed.connect(_quit_when_idle)
+        manager.start()
+        app.exec()
+        log.info("quick: convert done")
+        return 0
+
+    elif task == "compress":
+        from momentshift.core import compressor
+        from momentshift.core.presets import IMAGE_EXTS
+
+        valid_files = [f for f in files if Path(f).suffix.lower() in IMAGE_EXTS]
+        if not valid_files:
+            log.warning("quick: no valid image files for compress")
+            return 1
+        total = len(valid_files)
+        completed = {"count": 0}
+        errors = []
+        def _compress(idx, src):
+            p = Path(src)
+            out = p.parent / (p.stem + "_compressed" + p.suffix)
+            i = 1
+            while out.exists():
+                out = p.parent / f"{p.stem}_compressed_{i}{p.suffix}"
+                i += 1
+            try:
+                ok, _, _ = compressor.compress_auto(src, str(out), "lossless", 100, {})
+                if not ok:
+                    errors.append(src)
+            except Exception as exc:
+                log.error("quick: compress error %s: %s", src, exc)
+                errors.append(src)
+            completed["count"] += 1
+            if completed["count"] >= total:
+                QCoreApplication.quit()
+        for i, f in enumerate(valid_files):
+            QTimer.singleShot(i * 50, lambda f=f: _compress(None, f))
+        app.exec()
+        log.info("quick: compress done, %d/%d ok", total - len(errors), total)
+        return 0 if not errors else 1
+
+    elif task == "upscale":
+        from momentshift.core import upscaler
+
+        upscale_exts = upscaler.IMAGE_EXTS | upscaler.ANIM_EXTS
+        valid_files = [f for f in files if Path(f).suffix.lower() in upscale_exts]
+        if not valid_files:
+            log.warning("quick: no valid files for upscale")
+            return 1
+        if not upscaler.find_upscaler():
+            log.error("quick: upscaler engine not found")
+            return 1
+        total = len(valid_files)
+        completed = {"count": 0}
+        errors = []
+        def _upscale(src):
+            p = Path(src)
+            out = p.parent / (p.stem + "_upscaled.png")
+            i = 1
+            while out.exists():
+                out = p.parent / f"{p.stem}_upscaled_{i}.png"
+                i += 1
+            try:
+                ok, _ = upscaler.upscale_media(src, str(out), "realesrgan-x4plus", 4, 0, "auto")
+                if not ok:
+                    errors.append(src)
+            except Exception as exc:
+                log.error("quick: upscale error %s: %s", src, exc)
+                errors.append(src)
+            completed["count"] += 1
+            if completed["count"] >= total:
+                QCoreApplication.quit()
+        for i, f in enumerate(valid_files):
+            QTimer.singleShot(i * 50, lambda f=f: _upscale(f))
+        app.exec()
+        log.info("quick: upscale done, %d/%d ok", total - len(errors), total)
+        return 0 if not errors else 1
+
+    else:
+        log.error("quick: unknown task %s", task)
+        return 1
+
+
 def main():
     init_logging()
     sys.excepthook = _excepthook
@@ -56,7 +179,24 @@ def main():
     log = get_logger("app")
     log.info("Starting %s %s", APP_NAME, VERSION)
 
-    # Crisp rendering on high-DPI displays (PyQt6 handles HiDPI natively).
+    # =========================================================================
+    # 快速调用模式（v0.2.9）：无 GUI，右键菜单触发
+    #   MomentShift.exe --quick convert file1.png file2.jpg
+    # =========================================================================
+    if "--quick" in sys.argv:
+        idx = sys.argv.index("--quick")
+        if idx + 2 >= len(sys.argv):
+            log.error("Usage: MomentShift --quick <task> <file1> [file2 ...]")
+            sys.exit(1)
+        task = sys.argv[idx + 1]
+        files = sys.argv[idx + 2:]
+        QApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+        sys.exit(_quick_launch_task(task, files))
+
+    # =========================================================================
+    # 正常 GUI 模式
+    # =========================================================================
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
