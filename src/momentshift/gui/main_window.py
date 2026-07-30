@@ -16,6 +16,8 @@ Language switching stays in-process (it is already instant).
 
 import importlib
 from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
+from PyQt6.QtGui import QAction
 
 from ..core.qt_compat import QApplication, QIcon, QSize
 from qfluentwidgets import (
@@ -64,6 +66,8 @@ class MainWindow(FluentWindow):
 
         self.themeListener.start()
         self._connect_config()
+        self._force_quit = False
+        self._init_tray()
         # Defer ALL interface construction until after the first paint so the
         # window (and its splash) is on screen immediately.
         QTimer.singleShot(0, self._bootstrap)
@@ -195,11 +199,64 @@ class MainWindow(FluentWindow):
         self.show()
         QApplication.processEvents()
 
+    # -- system tray -----------------------------------------------------
+    def _init_tray(self):
+        """Create the tray icon + context menu (minimise-to-tray on close)."""
+        self.tray = QSystemTrayIcon(self)
+        self.tray.setIcon(self.windowIcon())
+        self.tray.setToolTip(tr("tray.title"))
+        menu = QMenu(self)
+        show_action = QAction(tr("tray.show"), self)
+        quit_action = QAction(tr("tray.quit"), self)
+        show_action.triggered.connect(self._tray_show)
+        quit_action.triggered.connect(self._tray_quit)
+        menu.addAction(show_action)
+        menu.addAction(quit_action)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(self._tray_activated)
+        self.tray.show()
+
+    def _tray_show(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _tray_activated(self, reason):
+        from PyQt6.QtCore import Qt
+        if reason == Qt.TrayIconActivationReason.DoubleClick:
+            self._tray_show()
+
+    def _tray_quit(self):
+        self._force_quit = True
+        self.close()
+
     def closeEvent(self, event):
+        if self._force_quit:
+            self._cleanup_and_quit(event)
+            return
+        if cfg.closeToTray.value:
+            # Minimise to the system tray instead of quitting, so the app can be
+            # re-summoned instantly without a cold re-launch (v0.2.7, #3).
+            event.ignore()
+            self.hide()
+            try:
+                self.tray.showMessage(
+                    tr("tray.title"), tr("tray.hidden"),
+                    QSystemTrayIcon.MessageIcon.Information, 2500)
+            except Exception:
+                pass
+            return
+        self._cleanup_and_quit(event)
+
+    def _cleanup_and_quit(self, event):
         qconfig.save()
         try:
             self.themeListener.terminate()
             self.themeListener.deleteLater()
+        except Exception:
+            pass
+        try:
+            self.tray.hide()
         except Exception:
             pass
         super().closeEvent(event)

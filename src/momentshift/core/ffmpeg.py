@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+# Suppress the per-task console window on Windows (no cmd popups during probes).
+WIN_SILENT = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 import sys
 from pathlib import Path
 
@@ -90,6 +92,7 @@ def get_version(ffmpeg_path: str) -> str | None:
             timeout=15,
             encoding="utf-8",
             errors="replace",
+            creationflags=WIN_SILENT,
         )
         if proc.returncode == 0:
             return proc.stdout.splitlines()[0].strip()
@@ -109,6 +112,7 @@ def get_encoders(ffmpeg_path: str) -> set[str]:
             timeout=20,
             encoding="utf-8",
             errors="replace",
+            creationflags=WIN_SILENT,
         )
     except (OSError, subprocess.SubprocessError):
         return encoders
@@ -132,6 +136,7 @@ def get_hwaccels(ffmpeg_path: str) -> set[str]:
             timeout=20,
             encoding="utf-8",
             errors="replace",
+            creationflags=WIN_SILENT,
         )
     except (OSError, subprocess.SubprocessError):
         return accels

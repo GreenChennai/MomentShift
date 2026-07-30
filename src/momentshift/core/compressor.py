@@ -32,6 +32,8 @@ import io
 import os
 import shutil
 import subprocess
+# Suppress the per-task console window on Windows (no cmd popups for oxipng/optipng/mozjpeg).
+WIN_SILENT = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 from pathlib import Path
 from typing import Optional
 
@@ -374,7 +376,7 @@ def _oxipng(input_path, output_path, opts) -> tuple[bool, str]:
         args += ["--interlace", "adam7"]
     args.append(tmp)
     try:
-        subprocess.run(args, check=True, capture_output=True, text=True)
+        subprocess.run(args, check=True, capture_output=True, text=True, creationflags=WIN_SILENT)
     except subprocess.CalledProcessError as exc:
         if os.path.exists(tmp):
             os.remove(tmp)
@@ -398,7 +400,7 @@ def _optipng(input_path, output_path, opts) -> tuple[bool, str]:
         str(input_path),
     ]
     try:
-        subprocess.run(args, check=True, capture_output=True, text=True)
+        subprocess.run(args, check=True, capture_output=True, text=True, creationflags=WIN_SILENT)
     except subprocess.CalledProcessError as exc:
         return False, f"optipng error: {exc.stderr[:200]}"
     return True, f"optipng -o{level}"
@@ -415,7 +417,7 @@ def _mozjpeg(input_path, output_path, mode, quality, opts) -> tuple[bool, str]:
         if opts.get("progressive"):
             args.insert(1, "-progressive")
         try:
-            subprocess.run(args, check=True, capture_output=True, text=True)
+            subprocess.run(args, check=True, capture_output=True, text=True, creationflags=WIN_SILENT)
         except subprocess.CalledProcessError as exc:
             return False, f"jpegtran error: {exc.stderr[:200]}"
         return True, "mozjpeg jpegtran -optimize"
@@ -433,7 +435,8 @@ def _mozjpeg(input_path, output_path, mode, quality, opts) -> tuple[bool, str]:
         *(["-arithmetic"] if opts.get("arithmetic") else []),
     ]
     try:
-        proc = subprocess.run(cargs, input=buf.getvalue(), capture_output=True, check=True)
+        proc = subprocess.run(cargs, input=buf.getvalue(), capture_output=True, check=True,
+                                creationflags=WIN_SILENT)
     except subprocess.CalledProcessError as exc:
         return False, f"cjpeg error: {exc.stderr[:200]}"
     Path(output_path).write_bytes(proc.stdout)

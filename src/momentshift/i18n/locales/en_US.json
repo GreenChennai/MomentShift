@@ -335,5 +335,19 @@
   "upscale.staging.empty": "",
   "settings.group.conversion": "Conversion",
   "settings.group.data": "Data & cache",
-  "advanced.compression.pillow": "Pillow (built-in)"
+  "advanced.compression.pillow": "Pillow (built-in)",
+  "settings.close_to_tray": "Close to system tray",
+  "settings.close_to_tray.hint": "Minimise to tray instead of quitting when the window is closed",
+  "tray.title": "MomentShift",
+  "tray.show": "Show MomentShift",
+  "tray.quit": "Quit",
+  "tray.hidden": "MomentShift is running in the background",
+  "convert.setup.title": "Conversion setup",
+  "convert.setup.staging": "Pending files",
+  "convert.setup.format": "Target format",
+  "convert.setup.advanced": "Advanced settings",
+  "convert.setup.empty": "No files selected",
+  "convert.setup.confirm": "Add to queue",
+  "convert.setup.cancel": "Cancel",
+  "convert.setup.hint": "Pick a target format and tweak options, then add to the queue"
 }

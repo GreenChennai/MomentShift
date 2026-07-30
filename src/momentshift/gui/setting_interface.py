@@ -119,7 +119,10 @@ class SettingInterface(InterfaceBase):
         self.autoFoldCard = SwitchSettingCard(
             FIF.HIDE, tr("settings.auto_fold"), tr("settings.auto_fold.hint"),
             cfg.autoCollapse)
-        for c in (self.langCard, self.themeCard, self.autoFoldCard):
+        self.trayCard = SwitchSettingCard(
+            FIF.MINIMIZE, tr("settings.close_to_tray"), tr("settings.close_to_tray.hint"),
+            cfg.closeToTray)
+        for c in (self.langCard, self.themeCard, self.autoFoldCard, self.trayCard):
             self.g_general.addSettingCard(c)
         self.vbox.addWidget(self.g_general)
 
@@ -206,6 +209,8 @@ class SettingInterface(InterfaceBase):
         self.themeCard.setContent(tr("settings.restart_hint"))
         self.autoFoldCard.setTitle(tr("settings.auto_fold"))
         self.autoFoldCard.setContent(tr("settings.auto_fold.hint"))
+        self.trayCard.setTitle(tr("settings.close_to_tray"))
+        self.trayCard.setContent(tr("settings.close_to_tray.hint"))
         self.hwCard.setTitle(tr("settings.hardware"))
         self.threadsCard.setTitle(tr("settings.threads"))
         self.threadsCard.setContent(tr("settings.threads.hint"))

@@ -539,12 +539,16 @@ class UpscaleInterface(InterfaceBase):
     def _pick_files(self):
         exts = upscaler.IMAGE_EXTS | upscaler.ANIM_EXTS | VIDEO_EXTS
         flt = "Media (" + " ".join(f"*{e}" for e in sorted(exts)) + ")"
-        files, _ = QFileDialog.getOpenFileNames(self, tr("upscale.btn.add"), "", flt)
+        files, _ = QFileDialog.getOpenFileNames(
+            self, tr("upscale.btn.add"), "", flt, "",
+            QFileDialog.Option.DontUseNativeDialog,
+        )
         if files:
             self._add_staged(self._expand(files))
 
     def _pick_folder(self):
-        d = QFileDialog.getExistingDirectory(self, tr("upscale.add_folder"), "")
+        d = QFileDialog.getExistingDirectory(
+            self, tr("upscale.add_folder"), "", QFileDialog.Option.DontUseNativeDialog)
         if d:
             self._add_staged(self._expand([d]))
 
@@ -624,7 +628,9 @@ class UpscaleInterface(InterfaceBase):
         self.folderRow.setVisible(not same)
 
     def _pick_output(self):
-        d = QFileDialog.getExistingDirectory(self, tr("convert.output.browse"), self._folder or "")
+        d = QFileDialog.getExistingDirectory(
+            self, tr("convert.output.browse"), self._folder or "",
+            QFileDialog.Option.DontUseNativeDialog)
         if d:
             self._folder = d
             cfg.upscaleFolder.value = d

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+# Suppress the per-task console window on Windows when probing a video poster frame.
+WIN_SILENT = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 import tempfile
 from pathlib import Path
 
@@ -43,7 +45,7 @@ def _video_poster(path: str) -> QPixmap:
     try:
         subprocess.run(
             [ff, "-y", "-ss", "00:00:01", "-i", path, "-frames:v", "1", "-q:v", "2", tmp],
-            capture_output=True, timeout=60,
+            capture_output=True, timeout=60, creationflags=WIN_SILENT,
         )
         return QPixmap(tmp)
     except Exception:

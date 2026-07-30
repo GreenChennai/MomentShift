@@ -26,6 +26,8 @@ import json
 import os
 import shutil
 import subprocess
+# Suppress the per-task console window on Windows (no cmd popups for the upscaler engine).
+WIN_SILENT = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 import sys
 import tempfile
 import urllib.request
@@ -135,6 +137,7 @@ def _run(cmd: list[str], timeout: int = 3600) -> Tuple[bool, str]:
             timeout=timeout,
             encoding="utf-8",
             errors="replace",
+            creationflags=WIN_SILENT,
         )
     except subprocess.TimeoutExpired:
         return False, "处理超时（超过 %d 秒）" % timeout
@@ -198,6 +201,7 @@ def _probe_fps(ffmpeg: str, input_path: str) -> float:
              "-show_entries", "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1",
              input_path],
             capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace",
+            creationflags=WIN_SILENT,
         )
         val = proc.stdout.strip()
         if "/" in val:

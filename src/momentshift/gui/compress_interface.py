@@ -452,12 +452,16 @@ class CompressInterface(InterfaceBase):
 
     def _pick_files(self):
         flt = "Images (" + " ".join(f"*{e}" for e in sorted(IMAGE_EXTS)) + ")"
-        files, _ = QFileDialog.getOpenFileNames(self, tr("compress.add.files"), "", flt)
+        files, _ = QFileDialog.getOpenFileNames(
+            self, tr("compress.add.files"), "", flt, "",
+            QFileDialog.Option.DontUseNativeDialog,
+        )
         if files:
             self._on_files(files)
 
     def _pick_folder(self):
-        d = QFileDialog.getExistingDirectory(self, tr("compress.add.folder"), "")
+        d = QFileDialog.getExistingDirectory(
+            self, tr("compress.add.folder"), "", QFileDialog.Option.DontUseNativeDialog)
         if d:
             self._on_files([d])
 
@@ -601,7 +605,9 @@ class CompressInterface(InterfaceBase):
             sw.setOffText(tr("common.off"))
 
     def _pick_output(self):
-        d = QFileDialog.getExistingDirectory(self, tr("compress.output.browse"), self._folder or "")
+        d = QFileDialog.getExistingDirectory(
+            self, tr("compress.output.browse"), self._folder or "",
+            QFileDialog.Option.DontUseNativeDialog)
         if d:
             self._folder = d
             cfg.compressFolder.value = d

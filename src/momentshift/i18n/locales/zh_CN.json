@@ -335,5 +335,19 @@
   "upscale.staging.empty": "",
   "settings.group.conversion": "转换",
   "settings.group.data": "数据与缓存",
-  "advanced.compression.pillow": "Pillow (内置)"
+  "advanced.compression.pillow": "Pillow (内置)",
+  "settings.close_to_tray": "关闭时最小化到托盘",
+  "settings.close_to_tray.hint": "关闭窗口时最小化到托盘而非直接退出",
+  "tray.title": "瞬变工坊",
+  "tray.show": "显示主窗口",
+  "tray.quit": "退出",
+  "tray.hidden": "MomentShift 已在后台运行",
+  "convert.setup.title": "转换设置",
+  "convert.setup.staging": "待处理文件",
+  "convert.setup.format": "选择目标格式",
+  "convert.setup.advanced": "高级设置",
+  "convert.setup.empty": "未选择文件",
+  "convert.setup.confirm": "加入队列",
+  "convert.setup.cancel": "取消",
+  "convert.setup.hint": "选择目标格式并调整参数，然后加入队列"
 }

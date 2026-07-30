@@ -335,5 +335,19 @@
   "upscale.staging.empty": "",
   "settings.group.conversion": "轉換",
   "settings.group.data": "資料與快取",
-  "advanced.compression.pillow": "Pillow (內建)"
+  "advanced.compression.pillow": "Pillow (內建)",
+  "settings.close_to_tray": "關閉時最小化到托盤",
+  "settings.close_to_tray.hint": "關閉視窗時最小化到托盤而非直接退出",
+  "tray.title": "瞬變工坊",
+  "tray.show": "顯示主視窗",
+  "tray.quit": "退出",
+  "tray.hidden": "MomentShift 已在背景執行",
+  "convert.setup.title": "轉換設定",
+  "convert.setup.staging": "待處理檔案",
+  "convert.setup.format": "選擇目標格式",
+  "convert.setup.advanced": "進階設定",
+  "convert.setup.empty": "未選擇檔案",
+  "convert.setup.confirm": "加入佇列",
+  "convert.setup.cancel": "取消",
+  "convert.setup.hint": "選擇目標格式並調整參數，然後加入佇列"
 }

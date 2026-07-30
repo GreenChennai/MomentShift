@@ -58,6 +58,7 @@ hiddenimports = [
     "momentshift.gui.queue_widget",
     "momentshift.gui.compress_interface",
     "momentshift.gui.convert_interface",
+    "momentshift.gui.convert_setup_dialog",
     "momentshift.gui.upscale_interface",
     "momentshift.gui.compare_widget",
     "momentshift.gui.setting_interface",

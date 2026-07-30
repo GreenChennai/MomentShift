@@ -8,6 +8,8 @@ signals without coupling the engine to the UI.
 from __future__ import annotations
 
 import subprocess
+# Suppress the per-task console window on Windows (no cmd popups during batch runs).
+WIN_SILENT = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -55,6 +57,7 @@ def run_conversion(
             bufsize=1,
             encoding="utf-8",
             errors="replace",
+            creationflags=WIN_SILENT,
         )
     except OSError as exc:
         log.error("Failed to launch ffmpeg: %s", exc)

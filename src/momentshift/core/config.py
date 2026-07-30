@@ -109,6 +109,9 @@ class Config(QConfig):
     )
     autoCollapse = ConfigItem("UI", "AutoCollapse", True)
 
+    # System tray: minimise to tray on close instead of quitting (v0.2.7, #3).
+    closeToTray = ConfigItem("UI", "CloseToTray", True)
+
 
 cfg = Config()
 

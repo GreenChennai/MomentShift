@@ -12,8 +12,12 @@ Full-window visual verification belongs on a real desktop / GitHub Actions.
 
 Covers:
   - All five interfaces import and construct (rebuilt UI).
-  - Convert: add files -> staging list -> format matrix built -> add to queue ->
-    engine receives the task (no repaint, so safe).
+  - Convert (v0.2.7 redesign): files are expanded/filtered by category, the
+    format picker (FormatGrid) is seeded from the default selection, and the
+    setup dialog's confirm pushes tasks into the queue via ConversionManager.
+    The full ConvertSetupDialog (which builds an AdvancedPanel with CJK combo
+    items) hard-kills this sandbox, so it is exercised on a real desktop / CI;
+    here we test the safe pieces it delegates to (no repaint, no native combos).
   - Detached manager: output-mode + same-format logic.
   - Upscale staging accepts media.
 """
@@ -61,21 +65,19 @@ def main():
     os.makedirs(src)
     os.makedirs(out)
 
-    step("Convert: unsupported file rejected by staging")
+    step("Convert: expand() filters out unsupported files")
     bad = os.path.join(tmp, "secret_file.xyz")
     open(bad, "wb").write(b"nope")
-    convert._on_files([bad])
-    assert len(convert._staged) == 0, "unsupported file should be rejected"
-    assert len(convert.queueList.items) == 0
+    assert convert._expand([bad]) == [], "unsupported file must be filtered"
 
-    step("Convert: png -> staging + format matrix built")
+    step("Convert: FormatGrid seeded from default selection")
+    from momentshift.gui.format_grid import FormatGrid
     png = os.path.join(src, "photo.png")
     open(png, "wb").write(b"\x89PNG\r\n\x1a\n")
-    convert._on_files([png])
-    assert len(convert._staged) == 1, convert._staged
-    # format matrix is built from staging (visibility is irrelevant when offscreen)
-    assert convert.formatGrid.get_selection().get("image") == "jpg"
-    assert any(c.category == "image" for c in convert.formatGrid._cards), "no image cards"
+    fg = FormatGrid(convert)
+    fg.setup(["image"], convert._selection)
+    assert fg.get_selection().get("image") == "jpg", fg.get_selection()
+    fg.deleteLater()
 
     step("QueueItemWidget constructs (the old crash site, no paint)")
     from momentshift.gui.queue_widget import QueueItemWidget
@@ -86,10 +88,13 @@ def main():
     )
     tw.deleteLater()
 
-    step("Convert: add-to-queue wiring (engine receives task, no repaint)")
+    step("Convert: confirm pushes task into conversion queue (same-folder mode)")
+    cfg.outputMode.value = "same"
+    cfg.outputSuffix.value = ""
     cfg.outputFolder.value = out
     before = len(manager.tasks)
-    convert._on_add_to_queue()
+    added, skipped = manager.add_files([png], "jpg", None, False, "same", "")
+    assert len(added) == 1 and skipped == [], (added, skipped)
     assert len(manager.tasks) == before + 1, len(manager.tasks)
     assert manager.tasks[-1].target_format == "jpg"
     assert manager.tasks[-1].output_path.endswith("photo.jpg"), manager.tasks[-1].output_path
