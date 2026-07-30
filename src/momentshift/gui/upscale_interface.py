@@ -241,6 +241,20 @@ class UpscaleListWidget(QWidget):
         vb = QVBoxLayout(self)
         vb.setContentsMargins(0, 0, 0, 0)
         vb.setSpacing(8)
+
+        self.statsBar = QWidget()
+        hb = QHBoxLayout(self.statsBar)
+        hb.setContentsMargins(2, 0, 2, 0)
+        hb.setSpacing(14)
+        self.statTotal = CaptionLabel()
+        self.statDone = CaptionLabel()
+        self.statErr = CaptionLabel()
+        for w in (self.statTotal, self.statDone, self.statErr):
+            w.setStyleSheet(f"color: {muted_text()}; font-weight:600;")
+            hb.addWidget(w)
+        hb.addStretch(1)
+        vb.addWidget(self.statsBar)
+
         self.listWidget = QWidget()
         self.listLayout = QVBoxLayout(self.listWidget)
         self.listLayout.setContentsMargins(0, 0, 0, 0)
@@ -256,6 +270,19 @@ class UpscaleListWidget(QWidget):
     def _refresh_empty(self):
         self.emptyHint.setVisible(not self.items)
 
+    def _update_stats(self):
+        total = len(self.items)
+        done = 0
+        failed = 0
+        for w in self.items.values():
+            if w._status == "done":
+                done += 1
+            elif w._status == "failed":
+                failed += 1
+        self.statTotal.setText(tr("upscale.queue.stats.total", n=total))
+        self.statDone.setText(tr("upscale.queue.stats.done", n=done))
+        self.statErr.setText(tr("upscale.queue.stats.error", n=failed))
+
     def add_item(self, item_id: str, src: str):
         if item_id in self.items:
             return
@@ -265,6 +292,7 @@ class UpscaleListWidget(QWidget):
         self.items[item_id] = w
         self.listLayout.insertWidget(self.listLayout.count() - 1, w)
         self._refresh_empty()
+        self._update_stats()
 
     def set_progress(self, item_id: str, pct: int):
         w = self.items.get(item_id)
@@ -275,23 +303,27 @@ class UpscaleListWidget(QWidget):
         w = self.items.get(item_id)
         if w:
             w.set_status(status, saved, detail)
+            self._update_stats()
 
     def remove_item(self, item_id: str):
         w = self.items.pop(item_id, None)
         if w:
             w.deleteLater()
         self._refresh_empty()
+        self._update_stats()
 
     def clear(self):
         for w in self.items.values():
             w.deleteLater()
         self.items.clear()
         self._refresh_empty()
+        self._update_stats()
 
     def retranslate(self):
         for w in self.items.values():
             w.retranslate()
         self.emptyHint.setText(tr("upscale.queue.empty"))
+        self._update_stats()
 
 
 # --------------------------------------------------------------------------
@@ -323,7 +355,7 @@ class UpscaleInterface(InterfaceBase):
         self.vbox.addWidget(self.engineCard)
 
         # --- input --------------------------------------------------------
-        card, vb, self.tInput = self._card("upscale.input.title", "upscale.input.subtitle")
+        card, vb, self.tInput = self._card("upscale.input.title")
         self.dropArea = DropArea(self)
         self.dropArea.filesDropped.connect(self._on_files)
         self.dropArea.clicked.connect(self._pick_files)

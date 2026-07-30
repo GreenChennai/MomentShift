@@ -45,8 +45,8 @@ class ConvertInterface(InterfaceBase):
         self.ffmpegCard.ffmpeg_ready.connect(self._on_ffmpeg_ready)
         self.vbox.addWidget(self.ffmpegCard)
 
-        # --- input --------------------------------------------------------
-        card, vb, self.tInput = self._card("convert.input.title", "convert.input.subtitle")
+        # --- input (add media) --------------------------------------------
+        card, vb, self.tInput = self._card("convert.input.title")
         self.dropArea = DropArea(self)
         self.dropArea.filesDropped.connect(self._on_files)
         self.dropArea.clicked.connect(self._pick_files)
@@ -60,10 +60,14 @@ class ConvertInterface(InterfaceBase):
         tools.addWidget(self.addFilesBtn)
         tools.addWidget(self.addFolderBtn)
         vb.addLayout(tools)
+        self.vbox.addWidget(card)
+        self._inputCard = card
 
+        # --- staging (pending files) -------------------------------------
+        scap, svb, self.tStaging = self._card("convert.staging.title")
         self.stagingCount = CaptionLabel(tr("convert.staging.empty"))
         self.stagingCount.setStyleSheet(f"color: {muted_text()};")
-        vb.addWidget(self.stagingCount)
+        svb.addWidget(self.stagingCount)
 
         self.stagingScroll = self._scroll()
         self.stagingList = QWidget()
@@ -73,13 +77,13 @@ class ConvertInterface(InterfaceBase):
         self.stagingLayout.addStretch(1)
         self.stagingScroll.setWidget(self.stagingList)
         self.stagingScroll.setMinimumHeight(140)
-        vb.addWidget(self.stagingScroll)
+        svb.addWidget(self.stagingScroll)
 
         self.addQueueBtn = primary_btn(tr("convert.queue.add", n=0), icon=FIF.UP)
         self.addQueueBtn.clicked.connect(self._on_add_to_queue)
-        vb.addWidget(self.addQueueBtn)
-        self.vbox.addWidget(card)
-        self._inputCard = card
+        svb.addWidget(self.addQueueBtn)
+        self.vbox.addWidget(scap)
+        self._stagingCard = scap
 
         # --- output location ---------------------------------------------
         ocard, ovb, self.tOutput = self._card("convert.output.title")
@@ -106,7 +110,7 @@ class ConvertInterface(InterfaceBase):
         self.vbox.addWidget(ocard)
 
         # --- format selection (hidden until staging has files) ----------
-        fcard, fvb, self.tFormat = self._card("convert.format.title", "convert.format.subtitle")
+        fcard, fvb, self.tFormat = self._card("convert.format.title")
         self.formatGrid = FormatGrid(self)
         self.formatGrid.selectionChanged.connect(self._on_selection)
         fvb.addWidget(self.formatGrid)
@@ -115,7 +119,7 @@ class ConvertInterface(InterfaceBase):
         self.vbox.addWidget(fcard)
 
         # --- advanced (hidden until staging has files) -------------------
-        acard, avb, self.tAdvanced = self._card("convert.advanced.title", "convert.advanced.subtitle")
+        acard, avb, self.tAdvanced = self._card("convert.advanced.title")
         self.advancedPanel = AdvancedPanel(self)
         avb.addWidget(self.advancedPanel)
         self.acard = acard
@@ -148,7 +152,7 @@ class ConvertInterface(InterfaceBase):
         self.vbox.addWidget(qcard)
 
         # Cards that auto-collapse when a batch finishes (queue stays open).
-        self._auto_fold = [self._inputCard, ocard, self.fcard, self.acard]
+        self._auto_fold = [self._inputCard, self._stagingCard, ocard, self.fcard, self.acard]
 
         # --- manager wiring ----------------------------------------------
         self.manager.queue_changed.connect(self._sync_queue)
@@ -408,6 +412,7 @@ class ConvertInterface(InterfaceBase):
         self.titleLabel.setText(tr("nav.convert"))
         self.subLabel.setText(tr("convert.subtitle"))
         self.tInput.setText(tr("convert.input.title"))
+        self.tStaging.setText(tr("convert.staging.title"))
         self.tOutput.setText(tr("convert.output.title"))
         self.tFormat.setText(tr("convert.format.title"))
         self.tAdvanced.setText(tr("convert.advanced.title"))

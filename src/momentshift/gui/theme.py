@@ -193,6 +193,13 @@ class CollapsibleCard(ThemedCard):
         self._body_layout.setContentsMargins(CARD_MARGIN, 0, CARD_MARGIN, 14)
         self._body_layout.setSpacing(10)
 
+        # Preserve QLineEdit borders — the parent transparent-background rules
+        # can make input boxes appear borderless on some themes.
+        self._body.setStyleSheet(
+            "QLineEdit { border: 1px solid #d0d0d0; border-radius: 4px;"
+            " padding: 4px 8px; background: #ffffff; }"
+        )
+
         # Optional subtitle lives inside the body so it hides on collapse.
         self.subtitleLabel = None
         if subtitle:

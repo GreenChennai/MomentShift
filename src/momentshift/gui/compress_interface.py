@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QFileDialog, QScrollArea,
     QSlider, QLabel, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 
 from qfluentwidgets import (
     FluentIcon as FIF, PushButton, PrimaryPushButton, SwitchButton, ComboBox,
@@ -20,7 +20,7 @@ from ..core.config import cfg
 from ..core import compressor
 from ..core.presets import IMAGE_EXTS
 from ..core.qt_compat import Signal, QObject, QRunnable, QThreadPool
-from ..core.tools_download import ToolsDownloadAllWorker
+from ..core.tools_download import ToolsDownloadWorker
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, CollapsibleCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
@@ -40,7 +40,7 @@ class _WorkerSignals(QObject):
 
 
 class CompressWorker(QRunnable):
-    def __init__(self, item_id, src, out, target_fmt, mode, quality, preferred):
+    def __init__(self, item_id, src, out, target_fmt, mode, quality, preferred, opts=None):
         super().__init__()
         self.setAutoDelete(True)
         self.item_id = item_id
@@ -49,7 +49,8 @@ class CompressWorker(QRunnable):
         self.target_fmt = target_fmt
         self.mode = mode
         self.quality = quality
-        self.preferred = None if preferred == "auto" else preferred
+        self.preferred = None if preferred in ("auto", "ffmpeg", None) else preferred
+        self.opts = opts or {}
         self.signals = _WorkerSignals()
 
     def run(self):
@@ -59,10 +60,10 @@ class CompressWorker(QRunnable):
             if compressor.needs_conversion(src_ext, self.target_fmt):
                 ok, detail, saved = compressor.transcode_and_compress(
                     self.src, self.out, self.target_fmt, self.mode,
-                    self.quality, {}, preferred=self.preferred)
+                    self.quality, self.opts, preferred=self.preferred)
             else:
                 ok, detail, saved = compressor.compress_auto(
-                    self.src, self.out, self.mode, self.quality, {},
+                    self.src, self.out, self.mode, self.quality, self.opts,
                     preferred=self.preferred)
         except Exception as exc:  # defensive
             ok, detail, saved = False, str(exc), 0
@@ -142,6 +143,20 @@ class CompressListWidget(QWidget):
         vb = QVBoxLayout(self)
         vb.setContentsMargins(0, 0, 0, 0)
         vb.setSpacing(8)
+
+        self.statsBar = QWidget()
+        hb = QHBoxLayout(self.statsBar)
+        hb.setContentsMargins(2, 0, 2, 0)
+        hb.setSpacing(14)
+        self.statTotal = CaptionLabel()
+        self.statDone = CaptionLabel()
+        self.statErr = CaptionLabel()
+        for w in (self.statTotal, self.statDone, self.statErr):
+            w.setStyleSheet(f"color: {muted_text()}; font-weight:600;")
+            hb.addWidget(w)
+        hb.addStretch(1)
+        vb.addWidget(self.statsBar)
+
         self.listWidget = QWidget()
         self.listLayout = QVBoxLayout(self.listWidget)
         self.listLayout.setContentsMargins(0, 0, 0, 0)
@@ -157,6 +172,19 @@ class CompressListWidget(QWidget):
     def _refresh_empty(self):
         self.emptyHint.setVisible(not self.items)
 
+    def _update_stats(self):
+        total = len(self.items)
+        done = 0
+        failed = 0
+        for w in self.items.values():
+            if w._status == "done":
+                done += 1
+            elif w._status == "failed":
+                failed += 1
+        self.statTotal.setText(tr("compress.queue.stats.total", n=total))
+        self.statDone.setText(tr("compress.queue.stats.done", n=done))
+        self.statErr.setText(tr("compress.queue.stats.error", n=failed))
+
     def add_item(self, item_id: str, src: str):
         if item_id in self.items:
             return
@@ -165,6 +193,7 @@ class CompressListWidget(QWidget):
         self.items[item_id] = w
         self.listLayout.insertWidget(self.listLayout.count() - 1, w)
         self._refresh_empty()
+        self._update_stats()
 
     def set_progress(self, item_id: str, pct: int):
         w = self.items.get(item_id)
@@ -175,23 +204,27 @@ class CompressListWidget(QWidget):
         w = self.items.get(item_id)
         if w:
             w.set_status(status, saved, detail)
+            self._update_stats()
 
     def remove_item(self, item_id: str):
         w = self.items.pop(item_id, None)
         if w:
             w.deleteLater()
         self._refresh_empty()
+        self._update_stats()
 
     def clear(self):
         for w in self.items.values():
             w.deleteLater()
         self.items.clear()
         self._refresh_empty()
+        self._update_stats()
 
     def retranslate(self):
         for w in self.items.values():
             w.retranslate()
         self.emptyHint.setText(tr("compress.queue.empty"))
+        self._update_stats()
 
 
 # --------------------------------------------------------------------------
@@ -202,14 +235,17 @@ class CompressInterface(InterfaceBase):
         super().__init__("Compress", tr("nav.compress"), tr("compress.subtitle"), parent)
 
         self._items: dict[str, dict] = {}
-        self._backend_map: dict[str, str] = {}
         self._pending: list[str] = []
         self._active: set[str] = set()
         self._running = False
         self._paused = False
 
-        self._backend = "auto"
-        self._mode = "lossless"
+        self._program = "ffmpeg"
+        self._tool_opts = {
+            "oxipng": {"level": 2, "interlace": False, "strip": "safe"},
+            "optipng": {"level": 2, "strip": "all"},
+            "mozjpeg": {"quality": 100, "progressive": True, "strip": True, "arithmetic": False},
+        }
         self._quality = 100
         self._target = "same"
         self._output_mode = cfg.outputMode.value
@@ -217,7 +253,7 @@ class CompressInterface(InterfaceBase):
         self._folder = cfg.outputFolder.value or ""
 
         # --- input --------------------------------------------------------
-        card, vb, self.tInput = self._card("compress.input.title", "compress.input.subtitle")
+        card, vb, self.tInput = self._card("compress.input.title")
         self.dropArea = DropArea(self)
         self.dropArea.filesDropped.connect(self._on_files)
         self.dropArea.clicked.connect(self._pick_files)
@@ -235,24 +271,41 @@ class CompressInterface(InterfaceBase):
 
         # --- settings -----------------------------------------------------
         scard, svb, self.tSettings = self._card("compress.settings.title")
-        self.backendCombo = ComboBox(self)
-        self.backendCombo.currentTextChanged.connect(self._on_backend)
-        svb.addWidget(field_row(tr("compress.backend"), self.backendCombo))
-        self.modeCombo = self._opt_combo(
-            [(tr("compress.mode.lossless"), "lossless"), (tr("compress.mode.lossy"), "lossy")],
-            self._mode, lambda v: setattr(self, "_mode", v))
-        svb.addWidget(field_row(tr("compress.mode"), self.modeCombo))
-        self.quality = QSlider(Qt.Orientation.Horizontal)
-        self.quality.setRange(1, 100)
-        self.quality.setValue(self._quality)
-        self.quality.valueChanged.connect(lambda v: setattr(self, "_quality", v))
-        svb.addWidget(field_row(tr("compress.quality"), self.quality))
+
+        self.programCombo = self._opt_combo(
+            [(tr("advanced.compression.ffmpeg"), "ffmpeg"),
+             ("oxipng", "oxipng"),
+             ("OptiPNG", "optipng"),
+             ("Mozilla JPEG", "mozjpeg")],
+            self._program, lambda v: self._on_program(v))
+        svb.addWidget(field_row(tr("advanced.compression.backend"), self.programCombo))
+
+        # FFmpeg group: target format + quality
+        self.ffmpegGroup = QWidget()
+        fq = QVBoxLayout(self.ffmpegGroup)
+        fq.setContentsMargins(0, 0, 0, 0)
+        fq.setSpacing(6)
         self.targetCombo = self._opt_combo(
             [(tr("compress.target.same"), "same"), ("PNG", "png"), ("JPG", "jpg"),
              ("WebP", "webp"), ("BMP", "bmp"), ("TIFF", "tiff")],
             self._target, lambda v: setattr(self, "_target", v))
-        svb.addWidget(field_row(tr("compress.target"), self.targetCombo))
+        fq.addWidget(field_row(tr("compress.target"), self.targetCombo))
+        self.quality = QSlider(Qt.Orientation.Horizontal)
+        self.quality.setRange(1, 100)
+        self.quality.setValue(self._quality)
+        self.quality.valueChanged.connect(lambda v: setattr(self, "_quality", v))
+        fq.addWidget(field_row(tr("compress.quality"), self.quality))
+        svb.addWidget(self.ffmpegGroup)
 
+        # Tool-specific parameter groups
+        self.oxipngGroup = self._build_oxipng()
+        self.optipngGroup = self._build_optipng()
+        self.mozjpegGroup = self._build_mozjpeg()
+        svb.addWidget(self.oxipngGroup)
+        svb.addWidget(self.optipngGroup)
+        svb.addWidget(self.mozjpegGroup)
+
+        # Output location settings (same as before)
         self.outputSwitch = SwitchButton(tr("compress.output.same"))
         self.outputSwitch.checkedChanged.connect(self._on_output_mode)
         svb.addWidget(field_row(tr("compress.output.mode"), self.outputSwitch))
@@ -271,6 +324,7 @@ class CompressInterface(InterfaceBase):
         svb.addWidget(self.folderRow)
         self._apply_output_mode()
 
+        # Tools download (conditional: visible only when a tool is selected + missing)
         self.toolsBtn = primary_btn(tr("compress.tools.download"), icon=FIF.DOWNLOAD)
         self.toolsBtn.clicked.connect(self._on_download_tools)
         self.toolsStatus = CaptionLabel()
@@ -309,10 +363,7 @@ class CompressInterface(InterfaceBase):
         # Cards that auto-collapse when a batch finishes (queue stays open).
         self._auto_fold = [self._inputCard, scard]
 
-        # Populate backends lazily on first show: constructing the combo items
-        # here triggers an offscreen paint in headless CI/sandbox; deferring also
-        # means newly installed compression tools are detected when the tab opens.
-        QTimer.singleShot(0, self._fill_backends)
+        self._on_program(self._program)
         self.retheme()
 
     # -- helpers ----------------------------------------------------------
@@ -392,20 +443,115 @@ class CompressInterface(InterfaceBase):
         self._auto_expand_cards()
 
     # -- settings --------------------------------------------------------
-    def _fill_backends(self):
-        backs = compressor.available_backends()
-        mapping = [(tr("compress.backend.auto"), "auto")]
-        for bid, meta in backs.items():
-            mapping.append((meta["name"], bid))
-        self.backendCombo.clear()
-        for disp, val in mapping:
-            self.backendCombo.addItem(disp)
-        self._backend_map = dict(mapping)
-        self.backendCombo.setCurrentText(
-            self._backend_map.get(self._backend, tr("compress.backend.auto")))
+    def _on_program(self, p):
+        self._program = p
+        self.ffmpegGroup.setVisible(p == "ffmpeg")
+        self.oxipngGroup.setVisible(p == "oxipng")
+        self.optipngGroup.setVisible(p == "optipng")
+        self.mozjpegGroup.setVisible(p == "mozjpeg")
+        self._refresh_tool_status()
 
-    def _on_backend(self, text):
-        self._backend = self._backend_map.get(text, "auto")
+    def _refresh_tool_status(self):
+        if self._program == "ffmpeg":
+            self.toolsBtn.setVisible(False)
+            self.toolsStatus.setVisible(False)
+            return
+        installed = False
+        if self._program == "oxipng":
+            installed = compressor.find_tool("oxipng") is not None
+        elif self._program == "optipng":
+            installed = compressor.find_tool("optipng") is not None
+        elif self._program == "mozjpeg":
+            installed = compressor.find_tool("jpegtran") is not None or compressor.find_tool("cjpeg") is not None
+        self.toolsBtn.setVisible(not installed)
+        self.toolsStatus.setVisible(installed)
+        if installed:
+            self.toolsStatus.setText(tr("compress.tools.done"))
+
+    def _current_mode(self):
+        if self._program in ("oxipng", "optipng"):
+            return "lossless"
+        return "lossless" if self._quality == 100 else "lossy"
+
+    def _current_opts(self):
+        if self._program == "ffmpeg":
+            return {}
+        return self._tool_opts.get(self._program, {})
+
+    def _build_oxipng(self):
+        grp = self._tool_opts["oxipng"]
+        w = QWidget()
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 0, 0, 0)
+        ly.setSpacing(6)
+        lvl = QSlider(Qt.Orientation.Horizontal)
+        lvl.setRange(0, 6)
+        lvl.setValue(int(grp["level"]))
+        lvl_label = QLabel(str(grp["level"]))
+        lvl.valueChanged.connect(lambda v: (grp.__setitem__("level", v), lvl_label.setText(str(v))))
+        row = QHBoxLayout()
+        row.addWidget(lvl_label)
+        row.addWidget(lvl, 1)
+        ly.addWidget(field_row(tr("advanced.level"), row))
+        inter = SwitchButton(tr("advanced.interlace"))
+        inter.setChecked(bool(grp["interlace"]))
+        inter.checkedChanged.connect(lambda b: grp.__setitem__("interlace", b))
+        ly.addWidget(field_row(tr("advanced.interlace"), inter))
+        strip = self._opt_combo(
+            [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
+            grp["strip"], lambda v: grp.__setitem__("strip", v))
+        ly.addWidget(field_row(tr("advanced.strip"), strip))
+        return w
+
+    def _build_optipng(self):
+        grp = self._tool_opts["optipng"]
+        w = QWidget()
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 0, 0, 0)
+        ly.setSpacing(6)
+        lvl = QSlider(Qt.Orientation.Horizontal)
+        lvl.setRange(0, 7)
+        lvl.setValue(int(grp["level"]))
+        lvl_label = QLabel(str(grp["level"]))
+        lvl.valueChanged.connect(lambda v: (grp.__setitem__("level", v), lvl_label.setText(str(v))))
+        row = QHBoxLayout()
+        row.addWidget(lvl_label)
+        row.addWidget(lvl, 1)
+        ly.addWidget(field_row(tr("advanced.level"), row))
+        strip = self._opt_combo(
+            [(tr("advanced.strip.all"), "all"), (tr("advanced.strip.safe"), "safe")],
+            grp["strip"], lambda v: grp.__setitem__("strip", v))
+        ly.addWidget(field_row(tr("advanced.strip"), strip))
+        return w
+
+    def _build_mozjpeg(self):
+        grp = self._tool_opts["mozjpeg"]
+        w = QWidget()
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 0, 0, 0)
+        ly.setSpacing(6)
+        q = QSlider(Qt.Orientation.Horizontal)
+        q.setRange(1, 100)
+        q.setValue(int(grp["quality"]))
+        q_label = QLabel(str(grp["quality"]))
+        q.valueChanged.connect(lambda v: (grp.__setitem__("quality", v), q_label.setText(str(v))))
+        row = QHBoxLayout()
+        row.addWidget(q_label)
+        row.addWidget(q, 1)
+        ly.addWidget(field_row(tr("advanced.quality"), row))
+        prog = SwitchButton(tr("advanced.progressive"))
+        prog.setChecked(bool(grp["progressive"]))
+        prog.checkedChanged.connect(lambda b: grp.__setitem__("progressive", b))
+        ly.addWidget(field_row(tr("advanced.progressive"), prog))
+        stripx = SwitchButton(tr("advanced.strip"))
+        stripx.setChecked(bool(grp["strip"]))
+        stripx.checkedChanged.connect(lambda b: grp.__setitem__("strip", b))
+        ly.addWidget(field_row(tr("advanced.strip"), stripx))
+        arith = SwitchButton(tr("advanced.arithmetic"))
+        arith.setChecked(bool(grp["arithmetic"]))
+        arith.checkedChanged.connect(lambda b: grp.__setitem__("arithmetic", b))
+        ly.addWidget(field_row(tr("advanced.arithmetic"), arith))
+        return w
 
     def _on_output_mode(self, checked):
         self._output_mode = "same" if checked else "fixed"
@@ -426,16 +572,19 @@ class CompressInterface(InterfaceBase):
 
     def _on_download_tools(self):
         self.toolsBtn.setEnabled(False)
+        self.toolsStatus.setVisible(True)
         self.toolsStatus.setText(tr("compress.tools.downloading"))
-        worker = ToolsDownloadAllWorker(str(compressor.tools_dir()))
+        worker = ToolsDownloadWorker(self._program, str(compressor.tools_dir()))
         worker.signals.finished.connect(self._on_tools_downloaded)
         QThreadPool.globalInstance().start(worker)
 
-    def _on_tools_downloaded(self, result: dict):
+    def _on_tools_downloaded(self, tool_id, ok, msg):
         self.toolsBtn.setEnabled(True)
-        ok = all(v[0] for v in result.values())
-        self.toolsStatus.setText(tr("compress.tools.done") if ok else tr("compress.tools.failed"))
-        self._fill_backends()
+        if ok:
+            self.toolsStatus.setText(tr("compress.tools.done"))
+        else:
+            self.toolsStatus.setText(tr("compress.tools.failed", msg=msg))
+        self._refresh_tool_status()
 
     # -- run management --------------------------------------------------
     def _out_path(self, src: str) -> str:
@@ -476,8 +625,8 @@ class CompressInterface(InterfaceBase):
             out = self._out_path(src)
             self._items[src]["status"] = "running"
             self.listWidget.set_status(src, "running")
-            worker = CompressWorker(src, src, out, self._target, self._mode,
-                                    self._quality, self._backend)
+            worker = CompressWorker(src, src, out, self._target, self._current_mode(),
+                                    self._quality, self._program, opts=self._current_opts())
             worker.signals.progress.connect(self.listWidget.set_progress)
             worker.signals.finished.connect(self._on_finished)
             QThreadPool.globalInstance().start(worker)
@@ -558,13 +707,11 @@ class CompressInterface(InterfaceBase):
         self.addFilesBtn.setText(tr("compress.add.files"))
         self.addFolderBtn.setText(tr("compress.add.folder"))
         self.toolsBtn.setText(tr("compress.tools.download"))
-        self._fill_backends()
-        # Repopulate combos with translated strings (they're created in
-        # __init__ with the startup language; retranslate without repopulation
-        # would leave them showing the old language).
-        self._repopulate_combo(self.modeCombo, [
-            (tr("compress.mode.lossless"), "lossless"),
-            (tr("compress.mode.lossy"), "lossy"),
+        self._repopulate_combo(self.programCombo, [
+            (tr("advanced.compression.ffmpeg"), "ffmpeg"),
+            ("oxipng", "oxipng"),
+            ("OptiPNG", "optipng"),
+            ("Mozilla JPEG", "mozjpeg"),
         ])
         self._repopulate_combo(self.targetCombo, [
             (tr("compress.target.same"), "same"),
