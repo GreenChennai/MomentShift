@@ -314,7 +314,7 @@
   "convert.queue.running": "进行中：{n}",
   "convert.queue.total": "总计：{n}",
   "convert.resume": "继续",
-  "convert.staging.count": "待处理：{n}",
+  "convert.staging.count": "已选 {n} 个文件",
   "convert.staging.empty": "",
   "convert.start": "开始",
   "convert.start.no_ffmpeg": "未找到 ffmpeg——请安装或放在程序旁边",
@@ -361,5 +361,11 @@
   "quicklaunch.convert.hint": "右键菜单 → 转换",
   "quicklaunch.compress.hint": "右键菜单 → 压缩",
   "quicklaunch.upscale.hint": "右键菜单 → 放大",
-  "quicklaunch.status.title": "注册状态"
+  "quicklaunch.status.title": "注册状态",
+  "about.env.title": "运行环境",
+  "about.env.subtitle": "检测并管理依赖工具状态",
+  "about.env.download": "下载",
+  "about.env.missing": "未找到",
+  "about.env.upscaler": "Real-ESRGAN",
+  "convert.post_compress": "转换后自动压缩"
 }

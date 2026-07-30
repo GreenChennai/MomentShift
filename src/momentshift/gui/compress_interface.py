@@ -546,7 +546,7 @@ class CompressInterface(InterfaceBase):
         self._picking = True
         try:
             d = QFileDialog.getExistingDirectory(
-                self, tr("compress.output.browse"), self._folder or "",
+                None, tr("compress.output.browse"), self._folder or "",
                 )
             if d:
                 self._folder = d
@@ -588,7 +588,7 @@ class CompressInterface(InterfaceBase):
         try:
             flt = "Images (" + " ".join(f"*{e}" for e in sorted(IMAGE_EXTS)) + ")"
             files, _ = QFileDialog.getOpenFileNames(
-                self, tr("compress.add.files"), "", flt, "",
+                None, tr("compress.add.files"), "", flt, "",
             )
             if files:
                 self._on_files(files)
@@ -602,7 +602,7 @@ class CompressInterface(InterfaceBase):
         self._picking = True
         try:
             d = QFileDialog.getExistingDirectory(
-                self, tr("compress.add.folder"), "",
+                None, tr("compress.add.folder"), "",
                 )
             if d:
                 self._on_files([d])

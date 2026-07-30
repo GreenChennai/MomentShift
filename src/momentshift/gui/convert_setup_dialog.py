@@ -1,141 +1,164 @@
-"""Convert setup dialog (v0.2.7, #4).
-
-After the user picks files in the Convert screen, this 800x500 popup opens with
-the three pieces that used to live on the main screen:
-
-- *Pending files*     — the selected files (removable before confirming)
-- *Target format*     — a FormatGrid (one format per media category)
-- *Advanced settings* — an AdvancedPanel (per-category ffmpeg options)
-
-Confirming groups the files by category and pushes them (with the chosen format
-and the current advanced options) straight into the main conversion queue via
-``ConversionManager.add_files``. The main screen keeps only the input card and
-the conversion queue (the original UI components, per the redesign spec).
+"""转换设置弹窗（v0.3.3 重构）。
+- 按媒体大类分类弹出独立窗口
+- 900×700 大窗口
+- 待处理列表美颜 + 清空按钮
+- 高级设置顶部加"转换后压缩"总开关
 """
-
-from __future__ import annotations
 
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QFrame, QDialog,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QFrame,
+    QDialog, QPushButton,
 )
-
-from qfluentwidgets import FluentIcon as FIF
-
+from qfluentwidgets import (
+    FluentIcon as FIF, ComboBox, SwitchButton,
+)
 from ..core.config import cfg
 from ..core.presets import guess_category
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, primary_btn, ghost_btn, icon_btn,
-    muted_text, sub_text, surface, scrollbar_qss,
+    muted_text, accent_name, surface, scrollbar_qss,
+    accent_color,
 )
-from .format_grid import FormatGrid
 from .advanced_panel import AdvancedPanel
 
-
 class ConvertSetupDialog(QDialog):
-    """Staging + format + advanced options in one modal popup."""
+    """单类别格式 + 高级选��� + 待处理列表。"""
 
-    def __init__(self, parent, manager, paths, selection, gpu_enabled_fn):
+    def __init__(self, parent, manager, paths, selection, gpu_fn, category):
         super().__init__(parent)
         self.manager = manager
         self._paths = list(paths)
         self._selection = dict(selection)
-        self._gpu = gpu_enabled_fn
+        self._gpu = gpu_fn
+        self._category = category  # "image" / "audio" / "video"
 
-        self.setWindowTitle(tr("convert.setup.title"))
-        self.resize(800, 500)
-        self.setMinimumSize(680, 440)
+        cat_names = {"image": tr("category.image"), "audio": tr("category.audio"), "video": tr("category.video")}
+        cat_disp = cat_names.get(category, category)
+
+        self.setWindowTitle(f"{tr('convert.setup.title')} — {cat_disp}")
+        self.resize(900, 700)
+        self.setMinimumSize(720, 500)
         self.setObjectName("setupDlg")
         self.setStyleSheet(f"#setupDlg {{ background-color: {surface().name()}; }}")
 
         self._build_ui()
         self._render_staging()
-
-        cats = sorted({guess_category(p) for p in self._paths if guess_category(p)})
-        self.formatGrid.setup(cats, self._selection)
-        self.advancedPanel.refresh(cats)
         self._update_confirm()
 
-    # -- construction ----------------------------------------------------
+    # -- 构建 UI -----------------------------------------------------------
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 16, 18, 16)
+        root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(12)
 
-        # header
+        # 标题行
         title = QLabel(tr("convert.setup.title"))
-        title.setStyleSheet(
-            "font-size:18px; font-weight:700; color:%s;"
-            % ("#1a1a1a" if not False else "#e8e8e8")
-        )
+        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #1a1a1a;")
         root.addWidget(title)
         hint = QLabel(tr("convert.setup.hint"))
-        hint.setStyleSheet(f"color:{muted_text()};")
+        hint.setStyleSheet(f"color: {muted_text()};")
         root.addWidget(hint)
+
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"color:{muted_text()};")
+        sep.setStyleSheet(f"color: {muted_text()};")
         root.addWidget(sep)
 
-        # body split: left = staging, right = format + advanced
+        # 左右分栏
         body = QHBoxLayout()
-        body.setSpacing(14)
-        root.addLayout(body)
+        body.setSpacing(16)
+        root.addLayout(body, 1)
 
-        # --- left: pending files ---------------------------------------
-        left = QVBoxLayout()
-        left.setContentsMargins(0, 0, 0, 0)
-        left.setSpacing(8)
-        leftLbl = QLabel(tr("convert.setup.staging"))
-        leftLbl.setStyleSheet("font-weight:700;")
-        left.addWidget(leftLbl)
+        # --- 左栏：待处理文件（美颜重设计）---
+        left_card = ThemedCard(self)
+        left_card.setFixedWidth(320)
+        left_lay = QVBoxLayout(left_card)
+        left_lay.setContentsMargins(14, 14, 10, 14)
+        left_lay.setSpacing(8)
+
+        self.stagingTitle = QLabel(tr("convert.setup.staging"))
+        self.stagingTitle.setStyleSheet("font-weight: 700; color: #212121;")
+        left_lay.addWidget(self.stagingTitle)
+
+        self.stagingCount = QLabel("")
+        self.stagingCount.setStyleSheet(f"color: {muted_text()}; font-size: 12px;")
+        left_lay.addWidget(self.stagingCount)
+
         self.stagingScroll = QScrollArea()
         self.stagingScroll.setWidgetResizable(True)
         self.stagingScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.stagingScroll.setStyleSheet(
-            f"QScrollArea{{border:none;background:transparent;}} {scrollbar_qss()}")
-        self.stagingScroll.viewport().setStyleSheet("background:transparent;")
+            f"QScrollArea{{ border: none; background: transparent; border-radius: 8px; }} {scrollbar_qss()}")
+        self.stagingScroll.viewport().setStyleSheet(
+            f"background: {surface().name()}; border-radius: 8px;")
         self.stagingList = QWidget()
         self.stagingLayout = QVBoxLayout(self.stagingList)
         self.stagingLayout.setContentsMargins(0, 0, 0, 0)
-        self.stagingLayout.setSpacing(6)
+        self.stagingLayout.setSpacing(4)
         self.stagingLayout.addStretch(1)
         self.stagingScroll.setWidget(self.stagingList)
-        left.addWidget(self.stagingScroll, 1)
-        leftCard = ThemedCard(self)
-        leftCard.setFixedWidth(300)
-        leftCard.setLayout(left)
-        body.addWidget(leftCard)
+        left_lay.addWidget(self.stagingScroll, 1)
 
-        # --- right: format + advanced -----------------------------------
-        right = QVBoxLayout()
-        right.setContentsMargins(0, 0, 0, 0)
-        right.setSpacing(10)
-        fmtLbl = QLabel(tr("convert.setup.format"))
-        fmtLbl.setStyleSheet("font-weight:700;")
-        right.addWidget(fmtLbl)
-        self.formatGrid = FormatGrid(self)
-        self.formatGrid.selectionChanged.connect(self._on_selection)
-        right.addWidget(self.formatGrid)
-        advLbl = QLabel(tr("convert.setup.advanced"))
-        advLbl.setStyleSheet("font-weight:700;")
-        right.addWidget(advLbl)
+        # 清空按钮
+        self.clearBtn = QPushButton(tr("convert.clear"))
+        self.clearBtn.clicked.connect(self._clear_all)
+        self.clearBtn.setStyleSheet(
+            f"QPushButton{{ color: {muted_text()}; border: 1px solid #ddd; border-radius: 6px;"
+            f" padding: 6px 16px; background: transparent; }}"
+            f"QPushButton:hover{{ color: #d32f2f; border-color: #d32f2f; }}")
+        left_lay.addWidget(self.clearBtn)
+
+        body.addWidget(left_card)
+
+        # --- 右栏：格式 + 高级设置 ---
+        right_card = ThemedCard(self)
+        right_lay = QVBoxLayout(right_card)
+        right_lay.setContentsMargins(16, 14, 16, 14)
+        right_lay.setSpacing(10)
+
+        # 目标格式选择
+        fmt_title = QLabel(tr("convert.setup.format"))
+        fmt_title.setStyleSheet("font-weight: 700; color: #212121;")
+        right_lay.addWidget(fmt_title)
+
+        self.fmtCombo = ComboBox()
+        self._fmt_map = self._load_formats(self._category)
+        for disp in self._fmt_map:
+            self.fmtCombo.addItem(disp)
+        default = self._selection.get(self._category, "jpg")
+        if default.upper() in self._fmt_map:
+            self.fmtCombo.setCurrentText(default.upper())
+        right_lay.addWidget(self.fmtCombo)
+
+        # 高级设置
+        adv_title = QLabel(tr("convert.setup.advanced"))
+        adv_title.setStyleSheet("font-weight: 700; color: #212121; margin-top: 8px;")
+        right_lay.addWidget(adv_title)
+
+        # 转换后自动压缩开关（新增）
+        self.postCompressSwitch = SwitchButton(tr("convert.post_compress"))
+        self.postCompressSwitch.setChecked(False)
+        self.postCompressSwitch.setOnText(tr("common.on"))
+        self.postCompressSwitch.setOffText(tr("common.off"))
+        right_lay.addWidget(self.postCompressSwitch)
+
         self.advancedPanel = AdvancedPanel(self)
-        right.addWidget(self.advancedPanel, 1)
-        rightCard = ThemedCard(self)
-        rightCard.setLayout(right)
-        rightScroll = QScrollArea()
-        rightScroll.setWidgetResizable(True)
-        rightScroll.setWidget(rightCard)
-        rightScroll.setStyleSheet(
-            f"QScrollArea{{border:none;background:transparent;}} {scrollbar_qss()}")
-        rightScroll.viewport().setStyleSheet("background:transparent;")
-        body.addWidget(rightScroll, 1)
+        self.advancedPanel.refresh([self._category])
+        right_lay.addWidget(self.advancedPanel, 1)
 
-        # bottom bar
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setWidget(right_card)
+        right_scroll.setStyleSheet(
+            f"QScrollArea{{ border: none; background: transparent; }} {scrollbar_qss()}")
+        right_scroll.viewport().setStyleSheet("background: transparent;")
+        body.addWidget(right_scroll, 1)
+
+        # 底部按钮
         bar = QHBoxLayout()
         bar.addStretch(1)
         self.cancelBtn = ghost_btn(tr("convert.setup.cancel"), icon=FIF.CLOSE)
@@ -146,7 +169,12 @@ class ConvertSetupDialog(QDialog):
         bar.addWidget(self.confirmBtn)
         root.addLayout(bar)
 
-    # -- staging list ----------------------------------------------------
+    def _load_formats(self, cat):
+        from ..core.presets import TARGET_GROUPS
+        fmts = TARGET_GROUPS.get(cat, [])
+        return [f.upper() for f in fmts]
+
+    # -- 待处理列表 ----------------------------------------------------------
     def _render_staging(self):
         while self.stagingLayout.count():
             item = self.stagingLayout.takeAt(0)
@@ -155,65 +183,79 @@ class ConvertSetupDialog(QDialog):
                 w.deleteLater()
         if not self._paths:
             empty = QLabel(tr("convert.setup.empty"))
-            empty.setStyleSheet(f"color:{muted_text()};")
+            empty.setStyleSheet(f"color: {muted_text()}; padding: 30px 0;")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.stagingLayout.insertWidget(0, empty)
             self.stagingLayout.addStretch(1)
+            self.stagingCount.setText("")
             return
-        for p in self._paths:
-            row = QWidget()
-            hb = QHBoxLayout(row)
-            hb.setContentsMargins(6, 4, 6, 4)
+
+        self.stagingCount.setText(tr("convert.staging.count", n=len(self._paths)))
+        acc = accent_color().name()
+        for i, p in enumerate(self._paths):
+            row_w = QWidget()
+            # 交替行背景
+            if i % 2 == 0:
+                row_w.setStyleSheet(f"background: rgba(35,134,54,0.04); border-radius: 4px;")
+            else:
+                row_w.setStyleSheet("background: transparent; border-radius: 4px;")
+            hb = QHBoxLayout(row_w)
+            hb.setContentsMargins(8, 5, 4, 5)
             hb.setSpacing(8)
+
+            ext = Path(p).suffix.upper().lstrip(".")
+            ext_lbl = QLabel(ext)
+            ext_lbl.setFixedWidth(42)
+            ext_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ext_lbl.setStyleSheet(
+                f"color: {acc}; font-weight: 700; font-size: 11px;"
+                f" background: rgba(35,134,54,0.08); border-radius: 3px; padding: 1px 4px;")
+
             name = QLabel(Path(p).name)
-            name.setStyleSheet(f"color:{sub_text()};")
+            name.setStyleSheet("color: #333;")
             name.setToolTip(p)
+            hb.addWidget(ext_lbl)
             hb.addWidget(name, 1)
+
             rm = icon_btn(FIF.DELETE, tr("convert.action.remove"))
-            rm.setFixedSize(30, 30)
-            rm.clicked.connect(lambda _, path=p: self._remove_staged(path))
+            rm.setFixedSize(26, 26)
+            rm.clicked.connect(lambda _, path=p: self._remove(path))
             hb.addWidget(rm)
-            self.stagingLayout.insertWidget(self.stagingLayout.count() - 1, row)
+
+            self.stagingLayout.insertWidget(self.stagingLayout.count() - 1, row_w)
         self.stagingLayout.addStretch(1)
 
-    def _remove_staged(self, path: str):
+    def _remove(self, path):
         if path in self._paths:
             self._paths.remove(path)
         self._render_staging()
-        cats = sorted({guess_category(p) for p in self._paths if guess_category(p)})
-        self.formatGrid.setup(cats, self._selection)
-        self.advancedPanel.refresh(cats)
         self._update_confirm()
 
-    # -- format selection ------------------------------------------------
-    def _on_selection(self, selection: dict):
-        self._selection.update(selection)
-
-    def get_selection(self) -> dict:
-        return dict(self._selection)
+    def _clear_all(self):
+        self._paths.clear()
+        self._render_staging()
+        self._update_confirm()
 
     def _update_confirm(self):
         self.confirmBtn.setEnabled(bool(self._paths))
 
-    # -- confirm ----------------------------------------------------------
+    # -- 确认 ---------------------------------------------------------------
     def _on_confirm(self):
         if not self._paths:
             return
         mode = cfg.outputMode.value
         suffix = cfg.outputSuffix.value
         folder = cfg.outputFolder.value or ""
-        by_cat: dict[str, list[str]] = {}
-        for p in self._paths:
-            c = guess_category(p)
-            if c:
-                by_cat.setdefault(c, []).append(p)
+        fmt_text = self.fmtCombo.currentText().lower()
         gpu = self._gpu()
-        for cat, paths in by_cat.items():
-            fmt = self.formatGrid.get_selection().get(cat)
-            if not fmt:
-                continue
-            self.manager.add_files(
-                paths, fmt, folder if mode == "fixed" else None,
-                gpu, mode, suffix,
-            )
+
+        self.manager.add_files(
+            self._paths, fmt_text,
+            folder if mode == "fixed" else None,
+            gpu, mode, suffix,
+        )
         self.accept()
+
+    def get_selection(self):
+        fmt = self.fmtCombo.currentText().lower()
+        return {self._category: fmt}

@@ -34,7 +34,7 @@ from .base import InterfaceBase
 from .drop_area import DropArea
 from .queue_widget import QueueListWidget
 from .convert_setup_dialog import ConvertSetupDialog
-from .ffmpeg_card import FfmpegCard
+from .theme import success_color, danger_color
 
 # 转换模块支持的所有媒体类型
 _CONVERT_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
@@ -56,12 +56,11 @@ class ConvertInterface(InterfaceBase):
         # mouseReleaseEvent，此标志确保只有第一次点击真正打开文件选择器
         self._picking = False
 
-        # =====================================================================
-        # ffmpeg 状态卡片
-        # =====================================================================
-        self.ffmpegCard = FfmpegCard(self)
-        self.ffmpegCard.ffmpeg_ready.connect(self._on_ffmpeg_ready)
-        self.vbox.addWidget(self.ffmpegCard)
+        # FFmpeg 状态指示器（右上角，与"转换"标题水平对齐）
+        self._ff_status = CaptionLabel("")
+        self._ff_status.setFixedHeight(22)
+        self._header_row.addWidget(self._ff_status)
+        self._refresh_ff_status()
 
         # =====================================================================
         # 输入卡片（拖拽区 + 添加文件夹按钮）
@@ -165,14 +164,22 @@ class ConvertInterface(InterfaceBase):
         return bool(self.manager.hw)
 
     def _open_setup(self, paths: list[str]):
-        """展开路径列表，打开 800×500「转换设置」弹窗。"""
+        """展开路径 → 按类别分组 → 每类独立弹出设置弹窗（v0.3.3）。"""
         expanded = self._expand_paths(paths, _CONVERT_EXTS)
         if not expanded:
             return
-        dlg = ConvertSetupDialog(self, self.manager, expanded,
-                                 self._selection, self._gpu_enabled)
-        if dlg.exec():
-            self._selection.update(dlg.get_selection())
+        from ..core.presets import guess_category
+        by_cat: dict[str, list[str]] = {}
+        for p in expanded:
+            c = guess_category(p)
+            if c:
+                by_cat.setdefault(c, []).append(p)
+        for cat, cat_paths in by_cat.items():
+            dlg = ConvertSetupDialog(
+                self, self.manager, cat_paths, self._selection,
+                self._gpu_enabled, cat)
+            if dlg.exec():
+                self._selection.update(dlg.get_selection())
         self._update_controls()
 
     def _pick_files(self):
@@ -183,7 +190,7 @@ class ConvertInterface(InterfaceBase):
         try:
             flt = "Media (" + " ".join(f"*{e}" for e in sorted(_CONVERT_EXTS)) + ")"
             files, _ = QFileDialog.getOpenFileNames(
-                self, tr("convert.add.files"), "", flt, "",
+                None, tr("convert.add.files"), "", flt, "",
             )
             if files:
                 self._open_setup(files)
@@ -197,7 +204,7 @@ class ConvertInterface(InterfaceBase):
         self._picking = True
         try:
             d = QFileDialog.getExistingDirectory(
-                self, tr("convert.add.folder"), "",
+                None, tr("convert.add.folder"), "",
                 )
             if d:
                 self._open_setup([d])
@@ -229,7 +236,7 @@ class ConvertInterface(InterfaceBase):
         self._picking = True
         try:
             d = QFileDialog.getExistingDirectory(
-                self, tr("convert.output.browse"), cfg.outputFolder.value or "",
+                None, tr("convert.output.browse"), cfg.outputFolder.value or "",
                 )
             if d:
                 cfg.outputFolder.value = d
@@ -245,9 +252,23 @@ class ConvertInterface(InterfaceBase):
         """队列行内格式变更 → 同步到 manager。"""
         self.manager.set_task_target(task_id, fmt)
 
+    def _refresh_ff_status(self):
+        """刷新 FFmpeg 状态指示器。绿色圆点=已就绪，红色圆点=未找到。"""
+        from .theme import success_color, danger_color
+        ready = self.manager.has_ffmpeg
+        if ready:
+            c = success_color().name()
+            t = "● 已就绪"
+        else:
+            c = danger_color().name()
+            t = "● 不存在"
+        self._ff_status.setText(t)
+        self._ff_status.setStyleSheet(f"color: {c}; font-weight: 600; font-size: 12px;")
+
     def _on_ffmpeg_ready(self):
         """ffmpeg 就绪后刷新引擎并更新控件。"""
         self.manager.refresh_ffmpeg()
+        self._refresh_ff_status()
         self._update_controls()
 
     def _sync_queue(self):
@@ -326,8 +347,7 @@ class ConvertInterface(InterfaceBase):
         self.tInput.setText(tr("convert.input.title"))
         self.tOutput.setText(tr("convert.output.title"))
         self.tQueue.setText(tr("convert.queue.title"))
-
-        self.ffmpegCard.retranslateUi()
+        self._refresh_ff_status()
         self.dropArea.retranslate(
             tr("convert.drop.title"), tr("convert.drop.hint"),
             tr("convert.drop.formats"))

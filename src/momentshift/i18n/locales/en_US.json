@@ -314,7 +314,7 @@
   "convert.queue.running": "Running: {n}",
   "convert.queue.total": "Total: {n}",
   "convert.resume": "Resume",
-  "convert.staging.count": "Pending: {n}",
+  "convert.staging.count": "{n} file(s) selected",
   "convert.staging.empty": "",
   "convert.start": "Start",
   "convert.start.no_ffmpeg": "ffmpeg not found — install it or place it next to the app",
@@ -361,5 +361,11 @@
   "quicklaunch.convert.hint": "Right-click → Convert",
   "quicklaunch.compress.hint": "Right-click → Compress",
   "quicklaunch.upscale.hint": "Right-click → Upscale",
-  "quicklaunch.status.title": "Registration status"
+  "quicklaunch.status.title": "Registration status",
+  "about.env.title": "System Environment",
+  "about.env.subtitle": "Check and manage dependency tools",
+  "about.env.download": "Download",
+  "about.env.missing": "Not found",
+  "about.env.upscaler": "Real-ESRGAN",
+  "convert.post_compress": "Compress after conversion"
 }

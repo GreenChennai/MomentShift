@@ -40,11 +40,17 @@ class InterfaceBase(ScrollArea):
 
         # 标题头
         self.header = QWidget()
+        # 标题行：标题 + 可选右侧状态
+        self._header_row = QHBoxLayout()
+        self._header_row.setContentsMargins(0, 0, 0, 0)
+        self._header_row.setSpacing(10)
         hb = QVBoxLayout(self.header)
         hb.setContentsMargins(0, 0, 0, 0)
         hb.setSpacing(4)
         self.titleLabel = TitleLabel(title)
-        hb.addWidget(self.titleLabel)
+        self._header_row.addWidget(self.titleLabel, 1)
+        self._header_row.addStretch()
+        hb.addLayout(self._header_row)
         if subtitle:
             self.subLabel = CaptionLabel(subtitle)
             hb.addWidget(self.subLabel)

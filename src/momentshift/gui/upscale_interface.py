@@ -359,13 +359,6 @@ class UpscaleInterface(InterfaceBase):
         self._folder = cfg.upscaleFolder.value or ""
 
         # =====================================================================
-        # 引擎状态卡片
-        # =====================================================================
-        self.engineCard = EngineCard(self)
-        self.engineCard.engine_ready.connect(self._update_controls)
-        self.vbox.addWidget(self.engineCard)
-
-        # =====================================================================
         # 输入卡片
         # =====================================================================
         card, vb, self.tInput = self._make_card("upscale.input.title")
@@ -492,7 +485,7 @@ class UpscaleInterface(InterfaceBase):
         try:
             flt = "Media (" + " ".join(f"*{e}" for e in sorted(_UPSCALE_EXTS)) + ")"
             files, _ = QFileDialog.getOpenFileNames(
-                self, tr("upscale.btn.add"), "", flt, "",
+                None, tr("upscale.btn.add"), "", flt, "",
             )
             if files:
                 self._add_to_queue(self._expand_paths(files, _UPSCALE_EXTS))
@@ -506,7 +499,7 @@ class UpscaleInterface(InterfaceBase):
         self._picking = True
         try:
             d = QFileDialog.getExistingDirectory(
-                self, tr("upscale.add_folder"), "",
+                None, tr("upscale.add_folder"), "",
                 )
             if d:
                 self._add_to_queue(self._expand_paths([d], _UPSCALE_EXTS))
@@ -553,7 +546,7 @@ class UpscaleInterface(InterfaceBase):
         self._picking = True
         try:
             d = QFileDialog.getExistingDirectory(
-                self, tr("convert.output.browse"), self._folder or "",
+                None, tr("convert.output.browse"), self._folder or "",
                 )
             if d:
                 self._folder = d
@@ -688,7 +681,6 @@ class UpscaleInterface(InterfaceBase):
         self.tInput.setText(tr("upscale.input.title"))
         self.tSettings.setText(tr("upscale.settings.title"))
         self.tQueue.setText(tr("upscale.queue.title"))
-        self.engineCard.retranslateUi()
         self.dropArea.retranslate(
             tr("upscale.drop.title"), tr("upscale.drop.hint"),
             tr("upscale.drop.formats"))
