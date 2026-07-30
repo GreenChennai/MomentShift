@@ -15,6 +15,10 @@ dist/
 dist_build/
 dist_build_*/
 build_work_*/
+# Stray per-version build dirs must never be committed (e.g. dist_v021/022 were
+# accidentally pushed in the past). Build output now lives OUTSIDE the repo at
+# ../构建/ (see build notes), so ignore any that appear here.
+dist_v0*/
 release/
 *.manifest
 *.spec.bak

@@ -80,6 +80,8 @@ class IntInputSettingCard(SettingCard):
         self.spin.setValue(int(configItem.value))
         self.spin.setFixedWidth(76)
         self.spin.setObjectName("threadsSpin")
+        # Remove the +/- stepper buttons — a plain numeric text input (#7).
+        self.spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         self.spin.setStyleSheet(
             "QSpinBox{ border-radius: 6px; padding: 2px 8px; }"
         )

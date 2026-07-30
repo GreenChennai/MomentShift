@@ -96,6 +96,10 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    # UPX is disabled on purpose: it packs the PyQt6 DLLs, which makes Windows
+    # Defender re-scan (and the OS re-decompress in memory) on every launch —
+    # a measurable hit to cold-start time. Uncompressed binaries load directly
+    # and are treated as known-good by AV (v0.2.6, #2).
+    upx=False,
     name=APP_NAME,
 )

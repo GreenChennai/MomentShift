@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import re
 
-from PyQt6.QtGui import QColor, QPixmap, QPainter, QPen
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QColor, QPixmap, QPainter, QPen, QRegion
+from PyQt6.QtCore import Qt, QUrl, QTimer
 from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGraphicsDropShadowEffect,
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout,
 )
 from qfluentwidgets import FluentIcon as FIF, StrongBodyLabel, CaptionLabel, isDarkTheme
 
@@ -40,12 +40,11 @@ class DropArea(ThemedCard):
         self._pressed = False
         self._formats = ""
 
-        # Soft shadow for depth.
-        self._shadow = QGraphicsDropShadowEffect(self)
-        self._shadow.setBlurRadius(18)
-        self._shadow.setColor(QColor(0, 0, 0, 28 if not isDarkTheme() else 55))
-        self._shadow.setOffset(0, 4)
-        self.setGraphicsEffect(self._shadow)
+        # NOTE: a QGraphicsDropShadowEffect is intentionally NOT used here — it
+        # cannot coexist with a widget mask (the effect draws outside the widget
+        # rect and gets clipped away) and its blur kernel produces a light fringe
+        # at the rounded corners. Strict rounding + circular masking (below) give
+        # clean, closed corners instead (v0.2.6, #6).
 
         # --- inner dashed zone (the only part that changes on hover/press) ---
         self.inner = QWidget(self)
@@ -59,6 +58,10 @@ class DropArea(ThemedCard):
         self.iconBadge = QLabel(self)
         self.iconBadge.setFixedSize(62, 62)
         self.iconBadge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Strict circular clipping: the badge background must stay inside the
+        # circle (no rectangular colour block leaking past the round edge, #6).
+        self.iconBadge.setMask(
+            QRegion(self.iconBadge.rect(), QRegion.RegionType.Ellipse))
         vb.addWidget(self.iconBadge, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.titleLabel = StrongBodyLabel()
@@ -67,7 +70,8 @@ class DropArea(ThemedCard):
 
         self.hintLabel = CaptionLabel()
         self.hintLabel.setObjectName("dropHint")
-        self.hintLabel.setStyleSheet(f"color: {muted_text()};")
+        # Hint text is explicitly black per design spec (v0.2.6, #5).
+        self.hintLabel.setStyleSheet("color: #212121;")
         vb.addWidget(self.hintLabel, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # format chips row
@@ -103,7 +107,6 @@ class DropArea(ThemedCard):
             FIF.FOLDER_ADD.icon(QColor(accent_name())).pixmap(30, 30))
         self.iconBadge.setStyleSheet(
             f"background: {self._accent_tint()}; border-radius: 31px;")
-        self._shadow.setColor(QColor(0, 0, 0, 28 if not isDarkTheme() else 55))
         self._render_chips(self._parse_formats(self._formats))
         self._apply_style()
 
@@ -141,12 +144,13 @@ class DropArea(ThemedCard):
             self.chipsWrap.hide()
             return
         self.chipsWrap.show()
-        bg = surface_raised().name()
+        # Format capsules: solid brand-green background with white text (v0.2.6, #5).
+        bg = accent_name()
         for tok in tokens:
             chip = QLabel(tok)
             chip.setObjectName("dropChip")
             chip.setStyleSheet(
-                f"QLabel#dropChip{{ color: {muted_text()}; background: {bg};"
+                f"QLabel#dropChip{{ color: #FFFFFF; background: {bg};"
                 f" border-radius: 6px; padding: 2px 9px; font-size: 12px; }}")
             self.chipsLayout.addWidget(chip)
         self.chipsLayout.addStretch(1)
@@ -181,7 +185,17 @@ class DropArea(ThemedCard):
         super().mouseReleaseEvent(event)
         self._pressed = False
         self._apply_style()
-        self.clicked.emit()
+        # Defer the click so the file dialog opens OUTSIDE the mouse-event handler.
+        # Opening a modal native dialog synchronously here makes Windows replay the
+        # mouse-release, which re-emits ``clicked`` and re-opens the dialog (v0.2.6, #3).
+        QTimer.singleShot(0, self.clicked.emit)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Clip the whole card to its rounded rect so no child background (or the
+        # view behind it) bleeds past the corners — clean, closed rounding (#6).
+        r = int(self.borderRadius)
+        self.setMask(QRegion(self.rect(), r, r))
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():

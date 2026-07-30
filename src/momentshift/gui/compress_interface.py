@@ -282,7 +282,7 @@ class CompressInterface(InterfaceBase):
         self.dropArea.clicked.connect(self._pick_files)
         vb.addWidget(self.dropArea)
         tools = QHBoxLayout()
-        self.addFolderBtn = ghost_btn(tr("compress.add.folder"), icon=FIF.FOLDER_ADD)
+        self.addFolderBtn = primary_btn(tr("compress.add.folder"), icon=FIF.FOLDER_ADD)
         self.addFolderBtn.clicked.connect(self._pick_folder)
         tools.addWidget(self.addFolderBtn)
         vb.addLayout(tools)
