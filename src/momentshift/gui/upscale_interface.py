@@ -29,6 +29,7 @@ from ..i18n.translator import tr
 from .theme import (
     ThemedCard, CollapsibleCard, field_row, primary_btn, ghost_btn, icon_btn,
     muted_text, sub_text, CARD_MARGIN, scrollbar_qss,
+    success_color, danger_color, accent_color, border_color,
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
@@ -75,8 +76,8 @@ class EngineCard(ThemedCard):
         self.prog.setRange(0, 0)
         self.prog.setFixedHeight(4)
         self.prog.setStyleSheet(
-            "QProgressBar{background:#dcdcdc; border:none; border-radius:2px;} "
-            "QProgressBar::chunk{background:#0f6cbd; border-radius:2px;}")
+            f"QProgressBar{{background:{border_color()}; border:none; border-radius:2px;}} "
+            f"QProgressBar::chunk{{background:{accent_color().name()}; border-radius:2px;}}")
         self.prog.hide()
         vb.addWidget(self.prog)
 
@@ -87,8 +88,8 @@ class EngineCard(ThemedCard):
         if path:
             n = len(upscaler.available_models())
             self.statusLbl.setText(tr("upscale.engine.ok", n=n))
-            self.statusLbl.setStyleSheet("color:#10893e;")
-            self.dot.setStyleSheet("background:#10893e; border-radius:5px;")
+            self.statusLbl.setStyleSheet(f"color:{success_color().name()};")
+            self.dot.setStyleSheet(f"background:{success_color().name()}; border-radius:5px;")
             # Collapse download / link when engine is ready
             self.linkBtn.hide()
             self.dlBtn.hide()
@@ -96,7 +97,7 @@ class EngineCard(ThemedCard):
         else:
             self.statusLbl.setText(tr("upscale.engine.missing"))
             self.statusLbl.setStyleSheet(f"color:{sub_text()};")
-            self.dot.setStyleSheet("background:#e81123; border-radius:5px;")
+            self.dot.setStyleSheet(f"background:{danger_color().name()}; border-radius:5px;")
             self.linkBtn.show()
             self.dlBtn.show()
 
@@ -268,7 +269,9 @@ class UpscaleListWidget(QWidget):
         self._refresh_empty()
 
     def _refresh_empty(self):
-        self.emptyHint.setVisible(not self.items)
+        # The "queue empty" hint text was removed by design; keep the label
+        # hidden so no empty gap is left behind.
+        self.emptyHint.setVisible(False)
 
     def _update_stats(self):
         total = len(self.items)
@@ -361,11 +364,8 @@ class UpscaleInterface(InterfaceBase):
         self.dropArea.clicked.connect(self._pick_files)
         vb.addWidget(self.dropArea)
         tools = QHBoxLayout()
-        self.addFilesBtn = ghost_btn(tr("upscale.btn.add"), icon=FIF.ADD)
-        self.addFilesBtn.clicked.connect(self._pick_files)
         self.addFolderBtn = ghost_btn(tr("upscale.add_folder"), icon=FIF.FOLDER_ADD)
         self.addFolderBtn.clicked.connect(self._pick_folder)
-        tools.addWidget(self.addFilesBtn)
         tools.addWidget(self.addFolderBtn)
         vb.addLayout(tools)
         self.vbox.addWidget(card)
@@ -478,6 +478,8 @@ class UpscaleInterface(InterfaceBase):
 
         self._render_staging()
         self._update_controls()
+        self.vbox.addStretch(1)
+        self._collapse_ready = True
         self.retheme()
 
     # -- helpers ----------------------------------------------------------
@@ -485,6 +487,7 @@ class UpscaleInterface(InterfaceBase):
         title_text = tr(title_key)
         sub_text = tr(subtitle_key) if subtitle_key else ""
         card = CollapsibleCard(title_text, sub_text, self)
+        self.register_collapsible(card)
         return card, card.body, card.titleLabel
 
     def _scroll(self) -> QScrollArea:
@@ -758,7 +761,6 @@ class UpscaleInterface(InterfaceBase):
         self.engineCard.retranslateUi()
         self.dropArea.retranslate(tr("upscale.drop.title"), tr("upscale.drop.hint"),
                                   tr("upscale.drop.formats"))
-        self.addFilesBtn.setText(tr("upscale.btn.add"))
         self.addFolderBtn.setText(tr("upscale.add_folder"))
         self.stageAddBtn.setText(tr("upscale.staging.add", n=len(self._staged)))
         self.stageClearBtn.setText(tr("upscale.staging.clear"))

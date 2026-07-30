@@ -47,6 +47,32 @@ class InterfaceBase(ScrollArea):
         # own ``retheme()`` at the end of __init__ to theme their children.
         InterfaceBase.retheme(self)
 
+        # Collapsible-card registry + "always keep at least one open" guard.
+        self._collapsibles: list = []
+        self._collapse_ready = False
+
+    def register_collapsible(self, card) -> None:
+        """Register a CollapsibleCard so the "at least one stays open" rule applies."""
+        if card not in self._collapsibles:
+            self._collapsibles.append(card)
+            card.set_toggle_guard(self._can_collapse)
+
+    def _can_collapse(self, card, want_collapse: bool) -> bool:
+        """Guard: refuse to collapse the last expanded (visible) card.
+
+        Returns ``True`` to allow the toggle. Programmatic collapses during
+        construction (``_collapse_ready`` is ``False``) are always allowed so
+        initial collapsed states work; the rule only protects user interaction
+        once the interface is live.
+        """
+        if not want_collapse or not self._collapse_ready:
+            return True
+        expanded = [
+            c for c in self._collapsibles
+            if c.isVisible() and not c.isCollapsed()
+        ]
+        return len(expanded) > 1
+
     def _style_accent(self):
         self.accentRule.setStyleSheet(
             f"QFrame{{ background: {accent_name()}; border: none; border-radius: 2px; }}"

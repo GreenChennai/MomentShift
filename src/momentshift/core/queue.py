@@ -137,9 +137,23 @@ class ConversionManager(QObject):
         self._pool = QThreadPool.globalInstance()
         self._max = 4
         self.ffmpeg_path = ffmpeg_path or find_ffmpeg(cfg.ffmpegSource.value)
-        self.hw = detect_hw_accel(self.ffmpeg_path) if self.ffmpeg_path else {}
+        # Defer hardware-accel probing to a background thread so it never blocks
+        # app startup (the subprocess can take hundreds of ms). Tasks that start
+        # before detection finishes simply run without HW accel for that run.
+        self.hw = {}
+        self._hw_detected = False
+        if self.ffmpeg_path:
+            threading.Thread(target=self._detect_hw, daemon=True).start()
         self._running = False
         self._paused = False
+
+    def _detect_hw(self) -> None:
+        try:
+            self.hw = detect_hw_accel(self.ffmpeg_path) if self.ffmpeg_path else {}
+        except Exception:  # pragma: no cover - defensive
+            self.hw = {}
+        self._hw_detected = True
+        log.info("hardware-accel detection complete: %s", self.hw)
 
     # -- properties -------------------------------------------------------
     @property

@@ -21,7 +21,10 @@ from qfluentwidgets import FluentIcon as FIF, ComboBox, CaptionLabel, BodyLabel,
 from ..core.qt_compat import QWidget, Signal, QApplication
 from ..core.presets import TARGET_GROUPS
 from ..i18n.translator import tr
-from .theme import ThemedCard, icon_btn, muted_text, accent_color, sub_text
+from .theme import (
+    ThemedCard, icon_btn, muted_text, accent_color, sub_text,
+    success_color, danger_color, border_color, surface_raised,
+)
 
 
 # --------------------------------------------------------------------------
@@ -59,9 +62,9 @@ _CATEGORY_ICON = {
 
 _STATUS_COLOR = {
     "pending": ("#8a8a8a", "#9a9a9a"),
-    "running": ("#0f6cbd", "#2684d1"),
-    "done": ("#10893e", "#19a058"),
-    "failed": ("#e81123", "#f1707b"),
+    "running": ("#2F98FF", "#4AAEFF"),
+    "done": ("#3EB68F", "#27B17D"),
+    "failed": ("#FF7279", "#E46D70"),
     "canceled": ("#8a8a8a", "#9a9a9a"),
 }
 
@@ -91,16 +94,16 @@ class ProgressBar(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
-        track = QColor(214, 214, 214) if not isDarkTheme() else QColor(70, 70, 70)
+        track = QColor(border_color())
         painter.setBrush(QBrush(track))
         painter.drawRoundedRect(QRect(0, 0, w, h), h // 2, h // 2)
         fw = int(w * self._value / 100)
         if fw <= 0:
             return
         if self._error:
-            fill = QColor(232, 17, 35)
+            fill = danger_color()
         elif self._value >= 100:
-            fill = QColor(16, 137, 62)
+            fill = success_color()
         else:
             fill = accent_color()
         painter.setBrush(QBrush(fill))
@@ -120,7 +123,7 @@ class StatusPill(QLabel):
         self._status = status
         fg = _STATUS_COLOR.get(status, _STATUS_COLOR["pending"])[
             1 if isDarkTheme() else 0]
-        bg = "#ededed" if not isDarkTheme() else "#3a3a3a"
+        bg = surface_raised().name()
         self.setText(tr(f"convert.status.{status}"))
         self.setStyleSheet(
             f"color:{fg}; background:{bg}; border-radius:9px; "
@@ -273,7 +276,9 @@ class QueueListWidget(QWidget):
         self._refresh_empty()
 
     def _refresh_empty(self):
-        self.emptyHint.setVisible(not self.items)
+        # The "queue empty" hint text was removed by design; keep the label
+        # hidden so no empty gap is left behind.
+        self.emptyHint.setVisible(False)
 
     def add_item(self, task):
         if task.id in self.items:

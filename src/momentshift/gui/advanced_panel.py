@@ -135,11 +135,11 @@ class AdvancedPanel(QWidget):
         def build(layout):
             # --- Compression backend dropdown ---
             backend = _combo(
-                [(tr("advanced.compression.ffmpeg"), "ffmpeg"),
+                [(tr("advanced.compression.pillow"), "pillow"),
                  ("oxipng", "oxipng"),
                  ("OptiPNG", "optipng"),
                  ("Mozilla JPEG", "mozjpeg")],
-                adv.get("compress_backend", "ffmpeg"),
+                adv.get("compress_backend", "pillow"),
                 lambda v: adv.__setitem__("compress_backend", v),
             )
             layout.addWidget(field_row(tr("advanced.compression.backend"), backend, label_width=80))

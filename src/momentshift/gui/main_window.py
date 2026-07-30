@@ -1,5 +1,7 @@
 """Application main window (FluentWindow) wiring navigation + theme + i18n."""
 
+from PyQt6.QtCore import QTimer
+
 from ..core.qt_compat import QApplication, QIcon, QSize
 from qfluentwidgets import (
     FluentWindow,
@@ -30,14 +32,23 @@ class MainWindow(FluentWindow):
 
         self.themeListener = SystemThemeListener(self)
 
+        # Build the default (Convert) view eagerly so the window has content
+        # the moment it appears. The other screens are constructed lazily after
+        # the first paint (see _build_lazy) so startup stays instant.
         self.convertInterface = ConvertInterface(manager, self)
-        self.compressInterface = CompressInterface(self)
-        self.upscaleInterface = UpscaleInterface(self)
-        self.settingInterface = SettingInterface(self)
-        self.aboutInterface = AboutInterface(self)
-
         self.navigationInterface.setAcrylicEnabled(True)
-        self.initNavigation()
+        self.addSubInterface(self.convertInterface, FIF.HOME, tr("nav.convert"))
+
+        self.compressInterface = None
+        self.upscaleInterface = None
+        self.settingInterface = None
+        self.aboutInterface = None
+        self._lazy = [
+            ("compress", CompressInterface, FIF.PHOTO, "nav.compress", None),
+            ("upscale", UpscaleInterface, FIF.ZOOM, "nav.upscale", None),
+            ("settings", SettingInterface, FIF.SETTING, "nav.settings", NavigationItemPosition.BOTTOM),
+            ("about", AboutInterface, FIF.INFO, "nav.about", NavigationItemPosition.BOTTOM),
+        ]
 
         self.splashScreen.finish()
         self.themeListener.start()
@@ -45,8 +56,13 @@ class MainWindow(FluentWindow):
         # Apply the saved language + theme immediately (config is loaded before
         # the signal connections exist, so valueChanged never fires on startup).
         translator.set_locale(LocaleKey(cfg.language.value))
-        self.retranslate_all()
+        self.convertInterface.retranslateUi()
         self._on_theme(cfg.theme.value)
+
+        # Defer building the secondary screens a few frames so the event loop is
+        # free and the window is responsive immediately.
+        for i, spec in enumerate(self._lazy):
+            QTimer.singleShot(20 * (i + 1), lambda s=spec: self._build_lazy(*s))
 
     # -- config signals --------------------------------------------------
     def _connect_config(self):
@@ -64,12 +80,30 @@ class MainWindow(FluentWindow):
             if isinstance(attr, ConfigItem):
                 attr.valueChanged.connect(self._save_config_slot)
 
+    def _build_lazy(self, name, cls, icon, title_key, position):
+        """Construct a secondary screen on demand and register its nav item."""
+        if getattr(self, name + "Interface", None) is not None:
+            return
+        iface = cls(self)
+        setattr(self, name + "Interface", iface)
+        if position is not None:
+            self.addSubInterface(iface, icon, tr(title_key), position=position)
+        else:
+            self.addSubInterface(iface, icon, tr(title_key))
+        iface.retranslateUi()
+
+    def _all_interfaces(self):
+        out = []
+        for attr in ("convertInterface", "compressInterface", "upscaleInterface",
+                    "settingInterface", "aboutInterface"):
+            iface = getattr(self, attr, None)
+            if iface is not None:
+                out.append(iface)
+        return out
+
     def _retheme_all(self):
-        self.convertInterface.retheme()
-        self.compressInterface.retheme()
-        self.upscaleInterface.retheme()
-        self.settingInterface.retheme()
-        self.aboutInterface.retheme()
+        for iface in self._all_interfaces():
+            iface.retheme()
 
     def _on_language(self, value):
         translator.set_locale(LocaleKey(value))
@@ -79,33 +113,22 @@ class MainWindow(FluentWindow):
         setTheme({"auto": Theme.AUTO, "light": Theme.LIGHT, "dark": Theme.DARK}.get(value, Theme.AUTO))
 
     def retranslate_all(self):
-        self.convertInterface.retranslateUi()
-        self.compressInterface.retranslateUi()
-        self.upscaleInterface.retranslateUi()
-        self.settingInterface.retranslateUi()
-        self.aboutInterface.retranslateUi()
+        for iface in self._all_interfaces():
+            iface.retranslateUi()
         nav = self.navigationInterface
         if hasattr(nav, "setItemText"):
-            nav.setItemText("Convert", tr("nav.convert"))
-            nav.setItemText("Compress", tr("nav.compress"))
-            nav.setItemText("Upscale", tr("nav.upscale"))
-            nav.setItemText("Settings", tr("nav.settings"))
-            nav.setItemText("About", tr("nav.about"))
+            for route, text in {
+                "Convert": tr("nav.convert"),
+                "Compress": tr("nav.compress"),
+                "Upscale": tr("nav.upscale"),
+                "Settings": tr("nav.settings"),
+                "About": tr("nav.about"),
+            }.items():
+                try:
+                    nav.setItemText(route, text)
+                except Exception:
+                    pass
         self.setWindowTitle(tr("app.title"))
-
-    # -- navigation ------------------------------------------------------
-    def initNavigation(self):
-        self.addSubInterface(self.convertInterface, FIF.HOME, tr("nav.convert"))
-        self.addSubInterface(self.compressInterface, FIF.PHOTO, tr("nav.compress"))
-        self.addSubInterface(self.upscaleInterface, FIF.ZOOM, tr("nav.upscale"))
-        self.addSubInterface(
-            self.settingInterface, FIF.SETTING, tr("nav.settings"),
-            position=NavigationItemPosition.BOTTOM,
-        )
-        self.addSubInterface(
-            self.aboutInterface, FIF.INFO, tr("nav.about"),
-            position=NavigationItemPosition.BOTTOM,
-        )
         self.navigationInterface.setCurrentItem("Convert")
 
     # -- window ----------------------------------------------------------

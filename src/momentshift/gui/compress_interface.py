@@ -21,7 +21,10 @@ from ..core import compressor
 from ..core.presets import IMAGE_EXTS
 from ..core.qt_compat import Signal, QObject, QRunnable, QThreadPool
 from ..core.tools_download import ToolsDownloadWorker
+from ..core.logger import get_logger
 from ..i18n.translator import tr
+
+log = get_logger("compress")
 from .theme import (
     ThemedCard, CollapsibleCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
     muted_text, sub_text, CARD_MARGIN, scrollbar_qss,
@@ -49,24 +52,41 @@ class CompressWorker(QRunnable):
         self.target_fmt = target_fmt
         self.mode = mode
         self.quality = quality
-        self.preferred = None if preferred in ("auto", "ffmpeg", None) else preferred
+        # ``preferred`` is now a real backend id ("pillow"/"oxipng"/"optipng"/
+        # "mozjpeg") or ``None`` to let ``best_backend`` decide. The old, invalid
+        # "ffmpeg" sentinel is gone.
+        self.preferred = preferred
         self.opts = opts or {}
         self.signals = _WorkerSignals()
 
     def run(self):
         self.signals.progress.emit(self.item_id, 0)
         src_ext = Path(self.src).suffix.lower().lstrip(".")
+        # Resolve the "same" sentinel to the source extension so we never try to
+        # save to a literal "SAME" format (the root cause of every task failing).
+        effective = src_ext if self.target_fmt in ("same", "", None) else self.target_fmt
+        log.info(
+            "[compress] start id=%s src=%s ext=%s target=%s effective=%s mode=%s "
+            "quality=%s backend=%s opts=%s",
+            self.item_id, self.src, src_ext, self.target_fmt, effective,
+            self.mode, self.quality, self.preferred, self.opts,
+        )
         try:
-            if compressor.needs_conversion(src_ext, self.target_fmt):
+            if compressor.needs_conversion(src_ext, effective):
                 ok, detail, saved = compressor.transcode_and_compress(
-                    self.src, self.out, self.target_fmt, self.mode,
+                    self.src, self.out, effective, self.mode,
                     self.quality, self.opts, preferred=self.preferred)
             else:
                 ok, detail, saved = compressor.compress_auto(
                     self.src, self.out, self.mode, self.quality, self.opts,
                     preferred=self.preferred)
-        except Exception as exc:  # defensive
-            ok, detail, saved = False, str(exc), 0
+        except Exception:  # defensive — log the full traceback for debugging
+            log.exception("[compress] task %s raised an exception", self.item_id)
+            ok, detail, saved = False, "exception (see log)", 0
+        log.info(
+            "[compress] finished id=%s ok=%s saved=%d detail=%s",
+            self.item_id, ok, saved, detail,
+        )
         self.signals.finished.emit(self.item_id, ok, saved, detail)
 
 
@@ -170,7 +190,9 @@ class CompressListWidget(QWidget):
         self._refresh_empty()
 
     def _refresh_empty(self):
-        self.emptyHint.setVisible(not self.items)
+        # The "queue empty" hint text was removed by design; keep the label
+        # hidden so no empty gap is left behind.
+        self.emptyHint.setVisible(False)
 
     def _update_stats(self):
         total = len(self.items)
@@ -240,8 +262,9 @@ class CompressInterface(InterfaceBase):
         self._running = False
         self._paused = False
 
-        self._program = "ffmpeg"
+        self._program = "pillow"
         self._tool_opts = {
+            "pillow": {},
             "oxipng": {"level": 2, "interlace": False, "strip": "safe"},
             "optipng": {"level": 2, "strip": "all"},
             "mozjpeg": {"quality": 100, "progressive": True, "strip": True, "arithmetic": False},
@@ -259,11 +282,8 @@ class CompressInterface(InterfaceBase):
         self.dropArea.clicked.connect(self._pick_files)
         vb.addWidget(self.dropArea)
         tools = QHBoxLayout()
-        self.addFilesBtn = ghost_btn(tr("compress.add.files"), icon=FIF.ADD)
-        self.addFilesBtn.clicked.connect(self._pick_files)
         self.addFolderBtn = ghost_btn(tr("compress.add.folder"), icon=FIF.FOLDER_ADD)
         self.addFolderBtn.clicked.connect(self._pick_folder)
-        tools.addWidget(self.addFilesBtn)
         tools.addWidget(self.addFolderBtn)
         vb.addLayout(tools)
         self.vbox.addWidget(card)
@@ -273,16 +293,17 @@ class CompressInterface(InterfaceBase):
         scard, svb, self.tSettings = self._card("compress.settings.title")
 
         self.programCombo = self._opt_combo(
-            [(tr("advanced.compression.ffmpeg"), "ffmpeg"),
+            [(tr("advanced.compression.pillow"), "pillow"),
              ("oxipng", "oxipng"),
              ("OptiPNG", "optipng"),
              ("Mozilla JPEG", "mozjpeg")],
             self._program, lambda v: self._on_program(v))
         svb.addWidget(field_row(tr("advanced.compression.backend"), self.programCombo))
 
-        # FFmpeg group: target format + quality
-        self.ffmpegGroup = QWidget()
-        fq = QVBoxLayout(self.ffmpegGroup)
+        # General compression parameters (target format + quality) — always
+        # visible regardless of the chosen backend.
+        self.paramsGroup = QWidget()
+        fq = QVBoxLayout(self.paramsGroup)
         fq.setContentsMargins(0, 0, 0, 0)
         fq.setSpacing(6)
         self.targetCombo = self._opt_combo(
@@ -295,7 +316,7 @@ class CompressInterface(InterfaceBase):
         self.quality.setValue(self._quality)
         self.quality.valueChanged.connect(lambda v: setattr(self, "_quality", v))
         fq.addWidget(field_row(tr("compress.quality"), self.quality))
-        svb.addWidget(self.ffmpegGroup)
+        svb.addWidget(self.paramsGroup)
 
         # Tool-specific parameter groups
         self.oxipngGroup = self._build_oxipng()
@@ -364,6 +385,8 @@ class CompressInterface(InterfaceBase):
         self._auto_fold = [self._inputCard, scard]
 
         self._on_program(self._program)
+        self.vbox.addStretch(1)
+        self._collapse_ready = True
         self.retheme()
 
     # -- helpers ----------------------------------------------------------
@@ -371,6 +394,7 @@ class CompressInterface(InterfaceBase):
         title_text = tr(title_key)
         sub_text = tr(subtitle_key) if subtitle_key else ""
         card = CollapsibleCard(title_text, sub_text, self)
+        self.register_collapsible(card)
         return card, card.body, card.titleLabel
 
     def _opt_combo(self, mapping, current, on_change) -> ComboBox:
@@ -445,14 +469,15 @@ class CompressInterface(InterfaceBase):
     # -- settings --------------------------------------------------------
     def _on_program(self, p):
         self._program = p
-        self.ffmpegGroup.setVisible(p == "ffmpeg")
+        # ``paramsGroup`` (target + quality) is always visible; only the
+        # tool-specific parameter groups follow the selected backend.
         self.oxipngGroup.setVisible(p == "oxipng")
         self.optipngGroup.setVisible(p == "optipng")
         self.mozjpegGroup.setVisible(p == "mozjpeg")
         self._refresh_tool_status()
 
     def _refresh_tool_status(self):
-        if self._program == "ffmpeg":
+        if self._program == "pillow":
             self.toolsBtn.setVisible(False)
             self.toolsStatus.setVisible(False)
             return
@@ -474,8 +499,6 @@ class CompressInterface(InterfaceBase):
         return "lossless" if self._quality == 100 else "lossy"
 
     def _current_opts(self):
-        if self._program == "ffmpeg":
-            return {}
         return self._tool_opts.get(self._program, {})
 
     def _build_oxipng(self):
@@ -704,11 +727,10 @@ class CompressInterface(InterfaceBase):
         self.tQueue.setText(tr("compress.queue.title"))
         self.dropArea.retranslate(tr("compress.drop.title"), tr("compress.drop.hint"),
                                   tr("compress.drop.formats"))
-        self.addFilesBtn.setText(tr("compress.add.files"))
         self.addFolderBtn.setText(tr("compress.add.folder"))
         self.toolsBtn.setText(tr("compress.tools.download"))
         self._repopulate_combo(self.programCombo, [
-            (tr("advanced.compression.ffmpeg"), "ffmpeg"),
+            (tr("advanced.compression.pillow"), "pillow"),
             ("oxipng", "oxipng"),
             ("OptiPNG", "optipng"),
             ("Mozilla JPEG", "mozjpeg"),

@@ -253,7 +253,14 @@ def compress_auto(
 
 
 def needs_conversion(src_fmt: str, dst_fmt: str) -> bool:
-    """Whether a compress-only run must also transcode the format."""
+    """Whether a compress-only run must also transcode the format.
+
+    The ``"same"`` sentinel (keep the source extension) means *no* transcoding,
+    so it must return ``False`` — otherwise the worker would try to save to a
+    literal ``"SAME"`` format and crash.
+    """
+    if not dst_fmt or dst_fmt in ("same", "auto"):
+        return False
     return src_fmt.lower().lstrip(".") != dst_fmt.lower().lstrip(".")
 
 
@@ -273,7 +280,11 @@ def transcode_and_compress(
     """
     from PIL import Image
 
-    fmt = fmt.lower().lstrip(".")
+    fmt = (fmt or "").lower().lstrip(".")
+    # Defensive: a "same"/empty target means "keep the source format" — skip the
+    # transcode step and just compress in place.
+    if not fmt or fmt == "same":
+        return compress_auto(input_path, output_path, mode, quality, opts, preferred=preferred)
     tmp = str(output_path) + ".tc.tmp"
     img = Image.open(input_path)
     if fmt in ("jpg", "jpeg"):

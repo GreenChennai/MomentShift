@@ -175,7 +175,9 @@ class CompareWidget(ThemedCard):
         self.label.set_pixmaps(_poster(before), _poster(after))
         has = bool(before or after)
         self.label.setVisible(has)
-        self.emptyHint.setVisible(not has)
+        # The former "select a queue item to compare" hint has been removed per
+        # design; the compare area simply stays empty until a result exists.
+        self.emptyHint.setVisible(False)
 
     def _set_mode(self, mode: str):
         self._mode = mode

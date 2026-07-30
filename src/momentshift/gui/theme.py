@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 from PyQt6.QtCore import QSize
 from PyQt6.QtGui import QColor, QIcon
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame, QSizePolicy
 
 from qfluentwidgets import (
     isDarkTheme,
@@ -34,22 +34,58 @@ from qfluentwidgets import (
     TransparentToolButton,
 )
 
-# -- Window chrome + content background --------------------------------------
-LIGHT_BG = QColor(244, 244, 244)
-DARK_BG = QColor(32, 32, 32)
+# -- Primer-inspired design tokens (single source of truth) -----------------
+# Every colour the UI uses is derived from this palette so light/dark stay
+# coherent and on-brand. Accessors below resolve the active theme at call time.
+_PALETTE_LIGHT = {
+    "bg000": "#FFFFFF", "bg100": "#F5F5F5", "bg200": "#EEEEEE",
+    "text900": "#212121", "text600": "#757575", "text500": "#9E9E9E",
+    "text400": "#BDBDBD",
+    "border300": "#E0E0E0", "border400": "#BDBDBD",
+    "brand": "#2F98FF", "blue900": "#2270F4",
+    "red500": "#FF7279", "red900": "#B4324B", "green500": "#3EB68F",
+}
+_PALETTE_DARK = {
+    "bg000": "#171619", "bg100": "#292929", "bg200": "#424242",
+    "surface_base": "#10131A", "surface_raised": "#11122F",
+    "text900": "#EFEFEF", "text600": "#C7C7C7", "text500": "#767577",
+    "text_primary": "#878A91", "text_secondary": "#74777E", "text400": "#8B8B93",
+    "border300": "#575757", "border_default": "#1A1835",
+    "brand": "#2F98FF", "blue900": "#4AAEFF", "accent": "#030036",
+    "red500": "#E46D70", "red900": "#F6BFBF", "green500": "#27B17D",
+    "success": "#A3D4AD",
+}
+
+
+def _dark() -> bool:
+    return isDarkTheme()
+
+
+def _c(key: str) -> QColor:
+    pal = _PALETTE_DARK if _dark() else _PALETTE_LIGHT
+    return QColor(pal[key])
+
+
+def _hex(key: str) -> str:
+    return _c(key).name()
+
+
+# Window chrome + content background.
+LIGHT_BG = QColor(_PALETTE_LIGHT["bg000"])
+DARK_BG = QColor(_PALETTE_DARK["bg000"])
 
 # Uniform component (card) surface — the colour any transparent text/icon inside
 # a card resolves to, so the patch behind a label always matches the card.
-COMPONENT_LIGHT = QColor(251, 251, 251)   # #FBFBFB
-COMPONENT_DARK = QColor(43, 43, 43)       # #2B2B2B
-HOVER_LIGHT = QColor(242, 242, 242)
-HOVER_DARK = QColor(54, 54, 54)
-PRESS_LIGHT = QColor(236, 236, 236)
-PRESS_DARK = QColor(38, 38, 38)
+COMPONENT_LIGHT = QColor(_PALETTE_LIGHT["bg100"])
+COMPONENT_DARK = QColor(_PALETTE_DARK["bg100"])
+HOVER_LIGHT = QColor(_PALETTE_LIGHT["bg200"])
+HOVER_DARK = QColor(_PALETTE_DARK["bg200"])
+PRESS_LIGHT = QColor(_PALETTE_LIGHT["bg200"])
+PRESS_DARK = QColor(_PALETTE_DARK["bg200"])
 
-# Brand accent (Fluent primary blue), tuned per theme so it stays vivid on both.
-ACCENT_LIGHT = QColor(15, 108, 189)    # #0F6CBD
-ACCENT_DARK = QColor(38, 132, 209)     # brighter on dark
+# Brand accent (kept vivid on both themes per the supplied palette).
+ACCENT_LIGHT = QColor(_PALETTE_LIGHT["brand"])
+ACCENT_DARK = QColor(_PALETTE_DARK["brand"])
 
 # Shared geometry tokens.
 RADIUS = 12
@@ -67,31 +103,103 @@ ICON_COLLAPSE = _icon_path("\u6536\u8d77.svg")   # 收起 (up arrow — expanded
 
 
 def component_bg() -> QColor:
-    return COMPONENT_DARK if isDarkTheme() else COMPONENT_LIGHT
+    return COMPONENT_DARK if _dark() else COMPONENT_LIGHT
 
 
 def content_bg() -> QColor:
-    return DARK_BG if isDarkTheme() else LIGHT_BG
+    return DARK_BG if _dark() else LIGHT_BG
+
+
+def surface() -> QColor:
+    """Card/component surface colour (same as ``component_bg``)."""
+    return component_bg()
+
+
+def surface_hover() -> QColor:
+    return HOVER_DARK if _dark() else HOVER_LIGHT
+
+
+def surface_pressed() -> QColor:
+    """Colour a pressable surface (e.g. the drop zone) shows while pressed."""
+    return PRESS_DARK if _dark() else PRESS_LIGHT
+
+
+def surface_raised() -> QColor:
+    """Raised surfaces (stat pills, popovers) — slightly distinct from a card."""
+    if _dark():
+        return QColor(_PALETTE_DARK["surface_raised"])
+    return COMPONENT_LIGHT
 
 
 def accent_color() -> QColor:
-    return ACCENT_DARK if isDarkTheme() else ACCENT_LIGHT
+    return ACCENT_DARK if _dark() else ACCENT_LIGHT
 
 
 def accent_name() -> str:
     return accent_color().name()
 
 
+def link_color() -> QColor:
+    return QColor(_PALETTE_DARK["blue900"] if _dark() else _PALETTE_LIGHT["blue900"])
+
+
+# -- text roles -------------------------------------------------------------
+def text_strong() -> str:
+    return _hex("text900")
+
+
+def text_secondary() -> str:
+    return _hex("text_secondary" if _dark() else "text600")
+
+
+def placeholder_text() -> str:
+    return _hex("text500")
+
+
+def text_disabled() -> str:
+    return _hex("text400")
+
+
 def sub_text() -> str:
-    return "rgba(96, 96, 96, 1)" if not isDarkTheme() else "rgba(165, 165, 165, 1)"
+    return text_secondary()
 
 
 def hint_text() -> str:
-    return "rgba(128, 128, 128, 1)" if not isDarkTheme() else "rgba(170, 170, 170, 1)"
+    return placeholder_text()
 
 
 def muted_text() -> str:
-    return "rgba(140, 140, 140, 1)" if not isDarkTheme() else "rgba(170, 170, 170, 1)"
+    return text_disabled()
+
+
+# -- borders ----------------------------------------------------------------
+def border_color() -> str:
+    return _hex("border300")
+
+
+def border_hover() -> str:
+    return _hex("border400")
+
+
+def divider_color() -> str:
+    return _hex("border_default" if _dark() else "border300")
+
+
+# -- status -----------------------------------------------------------------
+def danger_color() -> QColor:
+    return QColor(_PALETTE_DARK["red500"] if _dark() else _PALETTE_LIGHT["red500"])
+
+
+def danger_text() -> str:
+    return _hex("red900")
+
+
+def success_color() -> QColor:
+    return QColor(_PALETTE_DARK["green500"] if _dark() else _PALETTE_LIGHT["green500"])
+
+
+def success_text() -> str:
+    return _hex("success" if _dark() else "green500")
 
 
 def map_theme(value: str) -> Theme:
@@ -208,6 +316,13 @@ class CollapsibleCard(ThemedCard):
 
         self._outer.addWidget(self._body)
 
+        # Guard consulted before collapsing: returns True to allow, False to
+        # refuse (e.g. when this is the last expanded card in its group).
+        self._toggle_guard = None
+        # Cards never stretch to fill the window — they keep their content
+        # height and stay top-aligned (collapsed => title bar only).
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+
         if collapsed:
             self._apply_collapsed()
 
@@ -242,13 +357,30 @@ class CollapsibleCard(ThemedCard):
         """The body layout where card content should be added."""
         return self._body_layout
 
+    def set_toggle_guard(self, fn) -> None:
+        """Register a guard ``fn(card, want_collapse: bool) -> bool``.
+
+        ``fn`` is called whenever the user (or code) requests a collapse. Return
+        ``False`` to refuse the collapse (the card stays expanded). The user's
+        own ``toggle`` button then appears to "do nothing".
+        """
+        self._toggle_guard = fn
+
     def toggle(self):
-        """Toggle the collapsed state."""
+        """Toggle the collapsed state (subject to the toggle guard)."""
         self.setCollapsed(not self._collapsed)
 
     def setCollapsed(self, collapsed: bool):
-        """Programmatically expand or collapse the body."""
+        """Programmatically expand or collapse the body.
+
+        A collapse request is refused (and silently ignored) when the registered
+        ``toggle_guard`` returns ``False`` — used to keep at least one card open.
+        """
         if self._collapsed == collapsed:
+            return
+        if collapsed and self._toggle_guard is not None and not self._toggle_guard(self, True):
+            # Refused: this is the last expanded card in its group. Do nothing
+            # so the toggle button appears unresponsive, as required.
             return
         self._collapsed = collapsed
         if collapsed:

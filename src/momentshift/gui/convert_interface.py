@@ -53,11 +53,8 @@ class ConvertInterface(InterfaceBase):
         vb.addWidget(self.dropArea)
 
         tools = QHBoxLayout()
-        self.addFilesBtn = ghost_btn(tr("convert.add.files"), icon=FIF.ADD)
-        self.addFilesBtn.clicked.connect(self._pick_files)
         self.addFolderBtn = ghost_btn(tr("convert.add.folder"), icon=FIF.FOLDER_ADD)
         self.addFolderBtn.clicked.connect(self._pick_folder)
-        tools.addWidget(self.addFilesBtn)
         tools.addWidget(self.addFolderBtn)
         vb.addLayout(tools)
         self.vbox.addWidget(card)
@@ -163,6 +160,10 @@ class ConvertInterface(InterfaceBase):
         self._render_staging()
         self._refresh_format_grid()
         self._update_controls()
+        # Cards stay top-aligned; extra vertical space is absorbed by this spacer
+        # so a collapsed/short layout never stretches a card to fill the window.
+        self.vbox.addStretch(1)
+        self._collapse_ready = True
         self.retheme()
 
     # -- helpers ----------------------------------------------------------
@@ -170,6 +171,7 @@ class ConvertInterface(InterfaceBase):
         title_text = tr(title_key)
         sub_text = tr(subtitle_key) if subtitle_key else ""
         card = CollapsibleCard(title_text, sub_text, self)
+        self.register_collapsible(card)
         return card, card.body, card.titleLabel
 
     def _scroll(self) -> QScrollArea:
@@ -421,7 +423,6 @@ class ConvertInterface(InterfaceBase):
         self.ffmpegCard.retranslateUi()
         self.dropArea.retranslate(
             tr("convert.drop.title"), tr("convert.drop.hint"), tr("convert.drop.formats"))
-        self.addFilesBtn.setText(tr("convert.add.files"))
         self.addFolderBtn.setText(tr("convert.add.folder"))
         self.addQueueBtn.setText(tr("convert.queue.add", n=len(self._staged)))
         self.suffixEdit.setPlaceholderText(tr("convert.output.suffix.ph"))

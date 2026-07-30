@@ -1,4 +1,9 @@
-"""Drag-and-drop / click-to-pick input zone, shared by Convert/Compress/Upscale."""
+"""Drag-and-drop / click-to-pick input zone, shared by Convert/Compress/Upscale.
+
+Only the inner dashed zone changes colour on press (and restores on release);
+the surrounding card itself never changes colour, so a click feels like a
+button press on the drop zone — not a full-card flash.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,10 @@ from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout
 from qfluentwidgets import FluentIcon as FIF, StrongBodyLabel, CaptionLabel, isDarkTheme
 
 from ..core.qt_compat import Signal, QDragEnterEvent, QDropEvent
-from .theme import ThemedCard, muted_text, accent_name
+from .theme import (
+    ThemedCard, muted_text, accent_name, surface, surface_pressed, border_color,
+    placeholder_text,
+)
 
 
 class DropArea(ThemedCard):
@@ -22,6 +30,7 @@ class DropArea(ThemedCard):
         self.setBorderRadius(14)
         self.setAcceptDrops(True)
         self._hover = False
+        self._pressed = False
 
         self.inner = QWidget(self)
         self.inner.setObjectName("dropInner")
@@ -55,14 +64,28 @@ class DropArea(ThemedCard):
         self.retheme()
 
     # -- theming ----------------------------------------------------------
+    def _normalBackgroundColor(self):
+        # The card itself stays a stable surface colour — only ``inner`` reacts.
+        return surface()
+
+    def _hoverBackgroundColor(self):
+        return surface()
+
+    def _pressedBackgroundColor(self):
+        return surface()
+
     def retheme(self):
-        color = (QColor(120, 120, 120) if not isDarkTheme()
-                 else QColor(175, 175, 175))
-        self.iconLabel.setPixmap(FIF.FOLDER_ADD.icon(color).pixmap(42, 42))
-        border = accent_name() if self._hover else muted_text()
+        self.iconLabel.setPixmap(
+            FIF.FOLDER_ADD.icon(QColor(placeholder_text())).pixmap(42, 42))
+        self._apply_style()
+
+    def _apply_style(self) -> None:
+        """Repaint the inner dashed zone (border + press background)."""
+        border = accent_name() if self._hover else border_color()
+        bg = surface_pressed().name() if self._pressed else surface().name()
         self.inner.setStyleSheet(
             f"#dropInner{{ border: 2px dashed {border}; "
-            f"border-radius: 12px; background: transparent; }}"
+            f"border-radius: 12px; background: {bg}; }}"
         )
 
     # -- text -------------------------------------------------------------
@@ -77,19 +100,27 @@ class DropArea(ThemedCard):
     # -- interaction ------------------------------------------------------
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
+        self._pressed = True
+        self._apply_style()
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self._pressed = False
+        self._apply_style()
         self.clicked.emit()
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             self._hover = True
-            self.retheme()
+            self._apply_style()
         else:
             event.ignore()
 
     def dragLeaveEvent(self, event):
         self._hover = False
-        self.retheme()
+        self._pressed = False
+        self._apply_style()
         super().dragLeaveEvent(event)
 
     def dragMoveEvent(self, event):
@@ -100,7 +131,8 @@ class DropArea(ThemedCard):
 
     def dropEvent(self, event: QDropEvent):
         self._hover = False
-        self.retheme()
+        self._pressed = False
+        self._apply_style()
         paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
         if paths:
             event.acceptProposedAction()
