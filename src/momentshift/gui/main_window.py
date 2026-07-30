@@ -1,5 +1,20 @@
-"""Application main window (FluentWindow) wiring navigation + theme + i18n."""
+"""Application main window (FluentWindow) wiring navigation + theme + i18n.
 
+v0.2.5 startup optimization
+----------------------------
+Every sub-interface (including the home Convert view) is built *lazily* — after
+the window and its splash have already painted. The heavy ``qfluentwidgets``
+imports for each screen are also deferred until that moment, so the pre-show
+import chain stays light and the window appears instantly ("秒速加载").
+
+Theme switching restarts the process (deferred, so the current event settles
+first). Because startup is now instant, the restart is seamless and guarantees
+the whole UI re-themes correctly — this is what fixes the settings-page
+background not following light<->dark (#5) and gives an instant switch (#2).
+Language switching stays in-process (it is already instant).
+"""
+
+import importlib
 from PyQt6.QtCore import QTimer
 
 from ..core.qt_compat import QApplication, QIcon, QSize
@@ -9,7 +24,6 @@ from qfluentwidgets import (
     FluentIcon as FIF,
     SplashScreen,
     SystemThemeListener,
-    setTheme,
     Theme,
 )
 from ..core.config import cfg
@@ -17,74 +31,78 @@ from ..i18n.translator import tr, translator, LocaleKey
 from qfluentwidgets import ConfigItem
 from qfluentwidgets import qconfig
 from .theme import LIGHT_BG, DARK_BG
-from .convert_interface import ConvertInterface
-from .compress_interface import CompressInterface
-from .upscale_interface import UpscaleInterface
-from .setting_interface import SettingInterface
-from .about_interface import AboutInterface
 
 
 class MainWindow(FluentWindow):
     def __init__(self, manager):
         super().__init__()
         self.manager = manager
+
+        # Apply the saved language BEFORE the window paints so the first frame
+        # already shows the right strings (theme is applied in __main__).
+        translator.set_locale(LocaleKey(cfg.language.value))
         self.initWindow()
 
         self.themeListener = SystemThemeListener(self)
 
-        # Build the default (Convert) view eagerly so the window has content
-        # the moment it appears. The other screens are constructed lazily after
-        # the first paint (see _build_lazy) so startup stays instant.
-        self.convertInterface = ConvertInterface(manager, self)
-        self.navigationInterface.setAcrylicEnabled(True)
-        self.addSubInterface(self.convertInterface, FIF.HOME, tr("nav.convert"))
-
+        # All sub-interfaces start as None and are built lazily (see _bootstrap /
+        # _build_lazy). Storing them None also lets _all_interfaces() skip any
+        # that haven't been constructed yet.
+        self.convertInterface = None
         self.compressInterface = None
         self.upscaleInterface = None
         self.settingInterface = None
         self.aboutInterface = None
+        # (attr, module, class, icon, title_key, position) — module/class are
+        # strings so the heavy imports are deferred past the first paint.
         self._lazy = [
-            ("compress", CompressInterface, FIF.PHOTO, "nav.compress", None),
-            ("upscale", UpscaleInterface, FIF.ZOOM, "nav.upscale", None),
-            ("settings", SettingInterface, FIF.SETTING, "nav.settings", NavigationItemPosition.BOTTOM),
-            ("about", AboutInterface, FIF.INFO, "nav.about", NavigationItemPosition.BOTTOM),
+            ("compress", "compress_interface", "CompressInterface", FIF.PHOTO, "nav.compress", None),
+            ("upscale", "upscale_interface", "UpscaleInterface", FIF.ZOOM, "nav.upscale", None),
+            ("settings", "setting_interface", "SettingInterface", FIF.SETTING, "nav.settings", NavigationItemPosition.BOTTOM),
+            ("about", "about_interface", "AboutInterface", FIF.INFO, "nav.about", NavigationItemPosition.BOTTOM),
         ]
 
-        self.splashScreen.finish()
         self.themeListener.start()
         self._connect_config()
-        # Apply the saved language + theme immediately (config is loaded before
-        # the signal connections exist, so valueChanged never fires on startup).
-        translator.set_locale(LocaleKey(cfg.language.value))
-        self.convertInterface.retranslateUi()
-        self._on_theme(cfg.theme.value)
-
-        # Defer building the secondary screens a few frames so the event loop is
-        # free and the window is responsive immediately.
-        for i, spec in enumerate(self._lazy):
-            QTimer.singleShot(20 * (i + 1), lambda s=spec: self._build_lazy(*s))
+        # Defer ALL interface construction until after the first paint so the
+        # window (and its splash) is on screen immediately.
+        QTimer.singleShot(0, self._bootstrap)
 
     # -- config signals --------------------------------------------------
     def _connect_config(self):
         cfg.language.valueChanged.connect(self._on_language)
-        cfg.theme.valueChanged.connect(self._on_theme)
-        # Re-apply custom (non-qfluentwidgets) styles whenever the effective
-        # theme changes — this also fires in "auto" mode when the OS theme
-        # flips, which cfg.theme.valueChanged alone would miss.
-        qconfig.themeChanged.connect(self._retheme_all)
+        # Theme change => restart the app so the whole UI re-themes instantly
+        # and correctly (v0.2.5 #2/#5). The saved theme is applied at startup
+        # in __main__, so this slot only fires on a real user change — never at
+        # launch (loading config does not emit valueChanged).
+        cfg.theme.valueChanged.connect(self._restart_app)
         # Auto-save every config item change so users don't lose settings
-        # (e.g. theme switched from "auto" to "dark").
+        # (e.g. theme switched, language switched, ...).
         self._save_config_slot = lambda: qconfig.save()
         for name in dir(cfg.__class__):
             attr = getattr(cfg.__class__, name)
             if isinstance(attr, ConfigItem):
                 attr.valueChanged.connect(self._save_config_slot)
 
-    def _build_lazy(self, name, cls, icon, title_key, position):
+    def _bootstrap(self):
+        """Build the Convert view right after the first paint."""
+        from .convert_interface import ConvertInterface
+        self.convertInterface = ConvertInterface(self.manager, self)
+        self.navigationInterface.setAcrylicEnabled(True)
+        self.addSubInterface(self.convertInterface, FIF.HOME, tr("nav.convert"))
+        self.convertInterface.retranslateUi()
+        self.splashScreen.finish()
+        # Build the secondary screens a few frames later so the UI stays
+        # responsive and the splash clears as soon as the home view is ready.
+        for i, spec in enumerate(self._lazy):
+            QTimer.singleShot(20 * (i + 1), lambda s=spec: self._build_lazy(*s))
+
+    def _build_lazy(self, name, mod, clsname, icon, title_key, position):
         """Construct a secondary screen on demand and register its nav item."""
         if getattr(self, name + "Interface", None) is not None:
             return
-        iface = cls(self)
+        module = importlib.import_module("momentshift.gui." + mod)
+        iface = getattr(module, clsname)(self)
         setattr(self, name + "Interface", iface)
         if position is not None:
             self.addSubInterface(iface, icon, tr(title_key), position=position)
@@ -101,16 +119,34 @@ class MainWindow(FluentWindow):
                 out.append(iface)
         return out
 
-    def _retheme_all(self):
-        for iface in self._all_interfaces():
-            iface.retheme()
-
     def _on_language(self, value):
         translator.set_locale(LocaleKey(value))
         self.retranslate_all()
 
-    def _on_theme(self, value):
-        setTheme({"auto": Theme.AUTO, "light": Theme.LIGHT, "dark": Theme.DARK}.get(value, Theme.AUTO))
+    # -- theme switch => restart ----------------------------------------
+    def _restart_app(self):
+        """Schedule a process restart (deferred so the current event settles)."""
+        QTimer.singleShot(0, self._do_restart)
+
+    def _do_restart(self):
+        try:
+            qconfig.save()
+        except Exception:
+            pass
+        try:
+            self.themeListener.terminate()
+            self.themeListener.deleteLater()
+        except Exception:
+            pass
+        import os
+        import sys
+        if getattr(sys, "frozen", False):
+            args = [sys.executable] + sys.argv[1:]
+        else:
+            args = [sys.executable, "-m", "momentshift"] + sys.argv[1:]
+        # Replace the current process image with a fresh one. Because startup
+        # is instant, this feels like an in-place UI refresh (#2/#5).
+        os.execv(sys.executable, args)
 
     def retranslate_all(self):
         for iface in self._all_interfaces():
@@ -133,12 +169,12 @@ class MainWindow(FluentWindow):
 
     # -- window ----------------------------------------------------------
     def initWindow(self):
-        # Portrait phone-like aspect ratio, enlarged per v0.1.5 request.
-        self.resize(450, 1000)
-        self.setMinimumWidth(360)
+        # Portrait phone-like aspect ratio. v0.2.5: widen to 525 (525 x 1000).
+        self.resize(525, 1000)
+        self.setMinimumWidth(420)
         # Disable Mica: it makes the window background transparent on Win11 and
         # the content area inherits a grey-ish Mica material instead of the dark
-        # theme color. With Mica off, FluentWindow paints the solid custom bg.
+        # theme colour. With Mica off, FluentWindow paints the solid custom bg.
         self.setMicaEffectEnabled(False)
         # Give the window (and the content area behind transparent scroll
         # views) a deterministic theme background instead of relying on the
@@ -161,6 +197,9 @@ class MainWindow(FluentWindow):
 
     def closeEvent(self, event):
         qconfig.save()
-        self.themeListener.terminate()
-        self.themeListener.deleteLater()
+        try:
+            self.themeListener.terminate()
+            self.themeListener.deleteLater()
+        except Exception:
+            pass
         super().closeEvent(event)

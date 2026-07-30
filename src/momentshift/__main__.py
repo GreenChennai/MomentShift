@@ -9,8 +9,9 @@ import traceback
 # imports (``from .core ...``) raise "attempted relative import with no known
 # parent package". Absolute imports work both frozen and via ``python -m momentshift``.
 from momentshift.core.logger import init_logging, get_logger
+from PyQt6.QtGui import QColor
 from momentshift.core.qt_compat import QApplication, Qt
-from qfluentwidgets import setTheme, Theme
+from qfluentwidgets import setTheme, Theme, setThemeColor
 from momentshift.core.config import cfg
 from momentshift.i18n.translator import translator, LocaleKey
 from momentshift.core.queue import ConversionManager
@@ -71,6 +72,11 @@ def main():
     # Apply saved preferences before the window appears.
     theme_map = {"auto": Theme.AUTO, "light": Theme.LIGHT, "dark": Theme.DARK}
     setTheme(theme_map.get(cfg.theme.value, Theme.AUTO))
+    # v0.2.5: unify the global accent colour to GitHub green (#238636). This
+    # recolours every qfluentwidgets primary element (PrimaryPushButton,
+    # SwitchButton, ComboBox selection, ...) — replacing the old teal default
+    # (#009FAA) and its derived variants in one call.
+    setThemeColor(QColor("#238636"))
     translator.set_locale(LocaleKey(cfg.language.value))
 
     manager = ConversionManager()

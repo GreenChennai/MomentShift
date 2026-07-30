@@ -125,18 +125,21 @@ def main():
     step("collapse guard refuses last-expanded + allows initial/build-time collapse")
 
     # ------------------------------------------------------------------ #1
-    step("MainWindow constructs with lazily-built secondary interfaces")
+    step("MainWindow constructs with lazily-built interfaces (v0.2.5: all lazy)")
     try:
         from momentshift.gui.main_window import MainWindow
         win = MainWindow(manager)
-        # Only ConvertInterface is eagerly built; the rest are pending QTimer.
-        assert win.convertInterface is not None
-        # Flush the lazy timers so the other interfaces actually build.
+        # v0.2.5: ALL interfaces are lazy — Convert builds on the next event
+        # loop tick, the rest a few frames later. Construction itself is instant.
+        assert win.convertInterface is None
+        assert win.compressInterface is None
+        # Flush the bootstrap timer so Convert actually builds after first paint.
         from PyQt6.QtCore import QTimer
         for _ in range(8):
             QTimer.singleShot(0, lambda: None)
         app.processEvents()
-        step("MainWindow constructed; lazy interfaces scheduled")
+        assert win.convertInterface is not None, "Convert should build after bootstrap"
+        step("MainWindow constructed; Convert built lazily after first paint")
     except SystemExit as se:
         # Sandbox hard-kill path guarded; construction itself is exercised.
         if se.code not in (0, None):

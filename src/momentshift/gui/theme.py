@@ -42,7 +42,7 @@ _PALETTE_LIGHT = {
     "text900": "#212121", "text600": "#757575", "text500": "#9E9E9E",
     "text400": "#BDBDBD",
     "border300": "#E0E0E0", "border400": "#BDBDBD",
-    "brand": "#2F98FF", "blue900": "#2270F4",
+    "brand": "#238636", "blue900": "#2270F4",
     "red500": "#FF7279", "red900": "#B4324B", "green500": "#3EB68F",
 }
 _PALETTE_DARK = {
@@ -51,7 +51,7 @@ _PALETTE_DARK = {
     "text900": "#EFEFEF", "text600": "#C7C7C7", "text500": "#767577",
     "text_primary": "#878A91", "text_secondary": "#74777E", "text400": "#8B8B93",
     "border300": "#575757", "border_default": "#1A1835",
-    "brand": "#2F98FF", "blue900": "#4AAEFF", "accent": "#030036",
+    "brand": "#238636", "blue900": "#4AAEFF", "accent": "#030036",
     "red500": "#E46D70", "red900": "#F6BFBF", "green500": "#27B17D",
     "success": "#A3D4AD",
 }
