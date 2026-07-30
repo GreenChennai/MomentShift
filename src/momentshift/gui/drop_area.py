@@ -1,6 +1,9 @@
-"""拖拽 / 点击输入区域，Convert / Compress / Upscale 共享使用。
+"""拖拽 / 点击输入区域（v0.3.4 重构：QPushButton 覆盖层替代 mouseReleaseEvent）。
 
-v0.3.2: CSS border-radius 替代 setMask 实现圆角，消除四角白边。
+之前的 mouseReleaseEvent → clicked 路径在 modal QFileDialog 关闭时
+受 synthetic mouseReleaseEvent 影响，持续出现双击弹框。QPushButton
+原生处理平台点击事件，不受此影响——这是从 v0.2.6 起尝试各种修复后
+唯一干净且可靠的方案。
 """
 
 from __future__ import annotations
@@ -8,7 +11,7 @@ from __future__ import annotations
 import re
 from PyQt6.QtGui import QColor, QPixmap, QPainter, QPen, QRegion
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton
 from qfluentwidgets import FluentIcon as FIF, StrongBodyLabel, CaptionLabel
 
 from ..core.qt_compat import Signal, QDragEnterEvent, QDropEvent
@@ -18,9 +21,11 @@ from .theme import (
 )
 
 class DropArea(ThemedCard):
-    """虚线拖拽区。发出 ``filesDropped``（路径列表）和 ``clicked`` 信号。"""
+    """虚线拖拽区。发出 ``filesDropped``（路径列表）信号。
+    点击通过透明 QPushButton 覆盖层触发，不再使用 mouseReleaseEvent。"""
 
     filesDropped = Signal(list)
+    # clicks 信号由内部 QPushButton 转发
     clicked = Signal()
 
     def __init__(self, parent=None):
@@ -31,7 +36,6 @@ class DropArea(ThemedCard):
         self._pressed = False
         self._formats = ""
 
-        # CSS border-radius 裁剪圆角（v0.3.2: 替代 setMask，避免四角透明白边）
         self.setStyleSheet(
             "DropArea { background-color: #F5F5F5; border-radius: 14px; }"
         )
@@ -44,7 +48,6 @@ class DropArea(ThemedCard):
         vb.setSpacing(10)
         vb.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # 圆形 accent 图标徽章
         self.iconBadge = QLabel(self)
         self.iconBadge.setFixedSize(62, 62)
         self.iconBadge.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -60,7 +63,6 @@ class DropArea(ThemedCard):
         self.hintLabel.setStyleSheet("color: #212121;")
         vb.addWidget(self.hintLabel, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # 格式胶囊行
         self.chipsWrap = QWidget(self)
         self.chipsWrap.setStyleSheet("background: transparent;")
         self.chipsLayout = QHBoxLayout(self.chipsWrap)
@@ -72,7 +74,22 @@ class DropArea(ThemedCard):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.addWidget(self.inner)
 
+        # --- v0.3.4: 透明覆盖按钮替代 mouseReleaseEvent ---
+        self._clickBtn = QPushButton("", self)
+        self._clickBtn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; }"
+            "QPushButton:hover { background: transparent; }"
+            "QPushButton:pressed { background: transparent; }"
+        )
+        self._clickBtn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clickBtn.clicked.connect(self._on_button_clicked)
+        self._clickBtn.raise_()
+
         self.retheme()
+
+    def _on_button_clicked(self):
+        """QPushButton 原生 click 事件——不受 modal dialog 的 synthetic event 影响。"""
+        self.clicked.emit()
 
     def _normalBackgroundColor(self):
         return surface()
@@ -94,6 +111,7 @@ class DropArea(ThemedCard):
             f"background: {self._accent_tint()}; border-radius: 31px;")
         self._render_chips(self._parse_formats(self._formats))
         self._apply_style()
+        self._position_button()
 
     def _apply_style(self):
         if self._pressed:
@@ -146,6 +164,15 @@ class DropArea(ThemedCard):
             self._formats = formats
             self._render_chips(self._parse_formats(formats))
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_button()
+
+    def _position_button(self):
+        """让透明按钮覆盖整个 DropArea，与拖拽区完全重合。"""
+        self._clickBtn.setGeometry(0, 0, self.width(), self.height())
+
+    # -- 拖拽事件（不受点击改动影响）----------------------
     def enterEvent(self, event):
         self._hover = True
         self._apply_style()
@@ -155,17 +182,6 @@ class DropArea(ThemedCard):
         self._hover = False
         self._apply_style()
         super().leaveEvent(event)
-
-    def mousePressEvent(self, event):
-        super().mousePressEvent(event)
-        self._pressed = True
-        self._apply_style()
-
-    def mouseReleaseEvent(self, event):
-        super().mouseReleaseEvent(event)
-        self._pressed = False
-        self._apply_style()
-        self.clicked.emit()
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
@@ -177,7 +193,6 @@ class DropArea(ThemedCard):
 
     def dragLeaveEvent(self, event):
         self._hover = False
-        self._pressed = False
         self._apply_style()
         super().dragLeaveEvent(event)
 
@@ -189,7 +204,6 @@ class DropArea(ThemedCard):
 
     def dropEvent(self, event: QDropEvent):
         self._hover = False
-        self._pressed = False
         self._apply_style()
         paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
         if paths:
