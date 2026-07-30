@@ -405,6 +405,7 @@ class CompressInterface(InterfaceBase):
     def _build_oxipng(self):
         grp = self._tool_opts["oxipng"]
         w = QWidget()
+        w.setStyleSheet("background: transparent;")
         ly = QVBoxLayout(w)
         ly.setContentsMargins(0, 0, 0, 0)
         ly.setSpacing(6)
@@ -432,6 +433,7 @@ class CompressInterface(InterfaceBase):
     def _build_optipng(self):
         grp = self._tool_opts["optipng"]
         w = QWidget()
+        w.setStyleSheet("background: transparent;")
         ly = QVBoxLayout(w)
         ly.setContentsMargins(0, 0, 0, 0)
         ly.setSpacing(6)
@@ -454,6 +456,7 @@ class CompressInterface(InterfaceBase):
     def _build_mozjpeg(self):
         grp = self._tool_opts["mozjpeg"]
         w = QWidget()
+        w.setStyleSheet("background: transparent;")
         ly = QVBoxLayout(w)
         ly.setContentsMargins(0, 0, 0, 0)
         ly.setSpacing(6)

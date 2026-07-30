@@ -1,7 +1,8 @@
-"""转换设置弹窗（v0.3.4 美化）。
-- 方形格式卡片按钮替代 ComboBox
-- 清空按钮 → 绿底白字
-- 高级设置开关右对齐，默认关闭
+"""转换设置弹窗（v0.3.5 卡片化 + 正方形格式按钮 + 开关合并）。
+
+- 选择目标格式 → CollapsibleCard（可折叠）
+- 高级设置 → CollapsibleCard（折叠按钮即总开关）
+- 格式卡片：正方形、放大、浅绿默认/深绿选中 + 描边
 """
 
 from pathlib import Path
@@ -12,30 +13,30 @@ from PyQt6.QtWidgets import (
     QDialog, QPushButton,
 )
 from qfluentwidgets import (
-    FluentIcon as FIF, SwitchButton, FlowLayout,
+    FluentIcon as FIF, FlowLayout,
 )
 from ..core.config import cfg
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, primary_btn, ghost_btn, icon_btn,
     muted_text, accent_name, surface, scrollbar_qss,
-    accent_color,
+    accent_color, CollapsibleCard,
 )
 from .advanced_panel import AdvancedPanel
 
-# 格式卡片按钮样式
+# 格式卡片按钮样式（v0.3.5：正方形、放大、浅绿默认/深绿选中）
 _FMT_CARD_CSS = (
     "QPushButton{{"
-    "  background: #f5f5f5; border: 1px solid #ddd; border-radius: 8px;"
-    "  color: #333; font-weight: 700; font-size: 13px;"
-    "  min-width: 70px; min-height: 54px;"
+    "  background: #e8f5e9; border: 2px solid #c8e6c9; border-radius: 10px;"
+    "  color: #2e7d32; font-weight: 700; font-size: 16px;"
+    "  min-width: 80px; min-height: 80px; max-width: 80px; max-height: 80px;"
     "}}"
-    "QPushButton:hover{{ border-color: #238636; background: #effff2; }}"
+    "QPushButton:hover{{ background: #c8e6c9; border-color: #238636; }}"
     "QPushButton:checked{{"
-    "  border-color: #238636; background: #238636; color: #fff;"
+    "  border-color: #238636; border-width: 2px; background: #238636;"
+    "  color: #fff;"
     "}}"
 )
-
 
 class ConvertSetupDialog(QDialog):
     """单类别格式 + 高级选项 + 待处理列表。"""
@@ -62,7 +63,6 @@ class ConvertSetupDialog(QDialog):
         self._render_staging()
         self._update_confirm()
 
-    # -- 构建 UI -----------------------------------------------------------
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 18, 20, 18)
@@ -84,7 +84,24 @@ class ConvertSetupDialog(QDialog):
         body.setSpacing(16)
         root.addLayout(body, 1)
 
-        # --- 左栏：待处理文件 ---
+        # -- 左栏：待处理文件 --
+        self._build_left(body)
+
+        # -- 右栏：格式卡片 + 高级设置（CollapsibleCards）--
+        self._build_right(body)
+
+        # 底部按钮
+        bar = QHBoxLayout()
+        bar.addStretch(1)
+        self.cancelBtn = ghost_btn(tr("convert.setup.cancel"), icon=FIF.CLOSE)
+        self.cancelBtn.clicked.connect(self.reject)
+        self.confirmBtn = primary_btn(tr("convert.setup.confirm"), icon=FIF.UP)
+        self.confirmBtn.clicked.connect(self._on_confirm)
+        bar.addWidget(self.cancelBtn)
+        bar.addWidget(self.confirmBtn)
+        root.addLayout(bar)
+
+    def _build_left(self, body):
         left_card = ThemedCard(self)
         left_card.setFixedWidth(320)
         left_lay = QVBoxLayout(left_card)
@@ -94,11 +111,9 @@ class ConvertSetupDialog(QDialog):
         self.stagingTitle = QLabel(tr("convert.setup.staging"))
         self.stagingTitle.setStyleSheet("font-weight: 700; color: #212121;")
         left_lay.addWidget(self.stagingTitle)
-
         self.stagingCount = QLabel("")
         self.stagingCount.setStyleSheet(f"color: {muted_text()}; font-size: 12px;")
         left_lay.addWidget(self.stagingCount)
-
         self.stagingScroll = QScrollArea()
         self.stagingScroll.setWidgetResizable(True)
         self.stagingScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -113,33 +128,28 @@ class ConvertSetupDialog(QDialog):
         self.stagingLayout.addStretch(1)
         self.stagingScroll.setWidget(self.stagingList)
         left_lay.addWidget(self.stagingScroll, 1)
-
-        # 清空按钮（v0.3.4：绿底白字）
         self.clearBtn = QPushButton(tr("convert.clear"))
         self.clearBtn.clicked.connect(self._clear_all)
         self.clearBtn.setStyleSheet(
-            "QPushButton{"
-            "  background: #238636; color: #FFFFFF; border: none; border-radius: 8px;"
-            "  padding: 8px 20px; font-weight: 600; font-size: 13px;"
-            "}"
+            "QPushButton{ background: #238636; color: #FFFFFF; border: none; border-radius: 8px;"
+            " padding: 8px 20px; font-weight: 600; font-size: 13px; }"
             "QPushButton:hover{ background: #2ea043; }"
             "QPushButton:pressed{ background: #196c2e; }")
         left_lay.addWidget(self.clearBtn)
         body.addWidget(left_card)
 
-        # --- 右栏：格式 + 高级设置 ---
-        right_card = ThemedCard(self)
-        right_lay = QVBoxLayout(right_card)
-        right_lay.setContentsMargins(16, 14, 16, 14)
-        right_lay.setSpacing(10)
+    def _build_right(self, body):
+        right_wrap = QWidget()
+        right_lay = QVBoxLayout(right_wrap)
+        right_lay.setContentsMargins(0, 0, 0, 0)
+        right_lay.setSpacing(12)
 
-        # 目标格式（v0.3.4：方形卡片按钮替代 ComboBox）
-        fmt_title = QLabel(tr("convert.setup.format"))
-        fmt_title.setStyleSheet("font-weight: 700; color: #212121;")
-        right_lay.addWidget(fmt_title)
-
+        # ---- 选择目标格式（CollapsibleCard）----
+        fmt_card, fmt_vb, _ = self._fmt_card = CollapsibleCard(
+            tr("convert.setup.format"), "", self, collapsed=False), None, None
+        fmt_card.body.setSpacing(10)
         self.fmtGrid = FlowLayout()
-        self.fmtGrid.setSpacing(8)
+        self.fmtGrid.setSpacing(10)
         self._fmt_list = self._load_formats(self._category)
         self._fmt_btns = {}
         default = self._selection.get(self._category, "").upper()
@@ -153,52 +163,33 @@ class ConvertSetupDialog(QDialog):
             self.fmtGrid.addWidget(btn)
         fmt_w = QWidget()
         fmt_w.setLayout(self.fmtGrid)
-        right_lay.addWidget(fmt_w)
+        fmt_card.body.addWidget(fmt_w)
+        right_lay.addWidget(fmt_card)
 
-        # 高级设置（v0.3.4：开关右对齐，默认关闭）
-        adv_row = QHBoxLayout()
-        adv_title = QLabel(tr("convert.setup.advanced"))
-        adv_title.setStyleSheet("font-weight: 700; color: #212121;")
-        adv_row.addWidget(adv_title, 1)
-        adv_row.addStretch()
-        self.advSwitch = SwitchButton()
-        self.advSwitch.setChecked(False)
-        self.advSwitch.setOnText(tr("common.on"))
-        self.advSwitch.setOffText(tr("common.off"))
-        self.advSwitch.checkedChanged.connect(self._on_adv_toggle)
-        adv_row.addWidget(self.advSwitch)
-        right_lay.addLayout(adv_row)
-
-        # 转换后自动压缩开关
+        # ---- 高级设置（CollapsibleCard，折叠=关闭高级）----
+        adv_card = CollapsibleCard(tr("convert.setup.advanced"), "", self, collapsed=True)
+        adv_card.body.setSpacing(8)
+        self.advancedPanel = AdvancedPanel(self)
+        self.advancedPanel.refresh([self._category])
+        adv_card.body.addWidget(self.advancedPanel)
+        # 转换后自动压缩
         self.postCompressSwitch = SwitchButton(tr("convert.post_compress"))
         self.postCompressSwitch.setChecked(False)
         self.postCompressSwitch.setOnText(tr("common.on"))
         self.postCompressSwitch.setOffText(tr("common.off"))
-        right_lay.addWidget(self.postCompressSwitch)
+        adv_card.body.addWidget(self.postCompressSwitch)
+        right_lay.addWidget(adv_card)
+        self._adv_card = adv_card
 
-        self.advancedPanel = AdvancedPanel(self)
-        self.advancedPanel.refresh([self._category])
-        self.advancedPanel.hide()  # 默认关闭
-        right_lay.addWidget(self.advancedPanel, 1)
+        right_lay.addStretch(1)
 
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
-        right_scroll.setWidget(right_card)
+        right_scroll.setWidget(right_wrap)
         right_scroll.setStyleSheet(
             f"QScrollArea{{ border: none; background: transparent; }} {scrollbar_qss()}")
         right_scroll.viewport().setStyleSheet("background: transparent;")
         body.addWidget(right_scroll, 1)
-
-        # 底部按钮
-        bar = QHBoxLayout()
-        bar.addStretch(1)
-        self.cancelBtn = ghost_btn(tr("convert.setup.cancel"), icon=FIF.CLOSE)
-        self.cancelBtn.clicked.connect(self.reject)
-        self.confirmBtn = primary_btn(tr("convert.setup.confirm"), icon=FIF.UP)
-        self.confirmBtn.clicked.connect(self._on_confirm)
-        bar.addWidget(self.cancelBtn)
-        bar.addWidget(self.confirmBtn)
-        root.addLayout(bar)
 
     def _load_formats(self, cat):
         from ..core.presets import TARGET_GROUPS
@@ -208,16 +199,12 @@ class ConvertSetupDialog(QDialog):
         for f, btn in self._fmt_btns.items():
             btn.setChecked(f == fmt)
 
-    def _on_adv_toggle(self, checked):
-        self.advancedPanel.setVisible(checked)
-
-    # -- 待处理列表 ----------------------------------------------------------
+    # -- 待处理列表 --
     def _render_staging(self):
         while self.stagingLayout.count():
             item = self.stagingLayout.takeAt(0)
             w = item.widget()
-            if w:
-                w.deleteLater()
+            if w: w.deleteLater()
         if not self._paths:
             empty = QLabel(tr("convert.setup.empty"))
             empty.setStyleSheet(f"color: {muted_text()}; padding: 30px 0;")
@@ -226,81 +213,58 @@ class ConvertSetupDialog(QDialog):
             self.stagingLayout.addStretch(1)
             self.stagingCount.setText("")
             return
-
         self.stagingCount.setText(tr("convert.staging.count", n=len(self._paths)))
         acc = accent_color().name()
         for i, p in enumerate(self._paths):
             row_w = QWidget()
-            if i % 2 == 0:
-                row_w.setStyleSheet("background: rgba(35,134,54,0.04); border-radius: 4px;")
-            else:
-                row_w.setStyleSheet("background: transparent; border-radius: 4px;")
+            row_w.setStyleSheet(
+                "background: rgba(35,134,54,0.04); border-radius: 4px;" if i % 2 == 0
+                else "background: transparent; border-radius: 4px;")
             hb = QHBoxLayout(row_w)
-            hb.setContentsMargins(8, 5, 4, 5)
-            hb.setSpacing(8)
-
+            hb.setContentsMargins(8, 5, 4, 5); hb.setSpacing(8)
             ext = Path(p).suffix.upper().lstrip(".")
             ext_lbl = QLabel(ext)
-            ext_lbl.setFixedWidth(42)
-            ext_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ext_lbl.setFixedWidth(42); ext_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             ext_lbl.setStyleSheet(
                 f"color: {acc}; font-weight: 700; font-size: 11px;"
                 f" background: rgba(35,134,54,0.08); border-radius: 3px; padding: 1px 4px;")
-
             name = QLabel(Path(p).name)
-            name.setStyleSheet("color: #333;")
-            name.setToolTip(p)
-            hb.addWidget(ext_lbl)
-            hb.addWidget(name, 1)
-
+            name.setStyleSheet("color: #333;"); name.setToolTip(p)
+            hb.addWidget(ext_lbl); hb.addWidget(name, 1)
             rm = icon_btn(FIF.DELETE, tr("convert.action.remove"))
             rm.setFixedSize(26, 26)
             rm.clicked.connect(lambda _, path=p: self._remove(path))
             hb.addWidget(rm)
-
             self.stagingLayout.insertWidget(self.stagingLayout.count() - 1, row_w)
         self.stagingLayout.addStretch(1)
 
     def _remove(self, path):
-        if path in self._paths:
-            self._paths.remove(path)
-        self._render_staging()
-        self._update_confirm()
+        if path in self._paths: self._paths.remove(path)
+        self._render_staging(); self._update_confirm()
 
     def _clear_all(self):
         self._paths.clear()
-        self._render_staging()
-        self._update_confirm()
+        self._render_staging(); self._update_confirm()
 
     def _update_confirm(self):
         self.confirmBtn.setEnabled(bool(self._paths))
 
-    # -- 确认 ---------------------------------------------------------------
     def _on_confirm(self):
-        if not self._paths:
-            return
+        if not self._paths: return
         mode = cfg.outputMode.value
         suffix = cfg.outputSuffix.value
         folder = cfg.outputFolder.value or ""
-        # 从格式按钮中获取当前选中的格式
         fmt_text = ""
         for f, btn in self._fmt_btns.items():
-            if btn.isChecked():
-                fmt_text = f.lower()
-                break
-        if not fmt_text:
-            fmt_text = self._fmt_list[0].lower() if self._fmt_list else "jpg"
+            if btn.isChecked(): fmt_text = f.lower(); break
+        if not fmt_text: fmt_text = self._fmt_list[0].lower() if self._fmt_list else "jpg"
         gpu = self._gpu()
-
         self.manager.add_files(
             self._paths, fmt_text,
-            folder if mode == "fixed" else None,
-            gpu, mode, suffix,
-        )
+            folder if mode == "fixed" else None, gpu, mode, suffix)
         self.accept()
 
     def get_selection(self):
         for f, btn in self._fmt_btns.items():
-            if btn.isChecked():
-                return {self._category: f.lower()}
+            if btn.isChecked(): return {self._category: f.lower()}
         return {}

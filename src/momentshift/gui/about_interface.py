@@ -102,8 +102,8 @@ class AboutInterface(InterfaceBase):
         env_vb.addWidget(env_sub)
         env_vb.addSpacing(14)
 
-        # FFmpeg 行
-        self._ff_row, self._ff_icon, self._ff_text, self._ff_status, \
+        # FFmpeg 行（v0.3.5：去图标）
+        self._ff_row, _, self._ff_text, self._ff_status, \
             self._ff_link, self._ff_btn, self._ff_prog = \
             self._build_env_row(FIF.VIDEO, "FFmpeg")
         env_vb.addWidget(self._ff_row)
@@ -111,8 +111,8 @@ class AboutInterface(InterfaceBase):
 
         env_vb.addSpacing(8)
 
-        # Real-ESRGAN 行
-        self._re_row, self._re_icon, self._re_text, self._re_status, \
+        # Real-ESRGAN 行（v0.3.5：去图标）
+        self._re_row, _, self._re_text, self._re_status, \
             self._re_link, self._re_btn, self._re_prog = \
             self._build_env_row(FIF.ZOOM, tr("about.env.upscaler"))
         env_vb.addWidget(self._re_row)
@@ -128,22 +128,13 @@ class AboutInterface(InterfaceBase):
         self.retheme()
 
     def _build_env_row(self, icon, name):
-        """构建单行���境状态组件。返回 (row, icon_label, text_label, status_label, link_btn, action_btn, progress_bar)。"""
+        """构建单行环境状态（v0.3.5：无图标，全宽）。"""
         row = QWidget()
         row.setObjectName("envRow")
         row.setStyleSheet(_ENV_ROW_NORMAL)
         hb = QHBoxLayout(row)
-        hb.setContentsMargins(12, 12, 12, 12)
+        hb.setContentsMargins(14, 12, 14, 12)
         hb.setSpacing(10)
-
-        # 图标
-        icon_lbl = QLabel()
-        icon_lbl.setPixmap(icon.icon(QColor(ACCENT_HEX)).pixmap(24, 24))
-        icon_lbl.setFixedSize(40, 40)
-        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_lbl.setStyleSheet(
-            f"background: rgba(35,134,54,0.08); border-radius: 8px;")
-        hb.addWidget(icon_lbl)
 
         # 名称 + 状态
         inner = QVBoxLayout()
@@ -175,7 +166,7 @@ class AboutInterface(InterfaceBase):
             "QProgressBar::chunk{ background: #238636; border-radius: 1px; }")
         prog.hide()
 
-        return row, icon_lbl, text_lbl, status_lbl, link_btn, action_btn, prog
+        return row, None, text_lbl, status_lbl, link_btn, action_btn, prog
 
     def _refresh_env(self):
         # FFmpeg

@@ -253,17 +253,20 @@ class ConvertInterface(InterfaceBase):
         self.manager.set_task_target(task_id, fmt)
 
     def _refresh_ff_status(self):
-        """刷新 FFmpeg 状态指示器。绿色圆点=已就绪，红色圆点=未找到。"""
-        from .theme import success_color, danger_color
+        """v0.3.5 美化：胶囊样式状态指示器。"""
         ready = self.manager.has_ffmpeg
         if ready:
-            c = success_color().name()
-            t = "● 已就绪"
-        else:
-            c = danger_color().name()
-            t = "● 不存在"
-        self._ff_status.setText(t)
-        self._ff_status.setStyleSheet(f"color: {c}; font-weight: 600; font-size: 12px;")
+            self._ff_status.setText("  ✓ 已就绪")
+            self._ff_status.setStyleSheet(
+                "QLabel{ color:#2ea043; font-weight:600; font-size:12px;"
+                " background:rgba(35,134,54,0.08); border:1px solid rgba(35,134,54,0.15);"
+                " border-radius: 6px; padding: 2px 10px; }")
+        if not ready:
+            self._ff_status.setText("  ✗ 不存在")
+            self._ff_status.setStyleSheet(
+                "QLabel{ color:#d32f2f; font-weight:600; font-size:12px;"
+                " background:rgba(211,47,47,0.06); border:1px solid rgba(211,47,47,0.12);"
+                " border-radius: 6px; padding: 2px 10px; }")
 
     def _on_ffmpeg_ready(self):
         """ffmpeg 就绪后刷新引擎并更新控件。"""

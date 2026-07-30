@@ -254,6 +254,10 @@ def main():
     _qfont = QFont("HarmonyOS Sans SC", 10)
     _qfont.setStyleHint(QFont.StyleHint.SansSerif)
     app.setFont(_qfont)
+    # 全局样式表强制字体 — 覆盖 qfluentwidgets 等库的内部字体设置
+    app.setStyleSheet(
+        "* { font-family: 'HarmonyOS Sans SC', 'FiraCode', 'Microsoft YaHei', sans-serif; }"
+    )
 
     # v0.3.2: 固定浅色主题，移除深色主题
     setTheme(Theme.LIGHT)

@@ -32,7 +32,7 @@ from .theme import (
 from .base import InterfaceBase
 from .drop_area import DropArea
 from .queue_widget import ProgressBar, StatusPill, human_size
-from .compare_widget import CompareWidget
+from .compare_window import CompareWindow
 
 # 放大模块支持的视频格式
 _VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".flv", ".wmv"}
@@ -462,8 +462,6 @@ class UpscaleInterface(InterfaceBase):
         # =====================================================================
         # 前后对比组件
         # =====================================================================
-        self.compareWidget = CompareWidget(self)
-        self.vbox.addWidget(self.compareWidget)
 
         self._update_controls()
         self.vbox.addStretch(1)
@@ -582,7 +580,12 @@ class UpscaleInterface(InterfaceBase):
     def _on_compare(self, item_id):
         item = self._items.get(item_id)
         if item:
-            self.compareWidget.set_paths(item["src"], item.get("out", ""))
+            self._show_compare(item["src"], item.get("out", ""))
+
+    def _show_compare(self, src, out):
+        """弹出 1280×720 放大前后对比窗口（v0.3.5）。"""
+        dlg = CompareWindow(src, out, parent=self.window())
+        dlg.exec()
 
     # =========================================================================
     # 任务运行管理（自管线程池循环）
@@ -673,7 +676,6 @@ class UpscaleInterface(InterfaceBase):
     def retheme(self):
         super().retheme()
         self.dropArea.retheme()
-        self.compareWidget._restyle()
 
     def retranslateUi(self):
         self.titleLabel.setText(tr("nav.upscale"))
