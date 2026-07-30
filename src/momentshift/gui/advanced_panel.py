@@ -205,6 +205,14 @@ class AdvancedPanel(QWidget):
         moz_l.addWidget(field_row(tr("advanced.strip"), strip2))
         ex.body_layout.addWidget(moz_grp)
 
+        # --- 根据后端选择显示/隐藏参数组 (v0.3.11 fix) ---
+        def _on_backend_change(val: str):
+            oxi_grp.setVisible(val in ("oxipng", "optipng"))
+            moz_grp.setVisible(val == "mozjpeg")
+        _on_backend_change(comp.get("backend", "pillow"))
+        backend.currentTextChanged.connect(
+            lambda t: _on_backend_change(backend._mapping.get(t, t)))
+
         return ex
     def _oxipng_ex(self, adv):
         grp = adv.setdefault("png_oxipng", {})
