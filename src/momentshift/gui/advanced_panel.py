@@ -129,132 +129,77 @@ class AdvancedPanel(QWidget):
         self.vbox.addWidget(ex)
         return ex
 
-    def _add_image(self):
+    def _add_image(self) -> ExpandWidget:
+        """v0.3.7 重构：复用压缩设置代码。压缩后端 + 质量 + 后端专用参数。"""
+        ex = ExpandWidget(tr("category.image"), expanded=True)
         adv = advanced.adv["image"]
+        if "compress" not in adv:
+            adv["compress"] = {"backend": "pillow", "level": 3, "interlace": False,
+                               "strip": "safe", "quality": 95, "progressive": False,
+                               "arithmetic": False}
+        comp = adv["compress"]
 
-        def build(layout):
-            # --- Compression backend dropdown ---
-            backend = _combo(
-                [(tr("advanced.compression.pillow"), "pillow"),
-                 ("oxipng", "oxipng"),
-                 ("OptiPNG", "optipng"),
-                 ("Mozilla JPEG", "mozjpeg")],
-                adv.get("compress_backend", "pillow"),
-                lambda v: adv.__setitem__("compress_backend", v),
-            )
-            layout.addWidget(field_row(tr("advanced.compression.backend"), backend, label_width=80))
+        # --- 压缩后端 ---
+        backend = _combo(
+            [(tr("advanced.compression.pillow"), "pillow"),
+             ("oxipng", "oxipng"),
+             ("OptiPNG", "optipng"),
+             ("Mozilla JPEG", "mozjpeg")],
+            comp.get("backend", "pillow"),
+            lambda v: comp.__setitem__("backend", v),
+        )
+        ex.body_layout.addWidget(field_row(tr("advanced.compression.backend"), backend, label_width=80))
 
-            # --- FFmpeg quality group ---
-            ffmpeg_group = QWidget()
-            fq = QVBoxLayout(ffmpeg_group)
-            fq.setContentsMargins(0, 0, 0, 0)
-            fq.setSpacing(6)
+        # --- 质量滑块 ---
+        q = QSlider(Qt.Orientation.Horizontal)
+        q.setRange(1, 100)
+        q.setValue(int(comp.get("quality", 95)))
+        q.valueChanged.connect(lambda v: comp.__setitem__("quality", v))
+        ex.body_layout.addWidget(field_row(tr("advanced.quality"), q, label_width=80))
 
-            q = QSlider(Qt.Orientation.Horizontal)
-            q.setRange(1, 100)
-            q.setValue(int(adv.get("quality", 100)))
-            q.valueChanged.connect(lambda v: adv.__setitem__("quality", v))
-            fq.addWidget(field_row(tr("advanced.quality"), q, label_width=80))
+        # --- oxipng / optipng 专用参数 ---
+        oxi_grp = QWidget()
+        oxi_grp.setStyleSheet("background: transparent;")
+        oxi_l = QVBoxLayout(oxi_grp)
+        oxi_l.setContentsMargins(0, 0, 0, 0); oxi_l.setSpacing(6)
+        lvl = QSlider(Qt.Orientation.Horizontal)
+        lvl.setRange(0, 6)
+        lvl.setValue(int(comp.get("level", 3)))
+        lvl_label = QLabel(str(comp.get("level", 3)))
+        lvl.valueChanged.connect(
+            lambda v: (comp.__setitem__("level", v), lvl_label.setText(str(v))))
+        row = QHBoxLayout(); row.addWidget(lvl_label); row.addWidget(lvl, 1)
+        oxi_l.addWidget(field_row(tr("advanced.level"), row))
+        inter = SwitchButton(tr("advanced.interlace"))
+        inter.setChecked(bool(comp.get("interlace", False)))
+        inter.checkedChanged.connect(lambda b: comp.__setitem__("interlace", b))
+        oxi_l.addWidget(field_row(tr("advanced.interlace"), inter))
+        strip = _combo(
+            [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
+            comp.get("strip", "safe"), lambda v: comp.__setitem__("strip", v))
+        oxi_l.addWidget(field_row(tr("advanced.strip"), strip))
+        ex.body_layout.addWidget(oxi_grp)
 
-            # PNG format override
-            png_ex = ExpandWidget(tr("advanced.png.options"))
-            png_lvl = QSlider(Qt.Orientation.Horizontal)
-            png_lvl.setRange(0, 9)
-            png_val = adv.get("png_quality")
-            png_lvl.setValue(int(png_val) if png_val is not None else 9)
-            png_lvl.valueChanged.connect(lambda v: adv.__setitem__("png_quality", v))
-            png_enable = SwitchButton(tr("advanced.enable"))
-            png_enable.setChecked(png_val is not None)
-            png_enable.checkedChanged.connect(
-                lambda b: adv.__setitem__("png_quality", png_lvl.value() if b else None)
-            )
-            png_lvl.setEnabled(png_val is not None)
-            png_enable.checkedChanged.connect(lambda b: png_lvl.setEnabled(b))
-            png_label = QLabel(f"{png_lvl.value()}")
-            png_lvl.valueChanged.connect(lambda v: png_label.setText(str(v)))
-            png_row = QHBoxLayout()
-            png_row.addWidget(png_label)
-            png_row.addWidget(png_lvl, 1)
-            png_row.addWidget(png_enable)
-            png_ex.body_layout.addWidget(
-                field_row(tr("advanced.png.compression"), png_row, label_width=80)
-            )
-            fq.addWidget(png_ex)
+        # --- mozjpeg 专用参数 ---
+        moz_grp = QWidget()
+        moz_grp.setStyleSheet("background: transparent;")
+        moz_l = QVBoxLayout(moz_grp)
+        moz_l.setContentsMargins(0, 0, 0, 0); moz_l.setSpacing(6)
+        prog = SwitchButton(tr("advanced.progressive"))
+        prog.setChecked(bool(comp.get("progressive", False)))
+        prog.checkedChanged.connect(lambda b: comp.__setitem__("progressive", b))
+        moz_l.addWidget(field_row(tr("advanced.progressive"), prog))
+        arith = SwitchButton(tr("advanced.arithmetic"))
+        arith.setChecked(bool(comp.get("arithmetic", False)))
+        arith.checkedChanged.connect(lambda b: comp.__setitem__("arithmetic", b))
+        moz_l.addWidget(field_row(tr("advanced.arithmetic"), arith))
+        strip2 = _combo(
+            [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
+            comp.get("strip", "safe"), lambda v: comp.__setitem__("strip", v))
+        moz_l.addWidget(field_row(tr("advanced.strip"), strip2))
+        ex.body_layout.addWidget(moz_grp)
 
-            # JPG format override
-            jpg_ex = ExpandWidget(tr("advanced.jpg.options"))
-            jpg_q = QSlider(Qt.Orientation.Horizontal)
-            jpg_q.setRange(1, 100)
-            jpg_val = adv.get("jpg_quality")
-            jpg_q.setValue(int(jpg_val) if jpg_val is not None else 95)
-            jpg_q.valueChanged.connect(lambda v: adv.__setitem__("jpg_quality", v))
-            jpg_enable = SwitchButton(tr("advanced.enable"))
-            jpg_enable.setChecked(jpg_val is not None)
-            jpg_enable.checkedChanged.connect(
-                lambda b: adv.__setitem__("jpg_quality", jpg_q.value() if b else None)
-            )
-            jpg_q.setEnabled(jpg_val is not None)
-            jpg_enable.checkedChanged.connect(lambda b: jpg_q.setEnabled(b))
-            jpg_labelx = QLabel(f"{jpg_q.value()}")
-            jpg_q.valueChanged.connect(lambda v: jpg_labelx.setText(str(v)))
-            jpg_row = QHBoxLayout()
-            jpg_row.addWidget(jpg_labelx)
-            jpg_row.addWidget(jpg_q, 1)
-            jpg_row.addWidget(jpg_enable)
-            jpg_ex.body_layout.addWidget(
-                field_row(tr("advanced.jpg.quality"), jpg_row, label_width=80)
-            )
-            fq.addWidget(jpg_ex)
-
-            # WebP format override
-            webp_ex = ExpandWidget(tr("advanced.webp.options"))
-            webp_q = QSlider(Qt.Orientation.Horizontal)
-            webp_q.setRange(1, 100)
-            webp_val = adv.get("webp_quality")
-            webp_q.setValue(int(webp_val) if webp_val is not None else 90)
-            webp_q.valueChanged.connect(lambda v: adv.__setitem__("webp_quality", v))
-            webp_enable = SwitchButton(tr("advanced.enable"))
-            webp_enable.setChecked(webp_val is not None)
-            webp_enable.checkedChanged.connect(
-                lambda b: adv.__setitem__("webp_quality", webp_q.value() if b else None)
-            )
-            webp_q.setEnabled(webp_val is not None)
-            webp_enable.checkedChanged.connect(lambda b: webp_q.setEnabled(b))
-            webp_labelx = QLabel(f"{webp_q.value()}")
-            webp_q.valueChanged.connect(lambda v: webp_labelx.setText(str(v)))
-            webp_row = QHBoxLayout()
-            webp_row.addWidget(webp_labelx)
-            webp_row.addWidget(webp_q, 1)
-            webp_row.addWidget(webp_enable)
-            webp_ex.body_layout.addWidget(
-                field_row(tr("advanced.webp.quality"), webp_row, label_width=80)
-            )
-            fq.addWidget(webp_ex)
-
-            layout.addWidget(ffmpeg_group)
-
-            # --- Tool-specific parameter groups ---
-            oxi = self._oxipng_ex(adv)
-            opti = self._optipng_ex(adv)
-            moz = self._mozjpeg_ex(adv)
-            layout.addWidget(oxi)
-            layout.addWidget(opti)
-            layout.addWidget(moz)
-
-            # --- Show / hide based on selected backend ---
-            def _on_backend_change(val: str):
-                ffmpeg_group.setVisible(val == "ffmpeg")
-                oxi.setVisible(val == "oxipng")
-                opti.setVisible(val == "optipng")
-                moz.setVisible(val == "mozjpeg")
-
-            _on_backend_change(adv.get("compress_backend", "ffmpeg"))
-            backend.currentTextChanged.connect(
-                lambda t: _on_backend_change(backend._mapping.get(t, t))
-            )
-
-        return self._add_expander("advanced.image.title", build)
-
+        return ex
     def _oxipng_ex(self, adv):
         grp = adv.setdefault("png_oxipng", {})
         ex = ExpandWidget(tr("advanced.oxipng"))

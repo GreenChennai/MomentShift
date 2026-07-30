@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QDialog, QPushButton,
 )
 from qfluentwidgets import (
-    FluentIcon as FIF, FlowLayout, SwitchButton,
+    FluentIcon as FIF, FlowLayout,
 )
 from ..core.config import cfg
 from ..i18n.translator import tr
@@ -24,12 +24,12 @@ from .theme import (
 )
 from .advanced_panel import AdvancedPanel
 
-# 格式卡片按钮样式（v0.3.5：正方形、放大、浅绿默认/深绿选中）
+# 格式卡片按钮样式（v0.3.7：75×75 正方形）
 _FMT_CARD_CSS = (
     "QPushButton{{"
     "  background: #e8f5e9; border: 2px solid #c8e6c9; border-radius: 10px;"
     "  color: #2e7d32; font-weight: 700; font-size: 16px;"
-    "  min-width: 80px; min-height: 80px; max-width: 80px; max-height: 80px;"
+    "  min-width: 75px; min-height: 75px; max-width: 75px; max-height: 75px;"
     "}}"
     "QPushButton:hover{{ background: #c8e6c9; border-color: #238636; }}"
     "QPushButton:checked{{"
@@ -172,12 +172,6 @@ class ConvertSetupDialog(QDialog):
         self.advancedPanel = AdvancedPanel(self)
         self.advancedPanel.refresh([self._category])
         adv_card.body.addWidget(self.advancedPanel)
-        # 转换后自动压缩
-        self.postCompressSwitch = SwitchButton(tr("convert.post_compress"))
-        self.postCompressSwitch.setChecked(False)
-        self.postCompressSwitch.setOnText(tr("common.on"))
-        self.postCompressSwitch.setOffText(tr("common.off"))
-        adv_card.body.addWidget(self.postCompressSwitch)
         right_lay.addWidget(adv_card)
         self._adv_card = adv_card
 
