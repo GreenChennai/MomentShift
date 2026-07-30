@@ -208,7 +208,7 @@ class AdvancedPanel(QWidget):
             layout.addWidget(webp_ex)
 
             comp = SwitchButton(tr("advanced.compress"))
-            comp.setChecked(bool(adv.get("compress", True)))
+            comp.setChecked(bool(adv.get("compress", False)))
             comp.checkedChanged.connect(lambda b: adv.__setitem__("compress", b))
             layout.addWidget(field_row(tr("advanced.compress"), comp, label_width=80))
 
@@ -218,6 +218,7 @@ class AdvancedPanel(QWidget):
                 adv.get("compress_mode", "lossless"),
                 lambda v: adv.__setitem__("compress_mode", v),
             )
+            mode.setEnabled(comp.isChecked())
             layout.addWidget(field_row(tr("advanced.mode"), mode, label_width=80))
 
             back = _combo(
@@ -227,12 +228,28 @@ class AdvancedPanel(QWidget):
                 adv.get("compress_backend", "auto"),
                 lambda v: adv.__setitem__("compress_backend", v),
             )
+            back.setEnabled(comp.isChecked())
             layout.addWidget(field_row(tr("advanced.backend"), back, label_width=80))
 
             # per-backend parameter groups
-            layout.addWidget(self._oxipng_ex(adv))
-            layout.addWidget(self._optipng_ex(adv))
-            layout.addWidget(self._mozjpeg_ex(adv))
+            oxi = self._oxipng_ex(adv)
+            opti = self._optipng_ex(adv)
+            moz = self._mozjpeg_ex(adv)
+            oxi.setEnabled(comp.isChecked())
+            opti.setEnabled(comp.isChecked())
+            moz.setEnabled(comp.isChecked())
+            layout.addWidget(oxi)
+            layout.addWidget(opti)
+            layout.addWidget(moz)
+
+            def _on_compress(b: bool):
+                mode.setEnabled(b)
+                back.setEnabled(b)
+                oxi.setEnabled(b)
+                opti.setEnabled(b)
+                moz.setEnabled(b)
+
+            comp.checkedChanged.connect(_on_compress)
 
         return self._add_expander("advanced.image.title", build)
 

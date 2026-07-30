@@ -15,7 +15,6 @@ from qfluentwidgets import (
     BodyLabel,
     StrongBodyLabel,
     CaptionLabel,
-    HyperlinkCard,
     PushButton,
 )
 from ..i18n.translator import tr
@@ -54,11 +53,20 @@ class AboutInterface(InterfaceBase):
         cv.addWidget(self.authorLabel)
 
         cv.addSpacing(8)
-        # Use a compact URL text so it fits in 450px-wide window
-        self.repoCard = HyperlinkCard(
-            "github.com/GreenChennai/MomentShift", REPO_URL,
-            FIF.GITHUB, tr("about.repo"))
-        cv.addWidget(self.repoCard)
+        # Two buttons in a centered row: "项目主页" + "检查更新"
+        self.repoBtn = PushButton(tr("about.repo"), icon=FIF.GITHUB)
+        self.repoBtn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(REPO_URL)))
+        self.updateBtn = PushButton(tr("about.check_update"), icon=FIF.UPDATE)
+        self.updateBtn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(RELEASE_URL)))
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(self.repoBtn)
+        row.addSpacing(10)
+        row.addWidget(self.updateBtn)
+        row.addStretch(1)
+        cv.addLayout(row)
 
         cv.addSpacing(8)
         self.techLabel = CaptionLabel(tr("about.tech"))
@@ -68,15 +76,6 @@ class AboutInterface(InterfaceBase):
             lbl.setWordWrap(True)
             lbl.setStyleSheet(f"color: {muted_text()};")
             cv.addWidget(lbl)
-
-        cv.addSpacing(10)
-        self.updateBtn = PushButton(tr("about.check_update"), icon=FIF.UPDATE)
-        self.updateBtn.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl(RELEASE_URL)))
-        row = QHBoxLayout()
-        row.addStretch(1)
-        row.addWidget(self.updateBtn)
-        cv.addLayout(row)
 
         self.vbox.addWidget(card)
         self.vbox.addStretch(1)
@@ -95,7 +94,7 @@ class AboutInterface(InterfaceBase):
         self.tagLabel.setText(tr("about.description"))
         self.verLabel.setText(f"{tr('about.version')}: {VERSION}")
         self.authorLabel.setText(f"{tr('about.author')}: {AUTHOR}")
-        self.repoCard.setTitle(tr("about.repo"))
+        self.repoBtn.setText(tr("about.repo"))
         self.techLabel.setText(tr("about.tech"))
         self.licenseLabel.setText(tr("about.license"))
         self.disclaimerLabel.setText(tr("about.disclaimer"))

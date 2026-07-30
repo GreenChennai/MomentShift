@@ -291,7 +291,7 @@ class CompressInterface(InterfaceBase):
         )
         self.queueScroll.viewport().setStyleSheet("background:transparent;")
         self.queueScroll.setWidget(self.listWidget)
-        self.queueScroll.setMaximumHeight(1200)
+        self.queueScroll.setMinimumHeight(420)
         qvb.addWidget(self.queueScroll)
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("compress.start"), icon=FIF.PLAY)
@@ -371,6 +371,7 @@ class CompressInterface(InterfaceBase):
     def _on_files(self, paths):
         for p in self._expand(paths):
             self._add_item(p)
+        self._update_controls()
 
     def _pick_files(self):
         flt = "Images (" + " ".join(f"*{e}" for e in sorted(IMAGE_EXTS)) + ")"

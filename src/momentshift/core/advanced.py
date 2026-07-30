@@ -40,7 +40,7 @@ def default_options() -> dict:
             "jpg_quality": None,
             "webp_quality": None,
             # --- image compression (post-conversion / dedicated Compress) ---
-            "compress": True,          # enable compression for image outputs
+            "compress": False,          # disabled by default; user must opt in
             "compress_mode": "lossless",   # lossless | lossy
             "compress_backend": "auto",    # auto | pillow | oxipng | optipng | mozjpeg
             # per-backend parameter groups (only the relevant ones are used)

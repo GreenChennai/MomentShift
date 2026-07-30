@@ -26,6 +26,7 @@ SCRIPT = os.path.join(SRC_DIR, "momentshift", "__main__.py")
 binaries = []
 
 datas = [
+    (os.path.join(SRC_DIR, "momentshift", "resources", "icons"), "momentshift/resources/icons"),
     (os.path.join(SRC_DIR, "momentshift", "i18n", "locales"), "momentshift/i18n/locales"),
 ]
 

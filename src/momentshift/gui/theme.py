@@ -14,7 +14,10 @@ This module is the single source of truth for the UI's visual language:
 
 from __future__ import annotations
 
-from PyQt6.QtGui import QColor
+import os
+from pathlib import Path
+from PyQt6.QtCore import QSize
+from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame
 
 from qfluentwidgets import (
@@ -52,6 +55,15 @@ ACCENT_DARK = QColor(38, 132, 209)     # brighter on dark
 RADIUS = 12
 SPACING = 12
 CARD_MARGIN = 16
+
+# -- SVG icon paths (bundled in resources/icons/) -------------------------
+_RESOURCES = Path(__file__).parent.parent / "resources" / "icons"
+
+def _icon_path(name: str) -> str:
+    return os.fspath(_RESOURCES / name)
+
+ICON_EXPAND = _icon_path("\u4e0b\u62c9.svg")    # 下拉 (down arrow — collapsed state)
+ICON_COLLAPSE = _icon_path("\u6536\u8d77.svg")   # 收起 (up arrow — expanded state)
 
 
 def component_bg() -> QColor:
@@ -117,70 +129,105 @@ class ThemedCard(CardWidget):
 class CollapsibleCard(ThemedCard):
     """A ``ThemedCard`` with a toggle button in the title bar.
 
-    The title bar stays visible; the body widget can be collapsed/expanded by
-    clicking the arrow button or via ``setCollapsed(True/False)``.
+    - **Title bar** (always visible): title + SVG arrow toggle button.
+    - **Body** (collapsible): subtitle (if any) + user content.
 
-    Usage pattern (replaces the ``_card()`` / ``panel()`` pattern):
+    When collapsed only the compact title bar is visible, keeping the card
+    height minimal. The subtitle lives in the body so it collapses together
+    with the content — it does NOT stay in the title bar (avoiding the visual
+    glitch where a separate subtitle line shifts when the body toggles).
 
-    .. code-block:: python
+    Usage (replaces ``_card()``):
+    ::
 
         card = CollapsibleCard(tr("my.title"), tr("my.sub"))
-        # card.body is a QVBoxLayout – add your content here
-        card.body.addWidget(...)
+        card.body.addWidget(...)   # card.body is a QVBoxLayout
         return card, card.body, card.titleLabel
     """
+
+    _ICON_W = _ICON_H = 20
 
     def __init__(self, title: str = "", subtitle: str = "",
                  parent=None, collapsed: bool = False):
         super().__init__(parent)
         self._collapsed = collapsed
 
-        # Outer layout – zero margins so the card border-radius applies cleanly.
+        # Force ALL descendant labels to have transparent backgrounds so the
+        # card's painted surface (#FBFBFB / #2B2B2B) shows through cleanly.
+        # The ``> QWidget`` rule covers intermediate containers; explicit
+        # label-type rules catch deeper descendants regardless of depth.
+        self.setStyleSheet(
+            "CollapsibleCard > QWidget { background-color: transparent; }"
+            "QLabel, FluentLabelBase, BodyLabel, CaptionLabel, StrongBodyLabel,"
+            " TitleLabel, SubtitleLabel { background-color: transparent; }"
+        )
+
+        # ---- outer layout ------------------------------------------------
         self._outer = QVBoxLayout(self)
         self._outer.setContentsMargins(0, 0, 0, 0)
         self._outer.setSpacing(0)
 
-        # ---- title bar (always visible) ----------------------------------
+        # ---- title bar (always visible, compact) -------------------------
         self._bar = QWidget()
         hb = QHBoxLayout(self._bar)
-        hb.setContentsMargins(CARD_MARGIN, 12, 8, 6)
-        hb.setSpacing(6)
+        hb.setContentsMargins(CARD_MARGIN, 10, 6, 10)
+        hb.setSpacing(8)
 
-        if subtitle:
-            tc = QWidget()
-            tv = QVBoxLayout(tc)
-            tv.setContentsMargins(0, 0, 0, 0)
-            tv.setSpacing(2)
-            self.titleLabel = StrongBodyLabel(title)
-            tv.addWidget(self.titleLabel)
-            self.subtitleLabel = CaptionLabel(subtitle)
-            tv.addWidget(self.subtitleLabel)
-            hb.addWidget(tc, 1)
-        else:
-            self.titleLabel = StrongBodyLabel(title)
-            self.subtitleLabel = None
-            hb.addWidget(self.titleLabel, 1)
-
+        self.titleLabel = StrongBodyLabel(title)
+        hb.addWidget(self.titleLabel, 1)
         hb.addStretch()
 
-        self._toggleBtn = TransparentPushButton("\u25BC")  # ▼
-        self._toggleBtn.setFixedSize(28, 28)
+        # arrow toggle button using SVG icons
+        self._toggleBtn = TransparentPushButton("")
+        self._toggleBtn.setIcon(self._toggle_icon())
+        self._toggleBtn.setIconSize(QSize(self._ICON_W, self._ICON_H))
+        self._toggleBtn.setFixedSize(30, 30)
         self._toggleBtn.clicked.connect(self.toggle)
         self._toggleBtn.setToolTip("")
         hb.addWidget(self._toggleBtn)
 
         self._outer.addWidget(self._bar)
 
-        # ---- body (collapsible) ------------------------------------------
+        # ---- body (collapsible, hides when collapsed) --------------------
         self._body = QWidget()
         self._body_layout = QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(CARD_MARGIN, 0, CARD_MARGIN, 14)
         self._body_layout.setSpacing(10)
+
+        # Optional subtitle lives inside the body so it hides on collapse.
+        self.subtitleLabel = None
+        if subtitle:
+            self.subtitleLabel = CaptionLabel(subtitle)
+            self._body_layout.insertWidget(0, self.subtitleLabel)
+
         self._outer.addWidget(self._body)
 
         if collapsed:
-            self._body.setVisible(False)
-            self._toggleBtn.setText("\u25B6")  # ▶
+            self._apply_collapsed()
+
+    # -- helpers ------------------------------------------------------------
+
+    def _toggle_icon(self) -> QIcon:
+        """Return the appropriate SVG icon for the current state."""
+        path = ICON_EXPAND if self._collapsed else ICON_COLLAPSE
+        return QIcon(path) if os.path.exists(path) else QIcon()
+
+    def _apply_collapsed(self):
+        """Apply the collapsed visual state without re-emitting the toggle signal."""
+        self._body.setVisible(False)
+        # Setting a fixed height of 0 ensures the layout truly shrinks the
+        # card to title-bar height, avoiding the "collapsed but still tall" bug.
+        self._body.setFixedHeight(0)
+        self._toggleBtn.setIcon(self._toggle_icon())
+
+    def _apply_expanded(self):
+        """Apply the expanded visual state."""
+        self._body.setFixedHeight(self._body.sizeHint().height() if False else 16777215)
+        # ^ use QWIDGETSIZE_MAX to unrestrict height — qt constant is 16777215
+        self._body.setMinimumHeight(0)
+        self._body.setMaximumHeight(16777215)
+        self._body.setVisible(True)
+        self._toggleBtn.setIcon(self._toggle_icon())
 
     # -- public API ---------------------------------------------------------
 
@@ -198,8 +245,10 @@ class CollapsibleCard(ThemedCard):
         if self._collapsed == collapsed:
             return
         self._collapsed = collapsed
-        self._body.setVisible(not collapsed)
-        self._toggleBtn.setText("\u25B6" if collapsed else "\u25BC")  # ▶ / ▼
+        if collapsed:
+            self._apply_collapsed()
+        else:
+            self._apply_expanded()
 
     def isCollapsed(self) -> bool:
         """Return whether the card body is currently hidden."""

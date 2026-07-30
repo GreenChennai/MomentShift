@@ -71,7 +71,7 @@ class ConvertInterface(InterfaceBase):
         self.stagingLayout.setSpacing(6)
         self.stagingLayout.addStretch(1)
         self.stagingScroll.setWidget(self.stagingList)
-        self.stagingScroll.setMaximumHeight(680)
+        self.stagingScroll.setMinimumHeight(200)
         vb.addWidget(self.stagingScroll)
 
         self.addQueueBtn = primary_btn(tr("convert.queue.add", n=0), icon=FIF.UP)
@@ -119,6 +119,7 @@ class ConvertInterface(InterfaceBase):
         avb.addWidget(self.advancedPanel)
         self.acard = acard
         self.acard.setVisible(False)
+        self.acard.setCollapsed(True)
         self.vbox.addWidget(acard)
 
         # --- queue --------------------------------------------------------
@@ -129,7 +130,7 @@ class ConvertInterface(InterfaceBase):
         self.queueList.formatChanged.connect(self._on_row_format)
         self.queueScroll = self._scroll()
         self.queueScroll.setWidget(self.queueList)
-        self.queueScroll.setMaximumHeight(1280)
+        self.queueScroll.setMinimumHeight(420)  # at least ~3.5 items visible
         qvb.addWidget(self.queueScroll)
 
         ctrl = QHBoxLayout()
@@ -308,6 +309,7 @@ class ConvertInterface(InterfaceBase):
         self._staged = []
         self._render_staging()
         self._refresh_format_grid()
+        self._update_controls()
 
     def _gpu_enabled(self) -> bool:
         if cfg.hardware.value == "cpu":
