@@ -116,11 +116,17 @@ class AdvancedPanel(QWidget):
         self._clear()
         self._categories = list(categories)
         if "image" in categories:
-            self._expanders.append(self._add_image())
+            ex = self._add_image()
+            self._expanders.append(ex)
+            self.vbox.addWidget(ex)
         if "video" in categories:
-            self._expanders.append(self._add_video())
+            ex = self._add_video()
+            self._expanders.append(ex)
+            self.vbox.addWidget(ex)
         if "audio" in categories:
-            self._expanders.append(self._add_audio())
+            ex = self._add_audio()
+            self._expanders.append(ex)
+            self.vbox.addWidget(ex)
         self.vbox.addStretch(1)
 
     def _add_expander(self, title_key: str, builder) -> ExpandWidget:
