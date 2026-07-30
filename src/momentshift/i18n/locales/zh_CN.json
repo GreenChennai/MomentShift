@@ -367,5 +367,9 @@
   "about.env.download": "下载",
   "about.env.missing": "未找到",
   "about.env.upscaler": "Real-ESRGAN",
-  "convert.post_compress": "转换后自动压缩"
+  "convert.post_compress": "转换后自动压缩",
+  "convert.ffmpeg_status": "FFmpeg 状态",
+  "upscale.compare.original": "原图",
+  "upscale.compare.upscaled": "放大",
+  "upscale.compare.reset": "重置"
 }

@@ -28,7 +28,7 @@ from ..core.models import Task
 from ..core.presets import IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS
 from ..i18n.translator import tr
 from .theme import (
-    CollapsibleCard, field_row, primary_btn, ghost_btn,
+    CollapsibleCard, field_row, primary_btn, ghost_btn, muted_text,
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
@@ -56,10 +56,19 @@ class ConvertInterface(InterfaceBase):
         # mouseReleaseEvent，此标志确保只有第一次点击真正打开文件选择器
         self._picking = False
 
-        # FFmpeg 状态指示器（右上角，与"转换"标题水平对齐）
+        # FFmpeg 状态指示器（v0.3.6：加标签文字，右对齐胶囊）
+        ff_wrap = QWidget()
+        ff_v = QVBoxLayout(ff_wrap)
+        ff_v.setContentsMargins(0, 0, 0, 0)
+        ff_v.setSpacing(3)
+        self._ff_label = CaptionLabel(tr("convert.ffmpeg_status"))
+        self._ff_label.setStyleSheet(f"color: {muted_text()}; font-size: 11px;")
+        self._ff_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._ff_status = CaptionLabel("")
         self._ff_status.setFixedHeight(22)
-        self._header_row.addWidget(self._ff_status)
+        ff_v.addWidget(self._ff_label)
+        ff_v.addWidget(self._ff_status)
+        self._header_row.addWidget(ff_wrap)
         self._refresh_ff_status()
 
         # =====================================================================

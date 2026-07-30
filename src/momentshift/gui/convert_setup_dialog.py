@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QDialog, QPushButton,
 )
 from qfluentwidgets import (
-    FluentIcon as FIF, FlowLayout,
+    FluentIcon as FIF, FlowLayout, SwitchButton,
 )
 from ..core.config import cfg
 from ..i18n.translator import tr

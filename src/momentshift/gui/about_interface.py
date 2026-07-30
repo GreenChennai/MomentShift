@@ -27,13 +27,6 @@ from ..core import upscaler
 from ..core.qt_compat import Signal, QRunnable, QThreadPool
 
 # 环境状态行 CSS（共用）
-_ENV_ROW_NORMAL = (
-    "QWidget#envRow{{"
-    "  background: #fafafa; border: 1px solid #eee; border-radius: 10px;"
-    "  padding: 2px;"
-    "}}"
-    "QWidget#envRow:hover{{ background: #f0f7f0; border-color: #c5e4c5; }}"
-)
 
 class AboutInterface(InterfaceBase):
     def __init__(self, parent=None):
@@ -89,72 +82,65 @@ class AboutInterface(InterfaceBase):
         cv.addWidget(self.disclaimerLabel)
         self.vbox.addWidget(card)
 
-        # ---- 运行环境卡片（v0.3.4 美化）----
+        # ---- 运行环境卡片（v0.3.6：上下结构 + 分隔线）----
         env_card = ThemedCard()
         env_vb = QVBoxLayout(env_card)
         env_vb.setContentsMargins(CARD_MARGIN, 16, CARD_MARGIN, 16)
-        env_vb.setSpacing(0)
+        env_vb.setSpacing(14)
 
         env_title = StrongBodyLabel(tr("about.env.title"))
         env_vb.addWidget(env_title)
-        env_sub = CaptionLabel(tr("about.env.subtitle"))
-        env_sub.setStyleSheet(f"color: {muted_text()};")
-        env_vb.addWidget(env_sub)
-        env_vb.addSpacing(14)
+        env_vb.addSpacing(4)
 
-        # FFmpeg 行（v0.3.5：去图标）
-        self._ff_row, _, self._ff_text, self._ff_status, \
-            self._ff_link, self._ff_btn, self._ff_prog = \
-            self._build_env_row(FIF.VIDEO, "FFmpeg")
-        env_vb.addWidget(self._ff_row)
-        env_vb.addWidget(self._ff_prog)
+        # === FFmpeg ===
+        self._ff_section = self._build_env_section("FFmpeg", "")
+        env_vb.addWidget(self._ff_section)
 
-        env_vb.addSpacing(8)
+        # 分隔线
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("QFrame{ color: #e8e8e8; }")
+        env_vb.addWidget(sep)
 
-        # Real-ESRGAN 行（v0.3.5：去图标）
-        self._re_row, _, self._re_text, self._re_status, \
-            self._re_link, self._re_btn, self._re_prog = \
-            self._build_env_row(FIF.ZOOM, tr("about.env.upscaler"))
-        env_vb.addWidget(self._re_row)
-        env_vb.addWidget(self._re_prog)
-
-        # 连线
-        self._ff_btn.clicked.connect(self._download_ffmpeg)
-        self._re_btn.clicked.connect(self._download_upscaler)
+        # === Real-ESRGAN ===
+        self._re_section = self._build_env_section(tr("about.env.upscaler"), "")
+        env_vb.addWidget(self._re_section)
 
         self.vbox.addWidget(env_card)
         self._refresh_env()
         self.vbox.addStretch(1)
         self.retheme()
 
-    def _build_env_row(self, icon, name):
-        """构建单行环境状态（v0.3.5：无图标，全宽）。"""
-        row = QWidget()
-        row.setObjectName("envRow")
-        row.setStyleSheet(_ENV_ROW_NORMAL)
-        hb = QHBoxLayout(row)
-        hb.setContentsMargins(14, 12, 14, 12)
-        hb.setSpacing(10)
+    def _build_env_section(self, name: str, ok_text: str):
+        """构建单条环境（v0.3.6：上下结构，按钮移入内部）。"""
+        sec = QWidget()
+        sv = QVBoxLayout(sec)
+        sv.setContentsMargins(0, 0, 0, 0)
+        sv.setSpacing(6)
 
-        # 名称 + 状态
-        inner = QVBoxLayout()
-        inner.setSpacing(2)
-        text_lbl = StrongBodyLabel(name)
+        # 第一行：名称 + 状态点
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        dot = QLabel()
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet("border-radius: 4px;")
+        row.addWidget(dot)
+        name_lbl = StrongBodyLabel(name)
+        row.addWidget(name_lbl, 1)
         status_lbl = CaptionLabel("")
-        inner.addWidget(text_lbl)
-        inner.addWidget(status_lbl)
-        hb.addLayout(inner, 1)
+        row.addWidget(status_lbl)
+        sv.addLayout(row)
 
-        # 下载链接
+        # 链接 + 按钮行
+        btns = QHBoxLayout()
+        btns.setSpacing(8)
         link_btn = HyperlinkButton("", tr("about.env.download"))
-        link_btn.hide()
-        hb.addWidget(link_btn)
-
-        # 一键下载按钮
+        btns.addWidget(link_btn)
+        btns.addStretch(1)
         action_btn = PrimaryPushButton("", icon=FIF.DOWNLOAD)
-        action_btn.setFixedHeight(30)
-        action_btn.hide()
-        hb.addWidget(action_btn)
+        action_btn.setFixedHeight(28)
+        btns.addWidget(action_btn)
+        sv.addLayout(btns)
 
         # 进度条
         prog = QProgressBar()
@@ -162,68 +148,73 @@ class AboutInterface(InterfaceBase):
         prog.setFixedHeight(3)
         prog.setTextVisible(False)
         prog.setStyleSheet(
-            "QProgressBar{ border: none; background: transparent; border-radius: 1px; }"
-            "QProgressBar::chunk{ background: #238636; border-radius: 1px; }")
+            "QProgressBar{border:none;background:transparent;border-radius:1px;}"
+            "QProgressBar::chunk{background:#238636;border-radius:1px;}")
         prog.hide()
+        sv.addWidget(prog)
 
-        return row, None, text_lbl, status_lbl, link_btn, action_btn, prog
+        # 存储引用
+        sec._dot = dot; sec._status = status_lbl; sec._link = link_btn
+        sec._btn = action_btn; sec._prog = prog; sec._text = name_lbl
+        return sec
+
+    def _update_section(self, sec, ok, name, ok_msg, fail_msg, btn_text, link_url=""):
+        if ok:
+            sec._status.setText(ok_msg)
+            sec._status.setStyleSheet(f"color:{success_color().name()};font-size:12px;")
+            sec._dot.setStyleSheet(
+                f"background:{success_color().name()};border-radius:4px;")
+            sec._link.hide(); sec._btn.hide()
+        else:
+            sec._status.setText(fail_msg)
+            sec._status.setStyleSheet(f"color:{danger_color().name()};font-size:12px;")
+            sec._dot.setStyleSheet(
+                f"background:{danger_color().name()};border-radius:4px;")
+            sec._link.show()
+            sec._btn.setText(btn_text); sec._btn.show()
+        sec._text.setText(name)
 
     def _refresh_env(self):
         # FFmpeg
         ff = find_ffmpeg()
-        if ff:
-            self._ff_text.setText("FFmpeg")
-            self._ff_status.setText(tr("ffmpeg.found", name="ffmpeg"))
-            self._ff_status.setStyleSheet(f"color: {success_color().name()};")
-            self._ff_link.hide(); self._ff_btn.hide()
-            self._ff_row.setStyleSheet(_ENV_ROW_NORMAL)
-        else:
-            self._ff_text.setText("FFmpeg")
-            self._ff_status.setText(tr("about.env.missing"))
-            self._ff_status.setStyleSheet(f"color: {danger_color().name()};")
-            self._ff_link.show(); self._ff_btn.setText(tr("ffmpeg.download")); self._ff_btn.show()
-            self._ff_row.setStyleSheet(
-                _ENV_ROW_NORMAL.replace("#fafafa", "#fff5f5")
-                .replace("#eee", "#fdd").replace("#f0f7f0", "#fff0f0")
-                .replace("#c5e4c5", "#fcc"))
+        self._update_section(
+            self._ff_section, bool(ff), "FFmpeg",
+            tr("ffmpeg.found", name="ffmpeg"),
+            tr("about.env.missing"), tr("ffmpeg.download"))
+        try: self._ff_section._btn.clicked.disconnect()
+        except: pass
+        self._ff_section._btn.clicked.connect(self._download_ffmpeg)
 
-        # Upscaler
-        if upscaler.find_upscaler():
-            n = len(upscaler.available_models())
-            self._re_text.setText(tr("about.env.upscaler"))
-            self._re_status.setText(tr("upscale.engine.ok", n=n))
-            self._re_status.setStyleSheet(f"color: {success_color().name()};")
-            self._re_link.hide(); self._re_btn.hide()
-            self._re_row.setStyleSheet(_ENV_ROW_NORMAL)
-        else:
-            self._re_text.setText(tr("about.env.upscaler"))
-            self._re_status.setText(tr("upscale.engine.missing"))
-            self._re_status.setStyleSheet(f"color: {danger_color().name()};")
-            self._re_link.show(); self._re_btn.setText(tr("upscale.engine.oneclick")); self._re_btn.show()
-            self._re_row.setStyleSheet(
-                _ENV_ROW_NORMAL.replace("#fafafa", "#fff5f5")
-                .replace("#eee", "#fdd").replace("#f0f7f0", "#fff0f0")
-                .replace("#c5e4c5", "#fcc"))
+        # Real-ESRGAN
+        ok = bool(upscaler.find_upscaler())
+        n = len(upscaler.available_models()) if ok else 0
+        self._update_section(
+            self._re_section, ok, tr("about.env.upscaler"),
+            tr("upscale.engine.ok", n=n),
+            tr("upscale.engine.missing"), tr("upscale.engine.oneclick"))
+        try: self._re_section._btn.clicked.disconnect()
+        except: pass
+        self._re_section._btn.clicked.connect(self._download_upscaler)
 
     def _download_ffmpeg(self):
         from ..core.ffmpeg_download import FfmpegDownloadWorker
-        self._ff_btn.setEnabled(False); self._ff_prog.show()
+        self._ff_section._btn.setEnabled(False); self._ff_section._prog.show()
         w = FfmpegDownloadWorker()
         w.signals.finished.connect(self._on_ff_done)
         QThreadPool.globalInstance().start(w)
 
     def _on_ff_done(self, ok, msg):
-        self._ff_btn.setEnabled(True); self._ff_prog.hide()
+        self._ff_section._btn.setEnabled(True); self._ff_section._prog.hide()
         self._refresh_env()
 
     def _download_upscaler(self):
-        self._re_btn.setEnabled(False); self._re_prog.show()
+        self._re_section._btn.setEnabled(False); self._re_section._prog.show()
         w = upscaler.UpscalerDownloadWorker(str(upscaler.realesrgan_dir()))
         w.signals.finished.connect(self._on_re_done)
         QThreadPool.globalInstance().start(w)
 
     def _on_re_done(self, ok, msg):
-        self._re_btn.setEnabled(True); self._re_prog.hide()
+        self._re_section._btn.setEnabled(True); self._re_section._prog.hide()
         self._refresh_env()
 
     def retheme(self):
@@ -239,8 +230,8 @@ class AboutInterface(InterfaceBase):
         self.authorLabel.setText(f"{tr('about.author')}: {AUTHOR}")
         self.repoBtn.setText(tr("about.repo"))
         self.updateBtn.setText(tr("about.check_update"))
-        self._ff_btn.setText(tr("ffmpeg.download"))
-        self._re_btn.setText(tr("upscale.engine.oneclick"))
+        self._ff_section._btn.setText(tr("ffmpeg.download"))
+        self._re_section._btn.setText(tr("upscale.engine.oneclick"))
         self.techLabel.setText(tr("about.tech"))
         self.licenseLabel.setText(tr("about.license"))
         self.disclaimerLabel.setText(tr("about.disclaimer"))

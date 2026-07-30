@@ -367,5 +367,9 @@
   "about.env.download": "Download",
   "about.env.missing": "Not found",
   "about.env.upscaler": "Real-ESRGAN",
-  "convert.post_compress": "Compress after conversion"
+  "convert.post_compress": "Compress after conversion",
+  "convert.ffmpeg_status": "FFmpeg Status",
+  "upscale.compare.original": "Original",
+  "upscale.compare.upscaled": "Upscaled",
+  "upscale.compare.reset": "Reset"
 }
