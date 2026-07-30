@@ -104,9 +104,6 @@ class Config(QConfig):
 
     # UI preferences.
     language = ConfigItem("UI", "Language", "Auto")  # Auto | zh_CN | zh_TW | en_US
-    theme = OptionsConfigItem(
-        "UI", "Theme", "auto", OptionsValidator(["auto", "light", "dark"])
-    )
     autoCollapse = ConfigItem("UI", "AutoCollapse", True)
 
     # System tray: minimise to tray on close instead of quitting (v0.2.7, #3).

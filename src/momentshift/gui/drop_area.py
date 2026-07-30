@@ -1,33 +1,24 @@
-"""Drag-and-drop / click-to-pick input zone, shared by Convert/Compress/Upscale.
+"""拖拽 / 点击输入区域，Convert / Compress / Upscale 共享使用。
 
-Premium rebuild (v0.2.4):
-- A soft circular icon badge with an accent tint.
-- Format chips (parsed from the locale sentence) for an at-a-glance summary.
-- A dashed inner zone whose border turns accent on hover and whose fill deepens
-  on press, so a click reads as a button press on the drop zone.
-- A subtle drop shadow for depth that follows the active theme.
+v0.3.2: CSS border-radius 替代 setMask 实现圆角，消除四角白边。
 """
 
 from __future__ import annotations
 
 import re
-
 from PyQt6.QtGui import QColor, QPixmap, QPainter, QPen, QRegion
-from PyQt6.QtCore import Qt, QUrl, QTimer
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout,
-)
-from qfluentwidgets import FluentIcon as FIF, StrongBodyLabel, CaptionLabel, isDarkTheme
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout
+from qfluentwidgets import FluentIcon as FIF, StrongBodyLabel, CaptionLabel
 
 from ..core.qt_compat import Signal, QDragEnterEvent, QDropEvent
 from .theme import (
     ThemedCard, muted_text, accent_name, surface, surface_pressed, border_color,
-    placeholder_text, surface_raised,
+    placeholder_text, ACCENT_HEX,
 )
 
-
 class DropArea(ThemedCard):
-    """A dashed drop zone. Emits ``filesDropped`` (list of paths) and ``clicked``."""
+    """虚线拖拽区。发出 ``filesDropped``（路径列表）和 ``clicked`` 信号。"""
 
     filesDropped = Signal(list)
     clicked = Signal()
@@ -40,13 +31,12 @@ class DropArea(ThemedCard):
         self._pressed = False
         self._formats = ""
 
-        # NOTE: a QGraphicsDropShadowEffect is intentionally NOT used here — it
-        # cannot coexist with a widget mask (the effect draws outside the widget
-        # rect and gets clipped away) and its blur kernel produces a light fringe
-        # at the rounded corners. Strict rounding + circular masking (below) give
-        # clean, closed corners instead (v0.2.6, #6).
+        # CSS border-radius 裁剪圆角（v0.3.2: 替代 setMask，避免四角透明白边）
+        self.setStyleSheet(
+            "DropArea { background-color: #F5F5F5; border-radius: 14px; }"
+        )
 
-        # --- inner dashed zone (the only part that changes on hover/press) ---
+        # 内部虚线区域
         self.inner = QWidget(self)
         self.inner.setObjectName("dropInner")
         vb = QVBoxLayout(self.inner)
@@ -54,14 +44,11 @@ class DropArea(ThemedCard):
         vb.setSpacing(10)
         vb.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # circular accent icon badge
+        # 圆形 accent 图标徽章
         self.iconBadge = QLabel(self)
         self.iconBadge.setFixedSize(62, 62)
         self.iconBadge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Strict circular clipping: the badge background must stay inside the
-        # circle (no rectangular colour block leaking past the round edge, #6).
-        self.iconBadge.setMask(
-            QRegion(self.iconBadge.rect(), QRegion.RegionType.Ellipse))
+        self.iconBadge.setMask(QRegion(self.iconBadge.rect(), QRegion.RegionType.Ellipse))
         vb.addWidget(self.iconBadge, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.titleLabel = StrongBodyLabel()
@@ -70,14 +57,11 @@ class DropArea(ThemedCard):
 
         self.hintLabel = CaptionLabel()
         self.hintLabel.setObjectName("dropHint")
-        # Hint text is explicitly black per design spec (v0.2.6, #5).
         self.hintLabel.setStyleSheet("color: #212121;")
         vb.addWidget(self.hintLabel, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # format chips row
+        # 格式胶囊行
         self.chipsWrap = QWidget(self)
-        # Transparent background prevents any inherited colour from showing
-        # between format capsules or at rounded corners (v0.3.1, #4).
         self.chipsWrap.setStyleSheet("background: transparent;")
         self.chipsLayout = QHBoxLayout(self.chipsWrap)
         self.chipsLayout.setContentsMargins(0, 0, 0, 0)
@@ -90,9 +74,7 @@ class DropArea(ThemedCard):
 
         self.retheme()
 
-    # -- theming ----------------------------------------------------------
     def _normalBackgroundColor(self):
-        # The card itself stays a stable surface colour — only ``inner`` reacts.
         return surface()
 
     def _hoverBackgroundColor(self):
@@ -102,24 +84,23 @@ class DropArea(ThemedCard):
         return surface()
 
     def _accent_tint(self) -> str:
-        c = QColor(accent_name())
+        c = QColor(ACCENT_HEX)
         return f"rgba({c.red()},{c.green()},{c.blue()},0.14)"
 
     def retheme(self):
         self.iconBadge.setPixmap(
-            FIF.FOLDER_ADD.icon(QColor(accent_name())).pixmap(30, 30))
+            FIF.FOLDER_ADD.icon(QColor(ACCENT_HEX)).pixmap(30, 30))
         self.iconBadge.setStyleSheet(
             f"background: {self._accent_tint()}; border-radius: 31px;")
         self._render_chips(self._parse_formats(self._formats))
         self._apply_style()
 
-    def _apply_style(self) -> None:
-        """Repaint the inner dashed zone (border + press background)."""
+    def _apply_style(self):
         if self._pressed:
-            border = accent_name()
+            border = ACCENT_HEX
             bg = surface_pressed().name()
         elif self._hover:
-            border = accent_name()
+            border = ACCENT_HEX
             bg = self._accent_tint()
         else:
             border = border_color()
@@ -129,7 +110,6 @@ class DropArea(ThemedCard):
             f"border-radius: 12px; background: {bg}; }}"
         )
 
-    # -- format chips -----------------------------------------------------
     @staticmethod
     def _parse_formats(text: str) -> list[str]:
         t = text
@@ -147,8 +127,7 @@ class DropArea(ThemedCard):
             self.chipsWrap.hide()
             return
         self.chipsWrap.show()
-        # Format capsules: solid brand-green background with white text (v0.2.6, #5).
-        bg = accent_name()
+        bg = ACCENT_HEX
         for tok in tokens:
             chip = QLabel(tok)
             chip.setObjectName("dropChip")
@@ -158,8 +137,7 @@ class DropArea(ThemedCard):
             self.chipsLayout.addWidget(chip)
         self.chipsLayout.addStretch(1)
 
-    # -- text -------------------------------------------------------------
-    def retranslate(self, title: str = "", hint: str = "", formats: str = ""):
+    def retranslate(self, title="", hint="", formats=""):
         if title:
             self.titleLabel.setText(title)
         if hint:
@@ -168,7 +146,6 @@ class DropArea(ThemedCard):
             self._formats = formats
             self._render_chips(self._parse_formats(formats))
 
-    # -- interaction ------------------------------------------------------
     def enterEvent(self, event):
         self._hover = True
         self._apply_style()
@@ -188,17 +165,7 @@ class DropArea(ThemedCard):
         super().mouseReleaseEvent(event)
         self._pressed = False
         self._apply_style()
-        # Emit synchronously — callers (_pick_files etc.) are responsible for
-        # protecting against re-entrancy from the modal dialog's inner event
-        # loop (v0.3.0: per-caller _picking guard instead of the broken timer).
         self.clicked.emit()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # v0.3.1: REMOVED setMask — it makes corners truly transparent,
-        # revealing the white view background behind the card. ThemedCard's
-        # paintEvent already draws rounded rect borders; CSS border-radius
-        # handles the visual rounding without transparency artifacts.
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():

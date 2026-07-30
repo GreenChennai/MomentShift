@@ -14,7 +14,7 @@ from PyQt6.QtGui import QColor, QPixmap, QTransform
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider
 
-from qfluentwidgets import FluentIcon as FIF, ComboBox, SwitchButton, CaptionLabel, isDarkTheme
+from qfluentwidgets import FluentIcon as FIF, ComboBox, SwitchButton, CaptionLabel
 
 from ..core import advanced
 from ..core.qt_compat import Signal
@@ -37,7 +37,7 @@ class _Header(QWidget):
         hb.setContentsMargins(0, 4, 0, 4)
         hb.setSpacing(8)
         self.titleLbl = CaptionLabel(title)
-        self.titleLbl.setStyleSheet("font-weight:700; color:#1a1a1a;" if not isDarkTheme()
+        self.titleLbl.setStyleSheet("font-weight:700; color:#1a1a1a;" if not False
                                     else "font-weight:700; color:#e8e8e8;")
         hb.addWidget(self.titleLbl)
         hb.addStretch(1)
@@ -46,7 +46,7 @@ class _Header(QWidget):
         hb.addWidget(self.chevron)
 
     def _paint_chevron(self):
-        color = QColor(120, 120, 120) if not isDarkTheme() else QColor(170, 170, 170)
+        color = QColor(120, 120, 120) if not False else QColor(170, 170, 170)
         pix = FIF.CHEVRON_RIGHT.icon(color).pixmap(16, 16)
         if self._expanded:
             pix = pix.transformed(QTransform().rotate(90))
@@ -66,7 +66,7 @@ class _Header(QWidget):
 
     def retheme(self):
         self._paint_chevron()
-        self.titleLbl.setStyleSheet("font-weight:700; color:#1a1a1a;" if not isDarkTheme()
+        self.titleLbl.setStyleSheet("font-weight:700; color:#1a1a1a;" if not False
                                     else "font-weight:700; color:#e8e8e8;")
 
 

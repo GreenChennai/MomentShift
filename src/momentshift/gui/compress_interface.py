@@ -17,7 +17,7 @@ from PyQt6.QtCore import Qt
 
 from qfluentwidgets import (
     FluentIcon as FIF, PushButton, PrimaryPushButton, SwitchButton, ComboBox,
-    CaptionLabel, StrongBodyLabel, isDarkTheme,
+    CaptionLabel, StrongBodyLabel,
 )
 
 from ..core.config import cfg
@@ -589,7 +589,6 @@ class CompressInterface(InterfaceBase):
             flt = "Images (" + " ".join(f"*{e}" for e in sorted(IMAGE_EXTS)) + ")"
             files, _ = QFileDialog.getOpenFileNames(
                 self, tr("compress.add.files"), "", flt, "",
-                ""
             )
             if files:
                 self._on_files(files)

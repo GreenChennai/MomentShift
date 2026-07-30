@@ -13,7 +13,7 @@ from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QMovie
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QHBoxLayout
 
-from qfluentwidgets import FluentIcon as FIF, PushButton, StrongBodyLabel, CaptionLabel, isDarkTheme
+from qfluentwidgets import FluentIcon as FIF, PushButton, StrongBodyLabel, CaptionLabel
 
 from ..core.ffmpeg import find_ffmpeg
 from ..i18n.translator import tr

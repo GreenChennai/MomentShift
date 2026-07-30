@@ -15,7 +15,7 @@ from PyQt6.QtGui import QColor, QPainter, QPen, QFont, QBrush
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 
-from qfluentwidgets import FlowLayout, isDarkTheme
+from qfluentwidgets import FlowLayout
 
 from ..core.qt_compat import Signal
 from ..core.presets import TARGET_GROUPS
@@ -47,8 +47,8 @@ class FormatCard(QWidget):
             # format label remains readable (not a solid blue block).
             accent.setAlpha(180)
             return accent, QColor(255, 255, 255)
-        border = QColor(200, 200, 200) if not isDarkTheme() else QColor(80, 80, 80)
-        text = QColor(90, 90, 90) if not isDarkTheme() else QColor(180, 180, 180)
+        border = QColor(200, 200, 200) if not False else QColor(80, 80, 80)
+        text = QColor(90, 90, 90) if not False else QColor(180, 180, 180)
         return border, text
 
     def paintEvent(self, event):

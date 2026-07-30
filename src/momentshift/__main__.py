@@ -239,14 +239,25 @@ def main():
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(VERSION)
 
-    # Apply saved preferences before the window appears.
-    theme_map = {"auto": Theme.AUTO, "light": Theme.LIGHT, "dark": Theme.DARK}
-    setTheme(theme_map.get(cfg.theme.value, Theme.AUTO))
-    # v0.2.5: unify the global accent colour to GitHub green (#238636). This
-    # recolours every qfluentwidgets primary element (PrimaryPushButton,
-    # SwitchButton, ComboBox selection, ...) — replacing the old teal default
-    # (#009FAA) and its derived variants in one call.
-    setThemeColor(QColor("#238636"))
+    # =========================================================================
+    # 字体加载（v0.3.2）：简体中文 → HarmonyOS Sans SC，英文/数字 → FiraCode
+    # =========================================================================
+    from PyQt6.QtGui import QFont, QFontDatabase
+    from pathlib import Path
+    _res = Path(__file__).parent / "resources"
+    for _name in ("HarmonyOS_Sans_SC_Regular.ttf", "FiraCode-Regular.ttf"):
+        _fp = _res / _name
+        if _fp.exists():
+            _fid = QFontDatabase.addApplicationFont(str(_fp))
+            log.info("Loaded font: %s (id=%s)", _name, _fid)
+    # 设置默认字体：中文用 HarmonyOS Sans SC，fallback 用 FiraCode
+    _qfont = QFont("HarmonyOS Sans SC", 10)
+    _qfont.setStyleHint(QFont.StyleHint.SansSerif)
+    app.setFont(_qfont)
+
+    # v0.3.2: 固定浅色主题，移除深色主题
+    setTheme(Theme.LIGHT)
+    setThemeColor(QColor("#238636"))   # GitHub 绿
     translator.set_locale(LocaleKey(cfg.language.value))
 
     manager = ConversionManager()

@@ -184,7 +184,6 @@ class ConvertInterface(InterfaceBase):
             flt = "Media (" + " ".join(f"*{e}" for e in sorted(_CONVERT_EXTS)) + ")"
             files, _ = QFileDialog.getOpenFileNames(
                 self, tr("convert.add.files"), "", flt, "",
-                ""
             )
             if files:
                 self._open_setup(files)

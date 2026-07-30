@@ -21,7 +21,7 @@ from qfluentwidgets import (
     SwitchSettingCard,
     CaptionLabel, StrongBodyLabel, BodyLabel,
     CardWidget,
-    isDarkTheme,
+
 )
 
 from ..core.config import cfg

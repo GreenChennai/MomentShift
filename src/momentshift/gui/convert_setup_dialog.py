@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QFrame, QDialog,
 )
 
-from qfluentwidgets import FluentIcon as FIF, isDarkTheme
+from qfluentwidgets import FluentIcon as FIF
 
 from ..core.config import cfg
 from ..core.presets import guess_category
@@ -69,7 +69,7 @@ class ConvertSetupDialog(QDialog):
         title = QLabel(tr("convert.setup.title"))
         title.setStyleSheet(
             "font-size:18px; font-weight:700; color:%s;"
-            % ("#1a1a1a" if not isDarkTheme() else "#e8e8e8")
+            % ("#1a1a1a" if not False else "#e8e8e8")
         )
         root.addWidget(title)
         hint = QLabel(tr("convert.setup.hint"))

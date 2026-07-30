@@ -17,7 +17,7 @@ from PyQt6.QtCore import Qt
 
 from qfluentwidgets import (
     FluentIcon as FIF, PushButton, PrimaryPushButton, SwitchButton, ComboBox,
-    CaptionLabel, StrongBodyLabel, BodyLabel, HyperlinkButton, isDarkTheme,
+    CaptionLabel, StrongBodyLabel, BodyLabel, HyperlinkButton,
 )
 
 from ..core.config import cfg
@@ -493,7 +493,6 @@ class UpscaleInterface(InterfaceBase):
             flt = "Media (" + " ".join(f"*{e}" for e in sorted(_UPSCALE_EXTS)) + ")"
             files, _ = QFileDialog.getOpenFileNames(
                 self, tr("upscale.btn.add"), "", flt, "",
-                ""
             )
             if files:
                 self._add_to_queue(self._expand_paths(files, _UPSCALE_EXTS))

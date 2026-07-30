@@ -83,7 +83,8 @@ class IntInputSettingCard(SettingCard):
         # Remove the +/- stepper buttons — a plain numeric text input (#7).
         self.spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         self.spin.setStyleSheet(
-            "QSpinBox{ border-radius: 6px; padding: 2px 8px; }"
+            "QSpinBox{ border: 1px solid #d0d0d0; border-radius: 6px;"
+            " padding: 4px 8px; background: #ffffff; }"
         )
         self.hBoxLayout.addStretch(1)
         self.hBoxLayout.addWidget(self.spin)
@@ -110,19 +111,13 @@ class SettingInterface(InterfaceBase):
         lang_options = [(name, key.value) for key, name in available_languages()]
         self.langCard = ComboSettingCard(
             cfg.language, FIF.LANGUAGE, tr("settings.language"), "", lang_options)
-        self.themeCard = ComboSettingCard(
-            cfg.theme, FIF.PALETTE, tr("settings.theme"),
-            tr("settings.restart_hint"),
-            [(tr("settings.theme.auto"), "auto"),
-             (tr("settings.theme.light"), "light"),
-             (tr("settings.theme.dark"), "dark")])
         self.autoFoldCard = SwitchSettingCard(
             FIF.HIDE, tr("settings.auto_fold"), tr("settings.auto_fold.hint"),
             cfg.autoCollapse)
         self.trayCard = SwitchSettingCard(
             FIF.MINIMIZE, tr("settings.close_to_tray"), tr("settings.close_to_tray.hint"),
             cfg.closeToTray)
-        for c in (self.langCard, self.themeCard, self.autoFoldCard, self.trayCard):
+        for c in (self.langCard, self.autoFoldCard, self.trayCard):
             self.g_general.addSettingCard(c)
         self.vbox.addWidget(self.g_general)
 
@@ -190,7 +185,6 @@ class SettingInterface(InterfaceBase):
         box = MessageBox(tr("settings.reset"), tr("settings.restart_hint"), self.window())
         if box.exec():
             cfg.language.value = "Auto"
-            cfg.theme.value = "auto"
             cfg.hardware.value = "auto"
             cfg.maxThreads.value = 3
             cfg.ffmpegSource.value = "auto"
@@ -205,8 +199,6 @@ class SettingInterface(InterfaceBase):
         self.g_convert.titleLabel.setText(tr("settings.group.conversion"))
         self.g_data.titleLabel.setText(tr("settings.group.data"))
         self.langCard.setTitle(tr("settings.language"))
-        self.themeCard.setTitle(tr("settings.theme"))
-        self.themeCard.setContent(tr("settings.restart_hint"))
         self.autoFoldCard.setTitle(tr("settings.auto_fold"))
         self.autoFoldCard.setContent(tr("settings.auto_fold.hint"))
         self.trayCard.setTitle(tr("settings.close_to_tray"))
