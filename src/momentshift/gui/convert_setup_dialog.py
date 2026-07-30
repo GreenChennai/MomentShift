@@ -26,16 +26,16 @@ from .advanced_panel import AdvancedPanel
 
 # 格式卡片按钮样式（v0.3.7：75×75 正方形）
 _FMT_CARD_CSS = (
-    "QPushButton{{"
+    "QPushButton{"
     "  background: #e8f5e9; border: 2px solid #c8e6c9; border-radius: 10px;"
     "  color: #2e7d32; font-weight: 700; font-size: 16px;"
     "  min-width: 75px; min-height: 75px; max-width: 75px; max-height: 75px;"
-    "}}"
-    "QPushButton:hover{{ background: #c8e6c9; border-color: #238636; }}"
-    "QPushButton:checked{{"
+    "}"
+    "QPushButton:hover{ background: #c8e6c9; border-color: #238636; }"
+    "QPushButton:checked{"
     "  border-color: #238636; border-width: 2px; background: #238636;"
     "  color: #fff;"
-    "}}"
+    "}"
 )
 
 class ConvertSetupDialog(QDialog):
