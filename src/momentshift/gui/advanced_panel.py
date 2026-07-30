@@ -133,14 +133,30 @@ class AdvancedPanel(QWidget):
         adv = advanced.adv["image"]
 
         def build(layout):
-            # Generic quality slider
+            # --- Compression backend dropdown ---
+            backend = _combo(
+                [(tr("advanced.compression.ffmpeg"), "ffmpeg"),
+                 ("oxipng", "oxipng"),
+                 ("OptiPNG", "optipng"),
+                 ("Mozilla JPEG", "mozjpeg")],
+                adv.get("compress_backend", "ffmpeg"),
+                lambda v: adv.__setitem__("compress_backend", v),
+            )
+            layout.addWidget(field_row(tr("advanced.compression.backend"), backend, label_width=80))
+
+            # --- FFmpeg quality group ---
+            ffmpeg_group = QWidget()
+            fq = QVBoxLayout(ffmpeg_group)
+            fq.setContentsMargins(0, 0, 0, 0)
+            fq.setSpacing(6)
+
             q = QSlider(Qt.Orientation.Horizontal)
             q.setRange(1, 100)
             q.setValue(int(adv.get("quality", 100)))
             q.valueChanged.connect(lambda v: adv.__setitem__("quality", v))
-            layout.addWidget(field_row(tr("advanced.quality"), q, label_width=80))
+            fq.addWidget(field_row(tr("advanced.quality"), q, label_width=80))
 
-            # --- Format-specific quality overrides ---
+            # PNG format override
             png_ex = ExpandWidget(tr("advanced.png.options"))
             png_lvl = QSlider(Qt.Orientation.Horizontal)
             png_lvl.setRange(0, 9)
@@ -160,9 +176,12 @@ class AdvancedPanel(QWidget):
             png_row.addWidget(png_label)
             png_row.addWidget(png_lvl, 1)
             png_row.addWidget(png_enable)
-            png_ex.body_layout.addWidget(field_row(tr("advanced.png.compression"), png_row, label_width=80))
-            layout.addWidget(png_ex)
+            png_ex.body_layout.addWidget(
+                field_row(tr("advanced.png.compression"), png_row, label_width=80)
+            )
+            fq.addWidget(png_ex)
 
+            # JPG format override
             jpg_ex = ExpandWidget(tr("advanced.jpg.options"))
             jpg_q = QSlider(Qt.Orientation.Horizontal)
             jpg_q.setRange(1, 100)
@@ -182,9 +201,12 @@ class AdvancedPanel(QWidget):
             jpg_row.addWidget(jpg_labelx)
             jpg_row.addWidget(jpg_q, 1)
             jpg_row.addWidget(jpg_enable)
-            jpg_ex.body_layout.addWidget(field_row(tr("advanced.jpg.quality"), jpg_row, label_width=80))
-            layout.addWidget(jpg_ex)
+            jpg_ex.body_layout.addWidget(
+                field_row(tr("advanced.jpg.quality"), jpg_row, label_width=80)
+            )
+            fq.addWidget(jpg_ex)
 
+            # WebP format override
             webp_ex = ExpandWidget(tr("advanced.webp.options"))
             webp_q = QSlider(Qt.Orientation.Horizontal)
             webp_q.setRange(1, 100)
@@ -204,52 +226,32 @@ class AdvancedPanel(QWidget):
             webp_row.addWidget(webp_labelx)
             webp_row.addWidget(webp_q, 1)
             webp_row.addWidget(webp_enable)
-            webp_ex.body_layout.addWidget(field_row(tr("advanced.webp.quality"), webp_row, label_width=80))
-            layout.addWidget(webp_ex)
-
-            comp = SwitchButton(tr("advanced.compress"))
-            comp.setChecked(bool(adv.get("compress", False)))
-            comp.checkedChanged.connect(lambda b: adv.__setitem__("compress", b))
-            layout.addWidget(field_row(tr("advanced.compress"), comp, label_width=80))
-
-            mode = _combo(
-                [(tr("advanced.mode.lossless"), "lossless"),
-                 (tr("advanced.mode.lossy"), "lossy")],
-                adv.get("compress_mode", "lossless"),
-                lambda v: adv.__setitem__("compress_mode", v),
+            webp_ex.body_layout.addWidget(
+                field_row(tr("advanced.webp.quality"), webp_row, label_width=80)
             )
-            mode.setEnabled(comp.isChecked())
-            layout.addWidget(field_row(tr("advanced.mode"), mode, label_width=80))
+            fq.addWidget(webp_ex)
 
-            back = _combo(
-                [(tr("advanced.backend.auto"), "auto"),
-                 ("Pillow", "pillow"), ("oxipng", "oxipng"),
-                 ("OptiPNG", "optipng"), ("Mozilla JPEG", "mozjpeg")],
-                adv.get("compress_backend", "auto"),
-                lambda v: adv.__setitem__("compress_backend", v),
-            )
-            back.setEnabled(comp.isChecked())
-            layout.addWidget(field_row(tr("advanced.backend"), back, label_width=80))
+            layout.addWidget(ffmpeg_group)
 
-            # per-backend parameter groups
+            # --- Tool-specific parameter groups ---
             oxi = self._oxipng_ex(adv)
             opti = self._optipng_ex(adv)
             moz = self._mozjpeg_ex(adv)
-            oxi.setEnabled(comp.isChecked())
-            opti.setEnabled(comp.isChecked())
-            moz.setEnabled(comp.isChecked())
             layout.addWidget(oxi)
             layout.addWidget(opti)
             layout.addWidget(moz)
 
-            def _on_compress(b: bool):
-                mode.setEnabled(b)
-                back.setEnabled(b)
-                oxi.setEnabled(b)
-                opti.setEnabled(b)
-                moz.setEnabled(b)
+            # --- Show / hide based on selected backend ---
+            def _on_backend_change(val: str):
+                ffmpeg_group.setVisible(val == "ffmpeg")
+                oxi.setVisible(val == "oxipng")
+                opti.setVisible(val == "optipng")
+                moz.setVisible(val == "mozjpeg")
 
-            comp.checkedChanged.connect(_on_compress)
+            _on_backend_change(adv.get("compress_backend", "ffmpeg"))
+            backend.currentTextChanged.connect(
+                lambda t: _on_backend_change(backend._mapping.get(t, t))
+            )
 
         return self._add_expander("advanced.image.title", build)
 

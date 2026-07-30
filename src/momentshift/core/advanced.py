@@ -42,7 +42,7 @@ def default_options() -> dict:
             # --- image compression (post-conversion / dedicated Compress) ---
             "compress": False,          # disabled by default; user must opt in
             "compress_mode": "lossless",   # lossless | lossy
-            "compress_backend": "auto",    # auto | pillow | oxipng | optipng | mozjpeg
+            "compress_backend": "ffmpeg",   # ffmpeg | oxipng | optipng | mozjpeg
             # per-backend parameter groups (only the relevant ones are used)
             "png_oxipng": {"level": 2, "interlace": False, "strip": "safe"},
             "png_optipng": {"level": 2, "strip": "all"},

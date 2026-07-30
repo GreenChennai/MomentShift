@@ -309,6 +309,7 @@ class QueueListWidget(QWidget):
         if w:
             w.deleteLater()
         self._refresh_empty()
+        self._update_stats(_counts_from(self.items))
 
     def sync(self, tasks):
         ids = {t.id for t in tasks}
@@ -318,12 +319,14 @@ class QueueListWidget(QWidget):
         for t in tasks:
             if t.id not in self.items:
                 self.add_item(t)
+        self._update_stats(_counts_from(self.items))
 
     def clear(self):
         for w in self.items.values():
             w.deleteLater()
         self.items.clear()
         self._refresh_empty()
+        self._update_stats(_counts_from(self.items))
 
     def retranslate(self):
         for w in self.items.values():

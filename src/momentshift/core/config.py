@@ -37,14 +37,13 @@ def app_base_dir() -> Path:
 
 
 def config_dir() -> Path:
-    """Return (and create) the config directory inside the software folder.
+    """Return the config directory inside the software folder.
 
     Deprecated: config now lives at the app root (see ``CONFIG_FILE``). Kept
     only to migrate an old ``config/config.json`` into the new location.
+    Does NOT create the directory (avoids polluting the app root).
     """
-    directory = app_base_dir() / "config"
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory
+    return app_base_dir() / "config"
 
 
 def tools_dir() -> Path:

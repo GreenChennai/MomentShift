@@ -178,8 +178,7 @@ class CollapsibleCard(ThemedCard):
         hb.addStretch()
 
         # arrow toggle button using SVG icons
-        self._toggleBtn = TransparentPushButton("")
-        self._toggleBtn.setIcon(self._toggle_icon())
+        self._toggleBtn = TransparentToolButton(self._toggle_icon(), self)
         self._toggleBtn.setIconSize(QSize(self._ICON_W, self._ICON_H))
         self._toggleBtn.setFixedSize(30, 30)
         self._toggleBtn.clicked.connect(self.toggle)
@@ -297,6 +296,9 @@ def field_row(label_text: str, control, parent=None, label_width: int = 96) -> Q
     from PyQt6.QtWidgets import QLayout
 
     row = QWidget(parent)
+    # Prevent the row container from painting the view's background (#F4F4F4)
+    # through the card surface — the root cause of repeated "grey block" reports.
+    row.setStyleSheet("background: transparent;")
     hb = QHBoxLayout(row)
     hb.setContentsMargins(0, 0, 0, 0)
     hb.setSpacing(12)

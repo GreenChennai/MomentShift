@@ -13,6 +13,7 @@ from PyQt6.QtCore import Qt
 
 from qfluentwidgets import (
     FluentIcon as FIF, PushButton, PrimaryPushButton, SwitchButton,
+    TransparentToolButton,
     CaptionLabel, StrongBodyLabel, isDarkTheme,
 )
 
@@ -71,7 +72,7 @@ class ConvertInterface(InterfaceBase):
         self.stagingLayout.setSpacing(6)
         self.stagingLayout.addStretch(1)
         self.stagingScroll.setWidget(self.stagingList)
-        self.stagingScroll.setMinimumHeight(200)
+        self.stagingScroll.setMinimumHeight(140)
         vb.addWidget(self.stagingScroll)
 
         self.addQueueBtn = primary_btn(tr("convert.queue.add", n=0), icon=FIF.UP)
@@ -92,9 +93,9 @@ class ConvertInterface(InterfaceBase):
         ovb.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(cfg.outputFolder.value)
         self.folderEdit.setReadOnly(True)
-        self.browseBtn = PushButton(FIF.FOLDER, "")
+        self.browseBtn = TransparentToolButton(FIF.FOLDER, self)
         self.browseBtn.setToolTip(tr("convert.output.browse"))
-        self.browseBtn.setFixedWidth(38)
+        self.browseBtn.setFixedSize(36, 36)
         self.browseBtn.clicked.connect(self._pick_output)
         frow = QHBoxLayout()
         frow.addWidget(self.folderEdit, 1)
@@ -130,7 +131,7 @@ class ConvertInterface(InterfaceBase):
         self.queueList.formatChanged.connect(self._on_row_format)
         self.queueScroll = self._scroll()
         self.queueScroll.setWidget(self.queueList)
-        self.queueScroll.setMinimumHeight(420)  # at least ~3.5 items visible
+        self.queueScroll.setMinimumHeight(280)  # ~3 items visible
         qvb.addWidget(self.queueScroll)
 
         ctrl = QHBoxLayout()

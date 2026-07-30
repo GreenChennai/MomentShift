@@ -291,7 +291,7 @@ class CompressInterface(InterfaceBase):
         )
         self.queueScroll.viewport().setStyleSheet("background:transparent;")
         self.queueScroll.setWidget(self.listWidget)
-        self.queueScroll.setMinimumHeight(420)
+        self.queueScroll.setMinimumHeight(280)
         qvb.addWidget(self.queueScroll)
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("compress.start"), icon=FIF.PLAY)

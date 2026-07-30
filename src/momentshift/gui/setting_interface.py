@@ -20,7 +20,7 @@ from qfluentwidgets import (
     MessageBox,
     qconfig,
 )
-from ..core.config import cfg, config_dir
+from ..core.config import cfg, app_base_dir
 from ..i18n.translator import tr, LocaleKey, available_languages
 from .base import InterfaceBase
 
@@ -136,7 +136,9 @@ class SettingInterface(InterfaceBase):
             self.outCard.button.setText(d)
 
     def _open_config(self):
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_dir())))
+        import subprocess, os
+        config_file = os.path.join(str(app_base_dir()), "config.json")
+        subprocess.Popen(["notepad.exe", config_file])
 
     def _reset(self):
         box = MessageBox(tr("settings.reset"), tr("settings.restart_hint"), self.window())
