@@ -1,21 +1,28 @@
 """Drag-and-drop / click-to-pick input zone, shared by Convert/Compress/Upscale.
 
-Only the inner dashed zone changes colour on press (and restores on release);
-the surrounding card itself never changes colour, so a click feels like a
-button press on the drop zone — not a full-card flash.
+Premium rebuild (v0.2.4):
+- A soft circular icon badge with an accent tint.
+- Format chips (parsed from the locale sentence) for an at-a-glance summary.
+- A dashed inner zone whose border turns accent on hover and whose fill deepens
+  on press, so a click reads as a button press on the drop zone.
+- A subtle drop shadow for depth that follows the active theme.
 """
 
 from __future__ import annotations
 
-from PyQt6.QtGui import QColor, QPixmap
+import re
+
+from PyQt6.QtGui import QColor, QPixmap, QPainter, QPen
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGraphicsDropShadowEffect,
+)
 from qfluentwidgets import FluentIcon as FIF, StrongBodyLabel, CaptionLabel, isDarkTheme
 
 from ..core.qt_compat import Signal, QDragEnterEvent, QDropEvent
 from .theme import (
     ThemedCard, muted_text, accent_name, surface, surface_pressed, border_color,
-    placeholder_text,
+    placeholder_text, surface_raised,
 )
 
 
@@ -31,17 +38,28 @@ class DropArea(ThemedCard):
         self.setAcceptDrops(True)
         self._hover = False
         self._pressed = False
+        self._formats = ""
 
+        # Soft shadow for depth.
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setBlurRadius(18)
+        self._shadow.setColor(QColor(0, 0, 0, 28 if not isDarkTheme() else 55))
+        self._shadow.setOffset(0, 4)
+        self.setGraphicsEffect(self._shadow)
+
+        # --- inner dashed zone (the only part that changes on hover/press) ---
         self.inner = QWidget(self)
         self.inner.setObjectName("dropInner")
         vb = QVBoxLayout(self.inner)
-        vb.setContentsMargins(16, 20, 16, 20)
-        vb.setSpacing(8)
+        vb.setContentsMargins(18, 22, 18, 22)
+        vb.setSpacing(10)
         vb.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.iconLabel = QLabel(self)
-        self.iconLabel.setObjectName("dropIcon")
-        vb.addWidget(self.iconLabel, alignment=Qt.AlignmentFlag.AlignCenter)
+        # circular accent icon badge
+        self.iconBadge = QLabel(self)
+        self.iconBadge.setFixedSize(62, 62)
+        self.iconBadge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vb.addWidget(self.iconBadge, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.titleLabel = StrongBodyLabel()
         self.titleLabel.setObjectName("dropTitle")
@@ -52,10 +70,12 @@ class DropArea(ThemedCard):
         self.hintLabel.setStyleSheet(f"color: {muted_text()};")
         vb.addWidget(self.hintLabel, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self.formatsLabel = CaptionLabel()
-        self.formatsLabel.setObjectName("dropFormats")
-        self.formatsLabel.setStyleSheet(f"color: {muted_text()};")
-        vb.addWidget(self.formatsLabel, alignment=Qt.AlignmentFlag.AlignCenter)
+        # format chips row
+        self.chipsWrap = QWidget(self)
+        self.chipsLayout = QHBoxLayout(self.chipsWrap)
+        self.chipsLayout.setContentsMargins(0, 0, 0, 0)
+        self.chipsLayout.setSpacing(6)
+        vb.addWidget(self.chipsWrap, alignment=Qt.AlignmentFlag.AlignCenter)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -74,19 +94,62 @@ class DropArea(ThemedCard):
     def _pressedBackgroundColor(self):
         return surface()
 
+    def _accent_tint(self) -> str:
+        c = QColor(accent_name())
+        return f"rgba({c.red()},{c.green()},{c.blue()},0.14)"
+
     def retheme(self):
-        self.iconLabel.setPixmap(
-            FIF.FOLDER_ADD.icon(QColor(placeholder_text())).pixmap(42, 42))
+        self.iconBadge.setPixmap(
+            FIF.FOLDER_ADD.icon(QColor(accent_name())).pixmap(30, 30))
+        self.iconBadge.setStyleSheet(
+            f"background: {self._accent_tint()}; border-radius: 31px;")
+        self._shadow.setColor(QColor(0, 0, 0, 28 if not isDarkTheme() else 55))
+        self._render_chips(self._parse_formats(self._formats))
         self._apply_style()
 
     def _apply_style(self) -> None:
         """Repaint the inner dashed zone (border + press background)."""
-        border = accent_name() if self._hover else border_color()
-        bg = surface_pressed().name() if self._pressed else surface().name()
+        if self._pressed:
+            border = accent_name()
+            bg = surface_pressed().name()
+        elif self._hover:
+            border = accent_name()
+            bg = self._accent_tint()
+        else:
+            border = border_color()
+            bg = surface().name()
         self.inner.setStyleSheet(
             f"#dropInner{{ border: 2px dashed {border}; "
             f"border-radius: 12px; background: {bg}; }}"
         )
+
+    # -- format chips -----------------------------------------------------
+    @staticmethod
+    def _parse_formats(text: str) -> list[str]:
+        t = text
+        for p in ("支持", "Supports", " supports"):
+            t = t.replace(p, "")
+        parts = re.split(r"[·•、,，\s]+", t)
+        return [p.strip() for p in parts if p.strip()]
+
+    def _render_chips(self, tokens: list[str]) -> None:
+        while self.chipsLayout.count():
+            w = self.chipsLayout.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        if not tokens:
+            self.chipsWrap.hide()
+            return
+        self.chipsWrap.show()
+        bg = surface_raised().name()
+        for tok in tokens:
+            chip = QLabel(tok)
+            chip.setObjectName("dropChip")
+            chip.setStyleSheet(
+                f"QLabel#dropChip{{ color: {muted_text()}; background: {bg};"
+                f" border-radius: 6px; padding: 2px 9px; font-size: 12px; }}")
+            self.chipsLayout.addWidget(chip)
+        self.chipsLayout.addStretch(1)
 
     # -- text -------------------------------------------------------------
     def retranslate(self, title: str = "", hint: str = "", formats: str = ""):
@@ -95,9 +158,20 @@ class DropArea(ThemedCard):
         if hint:
             self.hintLabel.setText(hint)
         if formats:
-            self.formatsLabel.setText(formats)
+            self._formats = formats
+            self._render_chips(self._parse_formats(formats))
 
     # -- interaction ------------------------------------------------------
+    def enterEvent(self, event):
+        self._hover = True
+        self._apply_style()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self._apply_style()
+        super().leaveEvent(event)
+
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
         self._pressed = True

@@ -6,11 +6,12 @@ Grouped into General / Conversion / Data sections to match user expectations.
 
 from __future__ import annotations
 
+from PyQt6.QtWidgets import QSpinBox
+
 from ..core.qt_compat import QFileDialog, QDesktopServices, QUrl
 from qfluentwidgets import (
     SettingCard,
     SettingCardGroup,
-    RangeSettingCard,
     PushSettingCard,
     SwitchSettingCard,
     ComboBox,
@@ -23,6 +24,7 @@ from qfluentwidgets import (
 from ..core.config import cfg, app_base_dir
 from ..i18n.translator import tr, LocaleKey, available_languages
 from .base import InterfaceBase
+from .theme import surface
 
 
 class ComboSettingCard(SettingCard):
@@ -63,11 +65,44 @@ class ComboSettingCard(SettingCard):
         self.combo.blockSignals(False)
 
 
+class IntInputSettingCard(SettingCard):
+    """A setting card with a numeric **input box** (spin box).
+
+    Used for "并发线程数" (#8): a bounded integer input instead of a slider.
+    """
+
+    def __init__(self, configItem, icon, title, content, parent=None,
+                 minimum: int = 1, maximum: int = 16):
+        super().__init__(icon, title, content, parent)
+        self.configItem = configItem
+        self.spin = QSpinBox(self)
+        self.spin.setRange(minimum, maximum)
+        self.spin.setValue(int(configItem.value))
+        self.spin.setFixedWidth(76)
+        self.spin.setObjectName("threadsSpin")
+        self.spin.setStyleSheet(
+            "QSpinBox{ border-radius: 6px; padding: 2px 8px; }"
+        )
+        self.hBoxLayout.addStretch(1)
+        self.hBoxLayout.addWidget(self.spin)
+        self.hBoxLayout.addSpacing(8)
+        self.spin.valueChanged.connect(self._on_changed)
+        configItem.valueChanged.connect(self._on_external)
+
+    def _on_changed(self, value: int):
+        self.configItem.value = value
+
+    def _on_external(self, value):
+        self.spin.blockSignals(True)
+        self.spin.setValue(int(value))
+        self.spin.blockSignals(False)
+
+
 class SettingInterface(InterfaceBase):
     def __init__(self, parent=None):
         super().__init__("Settings", tr("settings.title"), "", parent)
 
-        # --- General: language + theme + output --------------------------
+        # --- General: language + theme -----------------------------------
         self.g_general = SettingCardGroup(tr("settings.group.general"))
 
         lang_options = [(name, key.value) for key, name in available_languages()]
@@ -79,14 +114,10 @@ class SettingInterface(InterfaceBase):
             [(tr("settings.theme.auto"), "auto"),
              (tr("settings.theme.light"), "light"),
              (tr("settings.theme.dark"), "dark")])
-        self.outCard = PushSettingCard(
-            cfg.outputFolder.value or tr("settings.output.fixed_hint"),
-            FIF.FOLDER, tr("settings.output"), tr("settings.output.hint"))
-        self.outCard.button.clicked.connect(self._choose_output)
         self.autoFoldCard = SwitchSettingCard(
             FIF.HIDE, tr("settings.auto_fold"), tr("settings.auto_fold.hint"),
             cfg.autoCollapse)
-        for c in (self.langCard, self.themeCard, self.outCard, self.autoFoldCard):
+        for c in (self.langCard, self.themeCard, self.autoFoldCard):
             self.g_general.addSettingCard(c)
         self.vbox.addWidget(self.g_general)
 
@@ -98,8 +129,10 @@ class SettingInterface(InterfaceBase):
             [(tr("settings.hardware.auto"), "auto"),
              (tr("settings.hardware.cpu"), "cpu"),
              (tr("settings.hardware.gpu"), "gpu")])
-        self.threadsCard = RangeSettingCard(
-            cfg.maxThreads, FIF.SYNC, tr("settings.threads"), tr("settings.threads.hint"))
+        # "并发线程数" is now a numeric input box (default 3), see #8.
+        self.threadsCard = IntInputSettingCard(
+            cfg.maxThreads, FIF.SYNC, tr("settings.threads"), tr("settings.threads.hint"),
+            minimum=1, maximum=16)
         self.ffCard = ComboSettingCard(
             cfg.ffmpegSource, FIF.CLOUD, tr("settings.ffmpeg"), "",
             [(tr("settings.ffmpeg.auto"), "auto"),
@@ -120,21 +153,29 @@ class SettingInterface(InterfaceBase):
             self.g_data.addSettingCard(c)
         self.vbox.addWidget(self.g_data)
 
+        # Remember each group's pristine qss so retheme() can re-apply it with
+        # an explicit theme background without the rule accumulating (#2).
+        self._group_qss = {
+            self.g_general: self.g_general.styleSheet(),
+            self.g_convert: self.g_convert.styleSheet(),
+            self.g_data: self.g_data.styleSheet(),
+        }
+
         self.vbox.addStretch(1)
         self.retheme()
 
     # -- theme -----------------------------------------------------------
     def retheme(self):
         super().retheme()
+        # qfluentwidgets SettingCard paints a faint white overlay, so theming
+        # the *group* background is what actually drives light/dark for the
+        # whole settings page. Apply our theme surface explicitly so the page
+        # follows dark mode (the reported #2 regression).
+        bg = surface().name()
+        for grp, base_qss in self._group_qss.items():
+            grp.setStyleSheet(f"{base_qss}\nSettingCardGroup{{ background-color: {bg}; }}")
 
     # -- actions ---------------------------------------------------------
-    def _choose_output(self):
-        d = QFileDialog.getExistingDirectory(
-            self, tr("settings.output"), cfg.outputFolder.value or "")
-        if d:
-            cfg.outputFolder.value = d
-            self.outCard.button.setText(d)
-
     def _open_config(self):
         import subprocess, os
         config_file = os.path.join(str(app_base_dir()), "config.json")
@@ -146,9 +187,8 @@ class SettingInterface(InterfaceBase):
             cfg.language.value = "Auto"
             cfg.theme.value = "auto"
             cfg.hardware.value = "auto"
-            cfg.maxThreads.value = 4
+            cfg.maxThreads.value = 3
             cfg.ffmpegSource.value = "auto"
-            cfg.outputFolder.value = ""
             qconfig.save()
             InfoBar.success(
                 tr("settings.reset"), "", parent=self.window(),
@@ -162,8 +202,6 @@ class SettingInterface(InterfaceBase):
         self.langCard.setTitle(tr("settings.language"))
         self.themeCard.setTitle(tr("settings.theme"))
         self.themeCard.setContent(tr("settings.restart_hint"))
-        self.outCard.setTitle(tr("settings.output"))
-        self.outCard.setContent(tr("settings.output.hint"))
         self.autoFoldCard.setTitle(tr("settings.auto_fold"))
         self.autoFoldCard.setContent(tr("settings.auto_fold.hint"))
         self.hwCard.setTitle(tr("settings.hardware"))

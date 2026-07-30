@@ -16,14 +16,14 @@ from PyQt6.QtGui import QColor, QPainter, QBrush, QPen
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QComboBox, QVBoxLayout, QHBoxLayout, QSpacerItem, QSizePolicy
 
-from qfluentwidgets import FluentIcon as FIF, ComboBox, CaptionLabel, BodyLabel, isDarkTheme
+from qfluentwidgets import FluentIcon as FIF, ComboBox, CaptionLabel, BodyLabel
 
 from ..core.qt_compat import QWidget, Signal, QApplication
 from ..core.presets import TARGET_GROUPS
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, icon_btn, muted_text, accent_color, sub_text,
-    success_color, danger_color, border_color, surface_raised,
+    success_color, danger_color, border_color,
 )
 
 
@@ -60,13 +60,17 @@ _CATEGORY_ICON = {
     "audio": FIF.MUSIC,
 }
 
-_STATUS_COLOR = {
-    "pending": ("#8a8a8a", "#9a9a9a"),
-    "running": ("#2F98FF", "#4AAEFF"),
-    "done": ("#3EB68F", "#27B17D"),
-    "failed": ("#FF7279", "#E46D70"),
-    "canceled": ("#8a8a8a", "#9a9a9a"),
+# Status pill colours. The pill background is the status colour (vivid, theme
+# independent); the text is the inverse (near-white) so it reads clearly on any
+# status colour. This matches the requested "胶囊 = 状态色, 文字 = 反色" rule.
+_STATUS_PILL_BG = {
+    "pending": "#8a8a8a",
+    "running": "#2F98FF",
+    "done": "#3EB68F",
+    "failed": "#FF7279",
+    "canceled": "#8a8a8a",
 }
+_STATUS_PILL_FG = "#F5F5F5"
 
 
 # --------------------------------------------------------------------------
@@ -121,9 +125,8 @@ class StatusPill(QLabel):
 
     def set_status(self, status: str):
         self._status = status
-        fg = _STATUS_COLOR.get(status, _STATUS_COLOR["pending"])[
-            1 if isDarkTheme() else 0]
-        bg = surface_raised().name()
+        bg = _STATUS_PILL_BG.get(status, _STATUS_PILL_BG["pending"])
+        fg = _STATUS_PILL_FG
         self.setText(tr(f"convert.status.{status}"))
         self.setStyleSheet(
             f"color:{fg}; background:{bg}; border-radius:9px; "

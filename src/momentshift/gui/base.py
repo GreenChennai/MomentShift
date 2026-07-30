@@ -2,7 +2,7 @@
 
 from ..core.qt_compat import QWidget, QVBoxLayout, QFrame
 from qfluentwidgets import ScrollArea, TitleLabel, CaptionLabel, isDarkTheme
-from .theme import content_bg, LIGHT_BG, DARK_BG, accent_name
+from .theme import content_bg, LIGHT_BG, DARK_BG, accent_name, ThemedCard
 
 
 class InterfaceBase(ScrollArea):
@@ -96,6 +96,9 @@ class InterfaceBase(ScrollArea):
         self.view.setStyleSheet(css)
         if self.viewport():
             self.viewport().setStyleSheet(f"background-color: {bg.name()}; border: none;")
+        # Repaint every themed card so its Primer border + surface follow theme.
+        for card in self.findChildren(ThemedCard):
+            card.retheme()
         self._style_accent()
 
     def retranslate(self, title: str = None, subtitle: str = None):

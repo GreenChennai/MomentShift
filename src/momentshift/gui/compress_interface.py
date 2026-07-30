@@ -271,9 +271,9 @@ class CompressInterface(InterfaceBase):
         }
         self._quality = 100
         self._target = "same"
-        self._output_mode = cfg.outputMode.value
-        self._suffix = cfg.outputSuffix.value
-        self._folder = cfg.outputFolder.value or ""
+        self._output_mode = cfg.compressMode.value
+        self._suffix = cfg.compressSuffix.value
+        self._folder = cfg.compressFolder.value or ""
 
         # --- input --------------------------------------------------------
         card, vb, self.tInput = self._card("compress.input.title")
@@ -331,7 +331,8 @@ class CompressInterface(InterfaceBase):
         self.outputSwitch.checkedChanged.connect(self._on_output_mode)
         svb.addWidget(field_row(tr("compress.output.mode"), self.outputSwitch))
         self.suffixEdit = QLineEdit(self._suffix)
-        self.suffixEdit.textChanged.connect(lambda t: setattr(self, "_suffix", t))
+        self.suffixEdit.textChanged.connect(
+            lambda t: (setattr(self, "_suffix", t), setattr(cfg.compressSuffix, "value", t)))
         self.suffixRow = field_row(tr("compress.output.suffix"), self.suffixEdit)
         svb.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(self._folder)
@@ -385,6 +386,7 @@ class CompressInterface(InterfaceBase):
         self._auto_fold = [self._inputCard, scard]
 
         self._on_program(self._program)
+        self._restyle_switches()
         self.vbox.addStretch(1)
         self._collapse_ready = True
         self.retheme()
@@ -519,6 +521,7 @@ class CompressInterface(InterfaceBase):
         inter = SwitchButton(tr("advanced.interlace"))
         inter.setChecked(bool(grp["interlace"]))
         inter.checkedChanged.connect(lambda b: grp.__setitem__("interlace", b))
+        self._ox_inter = inter
         ly.addWidget(field_row(tr("advanced.interlace"), inter))
         strip = self._opt_combo(
             [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
@@ -565,19 +568,23 @@ class CompressInterface(InterfaceBase):
         prog = SwitchButton(tr("advanced.progressive"))
         prog.setChecked(bool(grp["progressive"]))
         prog.checkedChanged.connect(lambda b: grp.__setitem__("progressive", b))
+        self._moz_prog = prog
         ly.addWidget(field_row(tr("advanced.progressive"), prog))
         stripx = SwitchButton(tr("advanced.strip"))
         stripx.setChecked(bool(grp["strip"]))
         stripx.checkedChanged.connect(lambda b: grp.__setitem__("strip", b))
+        self._moz_strip = stripx
         ly.addWidget(field_row(tr("advanced.strip"), stripx))
         arith = SwitchButton(tr("advanced.arithmetic"))
         arith.setChecked(bool(grp["arithmetic"]))
         arith.checkedChanged.connect(lambda b: grp.__setitem__("arithmetic", b))
+        self._moz_arith = arith
         ly.addWidget(field_row(tr("advanced.arithmetic"), arith))
         return w
 
     def _on_output_mode(self, checked):
         self._output_mode = "same" if checked else "fixed"
+        cfg.compressMode.value = self._output_mode
         self._apply_output_mode()
 
     def _apply_output_mode(self):
@@ -587,10 +594,17 @@ class CompressInterface(InterfaceBase):
         self.suffixRow.setVisible(same)
         self.folderRow.setVisible(not same)
 
+    def _restyle_switches(self):
+        """Apply the locale-aware on/off labels to the boolean toggle switches (#6)."""
+        for sw in (self._ox_inter, self._moz_prog, self._moz_strip, self._moz_arith):
+            sw.setOnText(tr("common.on"))
+            sw.setOffText(tr("common.off"))
+
     def _pick_output(self):
         d = QFileDialog.getExistingDirectory(self, tr("compress.output.browse"), self._folder or "")
         if d:
             self._folder = d
+            cfg.compressFolder.value = d
             self.folderEdit.setText(d)
 
     def _on_download_tools(self):
@@ -741,6 +755,7 @@ class CompressInterface(InterfaceBase):
             ("WebP", "webp"), ("BMP", "bmp"), ("TIFF", "tiff"),
         ])
         self._apply_output_mode()
+        self._restyle_switches()
         self.listWidget.retranslate()
         self.startBtn.setText(tr("compress.start"))
         self.pauseBtn.setText(tr("compress.pause"))

@@ -79,11 +79,25 @@ class Config(QConfig):
     )
     outputSuffix = ConfigItem("Folder", "OutputSuffix", "_converted")
 
+    # Compress module — its own output location (independent of Convert).
+    compressFolder = ConfigItem("Folder", "CompressFolder", "", FolderValidator())
+    compressMode = OptionsConfigItem(
+        "Folder", "CompressMode", "fixed", OptionsValidator(["fixed", "same"])
+    )
+    compressSuffix = ConfigItem("Folder", "CompressSuffix", "_compressed")
+
+    # Upscale module — its own output location (independent of Convert).
+    upscaleFolder = ConfigItem("Folder", "UpscaleFolder", "", FolderValidator())
+    upscaleMode = OptionsConfigItem(
+        "Folder", "UpscaleMode", "fixed", OptionsValidator(["fixed", "same"])
+    )
+    upscaleSuffix = ConfigItem("Folder", "UpscaleSuffix", "_upscaled")
+
     # Conversion behaviour.
     hardware = OptionsConfigItem(
         "Convert", "Hardware", "auto", OptionsValidator(["auto", "cpu", "gpu"])
     )
-    maxThreads = RangeConfigItem("Convert", "MaxThreads", 4, RangeValidator(1, 16))
+    maxThreads = RangeConfigItem("Convert", "MaxThreads", 3, RangeValidator(1, 16))
     ffmpegSource = OptionsConfigItem(
         "Convert", "FFmpegSource", "auto", OptionsValidator(["auto", "path"])
     )

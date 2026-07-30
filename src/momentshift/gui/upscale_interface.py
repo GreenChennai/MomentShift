@@ -348,9 +348,9 @@ class UpscaleInterface(InterfaceBase):
         self._fmt = "png"
         self._tile = 0
         self._gpu = True
-        self._output_mode = cfg.outputMode.value
-        self._suffix = cfg.outputSuffix.value
-        self._folder = cfg.outputFolder.value or ""
+        self._output_mode = cfg.upscaleMode.value
+        self._suffix = cfg.upscaleSuffix.value
+        self._folder = cfg.upscaleFolder.value or ""
 
         # --- engine -------------------------------------------------------
         self.engineCard = EngineCard(self)
@@ -432,7 +432,8 @@ class UpscaleInterface(InterfaceBase):
         setvb.addWidget(field_row(tr("upscale.output.mode"), self.outputSwitch))
         self.suffixEdit = QLineEdit(self._suffix)
         self.suffixEdit.setPlaceholderText(tr("upscale.output.suffix_hint"))
-        self.suffixEdit.textChanged.connect(lambda t: setattr(self, "_suffix", t))
+        self.suffixEdit.textChanged.connect(
+            lambda t: (setattr(self, "_suffix", t), setattr(cfg.upscaleSuffix, "value", t)))
         self.suffixRow = field_row(tr("upscale.output.suffix"), self.suffixEdit)
         setvb.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(self._folder)
@@ -612,6 +613,7 @@ class UpscaleInterface(InterfaceBase):
 
     def _on_output_mode(self, checked):
         self._output_mode = "same" if checked else "fixed"
+        cfg.upscaleMode.value = self._output_mode
         self._apply_output_mode()
 
     def _apply_output_mode(self):
@@ -625,6 +627,7 @@ class UpscaleInterface(InterfaceBase):
         d = QFileDialog.getExistingDirectory(self, tr("convert.output.browse"), self._folder or "")
         if d:
             self._folder = d
+            cfg.upscaleFolder.value = d
             self.folderEdit.setText(d)
 
     def _out_path(self, src: str) -> str:

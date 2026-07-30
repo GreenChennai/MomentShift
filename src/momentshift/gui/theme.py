@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from PyQt6.QtCore import QSize
-from PyQt6.QtGui import QColor, QIcon
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPen
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame, QSizePolicy
 
 from qfluentwidgets import (
@@ -232,6 +232,28 @@ class ThemedCard(CardWidget):
 
     def _pressedBackgroundColor(self):
         return PRESS_DARK if isDarkTheme() else PRESS_LIGHT
+
+    def paintEvent(self, event):
+        """Draw the solid surface (via ``CardWidget``) + a crisp theme border.
+
+        qfluentwidgets ``CardWidget`` only paints a faint, low-alpha edge; we add
+        a 1px Primer-style border (``border_color()``) so every component gets a
+        clean, on-brand outline that follows the active light/dark theme.
+        """
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(border_color()))
+        pen.setWidth(1)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        r = self.borderRadius
+        rect = self.rect().adjusted(1, 1, -1, -1)
+        painter.drawRoundedRect(rect, r, r)
+
+    def retheme(self):
+        """Repaint the card so its border/surface follow the active theme."""
+        self.update()
 
 
 class CollapsibleCard(ThemedCard):
