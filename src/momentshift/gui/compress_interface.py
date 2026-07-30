@@ -263,6 +263,8 @@ class CompressInterface(InterfaceBase):
         self._active: set[str] = set()
         self._running = False
         self._paused = False
+        # 重入防护（v0.3.0）：防止模态对话框事件循环触发二次弹框
+        self._picking = False
 
         # 压缩参数默认值
         self._program = "pillow"
@@ -536,13 +538,20 @@ class CompressInterface(InterfaceBase):
             sw.setOffText(tr("common.off"))
 
     def _pick_output(self):
-        d = QFileDialog.getExistingDirectory(
-            self, tr("compress.output.browse"), self._folder or "",
-            QFileDialog.Option.DontUseNativeDialog)
-        if d:
-            self._folder = d
-            cfg.compressFolder.value = d
-            self.folderEdit.setText(d)
+        """浏览选择固定输出目录（带重入防护）。"""
+        if self._picking:
+            return
+        self._picking = True
+        try:
+            d = QFileDialog.getExistingDirectory(
+                self, tr("compress.output.browse"), self._folder or "",
+                QFileDialog.Option.DontUseNativeDialog)
+            if d:
+                self._folder = d
+                cfg.compressFolder.value = d
+                self.folderEdit.setText(d)
+        finally:
+            self._picking = False
 
     def _on_download_tools(self):
         self.toolsBtn.setEnabled(False)
@@ -570,20 +579,34 @@ class CompressInterface(InterfaceBase):
         self._update_controls()
 
     def _pick_files(self):
-        flt = "Images (" + " ".join(f"*{e}" for e in sorted(IMAGE_EXTS)) + ")"
-        files, _ = QFileDialog.getOpenFileNames(
-            self, tr("compress.add.files"), "", flt, "",
-            QFileDialog.Option.DontUseNativeDialog,
-        )
-        if files:
-            self._on_files(files)
+        """弹出图片文件选择器（带重入防护）。"""
+        if self._picking:
+            return
+        self._picking = True
+        try:
+            flt = "Images (" + " ".join(f"*{e}" for e in sorted(IMAGE_EXTS)) + ")"
+            files, _ = QFileDialog.getOpenFileNames(
+                self, tr("compress.add.files"), "", flt, "",
+                QFileDialog.Option.DontUseNativeDialog,
+            )
+            if files:
+                self._on_files(files)
+        finally:
+            self._picking = False
 
     def _pick_folder(self):
-        d = QFileDialog.getExistingDirectory(
-            self, tr("compress.add.folder"), "",
-            QFileDialog.Option.DontUseNativeDialog)
-        if d:
-            self._on_files([d])
+        """弹出文件夹选择器（带重入防护）。"""
+        if self._picking:
+            return
+        self._picking = True
+        try:
+            d = QFileDialog.getExistingDirectory(
+                self, tr("compress.add.folder"), "",
+                QFileDialog.Option.DontUseNativeDialog)
+            if d:
+                self._on_files([d])
+        finally:
+            self._picking = False
 
     def _add_item(self, src):
         if src in self._items:

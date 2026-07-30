@@ -345,6 +345,8 @@ class UpscaleInterface(InterfaceBase):
         self._pending: list[str] = []
         self._running = False
         self._paused = False
+        # 重入防护（v0.3.0）：防止模态对话框事件循环触发二次弹框
+        self._picking = False
 
         # 放大参数默认值
         self._model = "realesrgan-x4plus"
@@ -483,20 +485,34 @@ class UpscaleInterface(InterfaceBase):
         self._add_to_queue(self._expand_paths(paths, _UPSCALE_EXTS))
 
     def _pick_files(self):
-        flt = "Media (" + " ".join(f"*{e}" for e in sorted(_UPSCALE_EXTS)) + ")"
-        files, _ = QFileDialog.getOpenFileNames(
-            self, tr("upscale.btn.add"), "", flt, "",
-            QFileDialog.Option.DontUseNativeDialog,
-        )
-        if files:
-            self._add_to_queue(self._expand_paths(files, _UPSCALE_EXTS))
+        """弹出媒体文件选择器（带重入防护）。"""
+        if self._picking:
+            return
+        self._picking = True
+        try:
+            flt = "Media (" + " ".join(f"*{e}" for e in sorted(_UPSCALE_EXTS)) + ")"
+            files, _ = QFileDialog.getOpenFileNames(
+                self, tr("upscale.btn.add"), "", flt, "",
+                QFileDialog.Option.DontUseNativeDialog,
+            )
+            if files:
+                self._add_to_queue(self._expand_paths(files, _UPSCALE_EXTS))
+        finally:
+            self._picking = False
 
     def _pick_folder(self):
-        d = QFileDialog.getExistingDirectory(
-            self, tr("upscale.add_folder"), "",
-            QFileDialog.Option.DontUseNativeDialog)
-        if d:
-            self._add_to_queue(self._expand_paths([d], _UPSCALE_EXTS))
+        """弹出文件夹选择器（带重入防护）。"""
+        if self._picking:
+            return
+        self._picking = True
+        try:
+            d = QFileDialog.getExistingDirectory(
+                self, tr("upscale.add_folder"), "",
+                QFileDialog.Option.DontUseNativeDialog)
+            if d:
+                self._add_to_queue(self._expand_paths([d], _UPSCALE_EXTS))
+        finally:
+            self._picking = False
 
     def _add_to_queue(self, paths):
         if not paths:
@@ -532,13 +548,20 @@ class UpscaleInterface(InterfaceBase):
         self.folderRow.setVisible(not same)
 
     def _pick_output(self):
-        d = QFileDialog.getExistingDirectory(
-            self, tr("convert.output.browse"), self._folder or "",
-            QFileDialog.Option.DontUseNativeDialog)
-        if d:
-            self._folder = d
-            cfg.upscaleFolder.value = d
-            self.folderEdit.setText(d)
+        """浏览选择固定输出目录（带重入防护）。"""
+        if self._picking:
+            return
+        self._picking = True
+        try:
+            d = QFileDialog.getExistingDirectory(
+                self, tr("convert.output.browse"), self._folder or "",
+                QFileDialog.Option.DontUseNativeDialog)
+            if d:
+                self._folder = d
+                cfg.upscaleFolder.value = d
+                self.folderEdit.setText(d)
+        finally:
+            self._picking = False
 
     def _out_path(self, src: str) -> str:
         p = Path(src)

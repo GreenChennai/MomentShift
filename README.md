@@ -1,8 +1,19 @@
 # MomentShift · 瞬变工坊
 
-> ⚠️ **声明：本项目全部代码由 AI（人工智能）编写**，用于团队技术能力提升与学习交流，并非由人工逐行手写。如有问题或改进建议，欢迎提 Issue / PR。
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="resources/logo-dark.png">
+    <img src="resources/logo.png" alt="MomentShift Logo" width="120">
+  </picture>
+</p>
 
-> 傻瓜式 ffmpeg 多媒体格式转换工具 —— 拖进去，选格式，批量转。
+<p align="center">
+  <strong>傻瓜式 ffmpeg 多媒体格式转换工具 —— 拖进去，选格式，批量转。</strong>
+</p>
+
+---
+
+> ⚠️ **声明：本项目全部代码由 AI（人工智能）编写**，用于团队技术能力提升与学习交流，并非由人工逐行手写。如有问题或改进建议，欢迎提 Issue / PR。
 
 MomentShift（中文名 **瞬变工坊**）是一个基于 [ffmpeg](https://ffmpeg.org/) 的跨平台多媒体格式转换工具。
 我们把 ffmpeg 复杂的参数封装成「最优质量、写死即用」的预设，让用户无需理解任何命令行，
@@ -20,6 +31,8 @@ MomentShift（中文名 **瞬变工坊**）是一个基于 [ffmpeg](https://ffmp
 - **批量队列**：多线程队列并发转换，显著加速大批量任务。
 - **CPU / GPU 加速**：自动检测 NVIDIA (nvenc) / Intel (qsv) / AMD (amf) / Apple (videotoolbox) 硬件编码器，自动回退 CPU。
 - **多格式互转**：图片（png/jpg/webp/bmp/tiff/gif）、音频（mp3/wav/flac/aac/m4a/ogg）、视频（mp4/mkv/mov/webm/avi/gif）。
+- **三大功能模块**：转换（ffmpeg 格式互转）/ 压缩（pillow / oxipng / optipng / mozjpeg 无损 + 有损）/ 放大（Real-ESRGAN AI 超分辨率）。
+- **快速调用（Windows 右键菜单）**：在文件管理器右键选择文件 → 瞬变工坊 → 转换 / 压缩 / 放大，无需打开主界面。
 - **独立「转换设置」弹窗**：选择文件后即弹出 800×500 窗口，集中配置「待处理文件 / 目标格式 / 高级参数」，确认后一键进入转换队列。
 - **静默任务执行**：批量转换 / 压缩 / 放大时不再弹出命令行黑框，后台安静运行。
 - **系统托盘**：关闭窗口时最小化到托盘静默运行，双击托盘图标即可立即唤起（设置中可切换为「直接退出」）。

@@ -52,6 +52,9 @@ class ConvertInterface(InterfaceBase):
         self.manager = manager
         # 默认目标格式（按媒体大类）
         self._selection = {"image": "jpg", "audio": "mp3", "video": "mp4"}
+        # 重入防护（v0.3.0）：模态对话框内部事件循环会递送 synthetic
+        # mouseReleaseEvent，此标志确保只有第一次点击真正打开文件选择器
+        self._picking = False
 
         # =====================================================================
         # ffmpeg 状态卡片
@@ -173,22 +176,34 @@ class ConvertInterface(InterfaceBase):
         self._update_controls()
 
     def _pick_files(self):
-        """点击 DropArea 弹出文件选择器。"""
-        flt = "Media (" + " ".join(f"*{e}" for e in sorted(_CONVERT_EXTS)) + ")"
-        files, _ = QFileDialog.getOpenFileNames(
-            self, tr("convert.add.files"), "", flt, "",
-            QFileDialog.Option.DontUseNativeDialog,
-        )
-        if files:
-            self._open_setup(files)
+        """点击 DropArea 弹出文件选择器（带重入防护）。"""
+        if self._picking:
+            return
+        self._picking = True
+        try:
+            flt = "Media (" + " ".join(f"*{e}" for e in sorted(_CONVERT_EXTS)) + ")"
+            files, _ = QFileDialog.getOpenFileNames(
+                self, tr("convert.add.files"), "", flt, "",
+                QFileDialog.Option.DontUseNativeDialog,
+            )
+            if files:
+                self._open_setup(files)
+        finally:
+            self._picking = False
 
     def _pick_folder(self):
-        """弹出文件夹选择器。"""
-        d = QFileDialog.getExistingDirectory(
-            self, tr("convert.add.folder"), "",
-            QFileDialog.Option.DontUseNativeDialog)
-        if d:
-            self._open_setup([d])
+        """弹出文件夹选择器（带重入防护）。"""
+        if self._picking:
+            return
+        self._picking = True
+        try:
+            d = QFileDialog.getExistingDirectory(
+                self, tr("convert.add.folder"), "",
+                QFileDialog.Option.DontUseNativeDialog)
+            if d:
+                self._open_setup([d])
+        finally:
+            self._picking = False
 
     # =========================================================================
     # 输出位置设置
@@ -209,13 +224,19 @@ class ConvertInterface(InterfaceBase):
         self.folderRow.setVisible(not same)
 
     def _pick_output(self):
-        """浏览选择固定输出目录。"""
-        d = QFileDialog.getExistingDirectory(
-            self, tr("convert.output.browse"), cfg.outputFolder.value or "",
-            QFileDialog.Option.DontUseNativeDialog)
-        if d:
-            cfg.outputFolder.value = d
-            self.folderEdit.setText(d)
+        """浏览选择固定输出目录（带重入防护）。"""
+        if self._picking:
+            return
+        self._picking = True
+        try:
+            d = QFileDialog.getExistingDirectory(
+                self, tr("convert.output.browse"), cfg.outputFolder.value or "",
+                QFileDialog.Option.DontUseNativeDialog)
+            if d:
+                cfg.outputFolder.value = d
+                self.folderEdit.setText(d)
+        finally:
+            self._picking = False
 
     # =========================================================================
     # 队列操作
