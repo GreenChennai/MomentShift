@@ -202,14 +202,14 @@ class QueueItemWidget(ThemedCard):
         self.prog.set_value(pct)
 
     def set_status(self, status: str, error: str = ""):
+        # v0.6.9：压缩完成任务不覆盖金色状态（必须在 pill 修改前检查）
+        if status == "done" and getattr(self._task, 'compress_done', False):
+            return
         self._task.status = status
         self.pill.set_status(status)
         self.prog.set_error(status == "failed")
         self.retryBtn.setVisible(status in ("failed", "canceled"))
         if status == "done":
-            # v0.6.8：如果已压缩完成，保留金色状态，不覆盖为绿色
-            if getattr(self._task, 'compress_done', False):
-                return
             self.detailLbl.setText(
                 format_size_compare(self._task.src_size, self._task.dst_size)
             )

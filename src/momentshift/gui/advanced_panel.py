@@ -230,7 +230,7 @@ class AdvancedPanel(QWidget):
         alpha.setChecked(bool(comp.get("alpha", False)))
         alpha.checkedChanged.connect(lambda b: comp.__setitem__("alpha", b))
         fr=field_row(tr("advanced.alpha"), alpha); self._add_help(fr,"advanced.help.alpha"); oxi_l.addWidget(fr)
-        # v0.6.8：imagecodecs 高级参数（progressive, subsampling — 仅 JPEG）
+        # v0.6.9：imagecodecs 高级参数
         prog = SwitchButton(tr("advanced.progressive"))
         prog.setChecked(bool(comp.get("progressive", False)))
         prog.checkedChanged.connect(lambda b: comp.__setitem__("progressive", b))
@@ -239,11 +239,19 @@ class AdvancedPanel(QWidget):
                       comp.get("subsampling", "4:2:0"),
                       lambda v: comp.__setitem__("subsampling", v))
         fr=field_row(tr("advanced.subsampling"), sub); self._add_help(fr,"advanced.help.subsampling"); oxi_l.addWidget(fr)
+        opt = SwitchButton(tr("advanced.optimize"))
+        opt.setChecked(bool(comp.get("optimize", False)))
+        opt.checkedChanged.connect(lambda b: comp.__setitem__("optimize", b))
+        fr=field_row(tr("advanced.optimize"), opt); self._add_help(fr,"advanced.help.optimize"); oxi_l.addWidget(fr)
+        smooth = SwitchButton(tr("advanced.smoothing"))
+        smooth.setChecked(bool(comp.get("smoothing", False)))
+        smooth.checkedChanged.connect(lambda b: comp.__setitem__("smoothing", b))
+        fr=field_row(tr("advanced.smoothing"), smooth); self._add_help(fr,"advanced.help.smoothing"); oxi_l.addWidget(fr)
         self.vbox.addWidget(oxi_grp)
-        oxi_grp._oxi_grp = True  # 标记用于 retheme
+        oxi_grp._oxi_grp = True
 
         def _on_backend_change(val: str):
-            oxi_grp.setVisible(val == "oxipng")
+            oxi_grp.setVisible(val in ("oxipng", "imagecodecs"))
         _on_backend_change(comp.get("backend", "oxipng"))
         backend.currentTextChanged.connect(
             lambda t: _on_backend_change(backend._mapping.get(t, t)))

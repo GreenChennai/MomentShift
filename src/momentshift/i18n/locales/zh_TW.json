@@ -376,7 +376,7 @@
   "advanced.compression.imagecodecs": "imagecodecs (內置)",
   "advanced.oxipng.only_png": "oxipng 僅支持 PNG 格式",
   "advanced.help.backend": "壓縮程序：選擇用什麼工具壓縮圖片。oxipng 僅 PNG；imagecodecs 通用；Pillow 備用。",
-  "advanced.help.quality": "質量：1=最小體積，100=最高畫質。影響輸出檔案大小和清晰度。",
+  "advanced.help.quality": "質量：1=最小體積，100=最高畫質",
   "advanced.help.level": "壓縮等級：0=最快（體積大），6=最慢（體積最小）。",
   "advanced.help.interlace": "隔行掃描：開啟後圖片在網路加載時逐行顯示。",
   "advanced.help.strip": "清除元數據：safe=保留顏色信息，all=清除所有元數據。",
@@ -404,5 +404,9 @@
   "advanced.help.zc": "Zlib 壓縮級別：1=最快（體積大）9=最慢（體積小）。推薦 6",
   "advanced.help.alpha": "Alpha 優化：優化透明通道壓縮。適用於含透明度的 PNG",
   "advanced.help.progressive": "漸進式：生成逐行加載的 JPEG。支持漸進式解碼器",
-  "advanced.help.subsampling": "色度採樣：4:4:4=最高保真 4:2:0=最小體積"
+  "advanced.help.subsampling": "色度採樣：4:4:4=最高保真 4:2:0=最小體積",
+  "advanced.optimize": "Huffman 優化",
+  "advanced.smoothing": "DCT 平滑",
+  "advanced.help.optimize": "Huffman 表優化：減少 JPEG 體積約 5-10%",
+  "advanced.help.smoothing": "DCT 平滑去塊：略微模糊減少塊狀偽影和體積"
 }

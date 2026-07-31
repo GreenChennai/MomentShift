@@ -202,58 +202,60 @@ def _compress_imagecodecs(src: str, dst: str, fmt: str, quality: int, opts: dict
 
 
 def _ic_jpeg(dst: str, arr, quality: int, opts: dict) -> bool:
+    """v0.6.9：jpeg_encode 返回 bytes，手动写盘。"""
     from imagecodecs import jpeg_encode
-    kw = {"quality": quality}
-    # 高级参数
-    if opts.get("progressive", False):
-        kw["progressive"] = True
-    if "subsampling" in opts and opts["subsampling"]:
-        subs = opts["subsampling"]
-        if subs in ("4:2:0", "4:2:2", "4:4:4"):
-            kw["subsampling"] = subs
+    kw = {"level": quality}  # imagecodecs 用 level 不是 quality
+    if opts.get("subsampling"):
+        kw["subsampling"] = opts["subsampling"]
+    if opts.get("optimize"):
+        kw["optimize"] = True
+    if opts.get("smoothing"):
+        kw["smoothing"] = True
+    if opts.get("progressive"):
+        kw["lossless"] = False  # JPEG-lossless mode if True, else standard
+        # progressive via libjpeg-turbo: standard DCT
     try:
-        jpeg_encode(arr, outfile=dst, **kw)
+        data = jpeg_encode(arr, **kw)
+        with open(dst, "wb") as f:
+            f.write(data)
         return True
     except Exception:
-        log.warning("imagecodecs jpeg_encode failed, falling back to pillow")
+        log.warning("jpeg_encode failed, falling back to pillow")
         return False
 
 
 def _ic_png(dst: str, arr, quality: int, opts: dict) -> bool:
     from imagecodecs import spng_encode
-    kw = {}
-    if "level" in opts:
-        kw["level"] = int(opts["level"])
+    kw = {"level": opts.get("level", 6)}
     if opts.get("filter") is not None:
-        kw["filter"] = int(opts.get("filter", 0))
+        kw["filter"] = int(opts["filter"])
     try:
-        spng_encode(arr, outfile=dst, **kw)
+        data = spng_encode(arr, **kw)
+        with open(dst, "wb") as f:
+            f.write(data)
         return True
     except Exception:
-        try:
-            from imagecodecs import png_encode
-            png_encode(arr, outfile=dst, level=opts.get("level", 6))
-            return True
-        except Exception:
-            log.warning("imagecodecs spng_encode failed, falling back to pillow")
-            return False
+        log.warning("spng_encode failed, falling back to pillow")
+        return False
 
 
 def _ic_webp(dst: str, arr, quality: int, opts: dict) -> bool:
     from imagecodecs import webp_encode
-    kw = {"quality": quality}
+    kw = {"level": quality}
     if opts.get("lossless"):
         kw["lossless"] = True
     try:
-        webp_encode(arr, outfile=dst, **kw)
+        data = webp_encode(arr, **kw)
+        with open(dst, "wb") as f:
+            f.write(data)
         return True
     except Exception:
-        log.warning("imagecodecs webp_encode failed, falling back to pillow")
+        log.warning("webp_encode failed, falling back to pillow")
         return False
 
 
 def _compress_pillow(src: str, dst: str, fmt: str, quality: int, opts: dict) -> bool:
-    """Pillow 兜底压缩。"""
+    """v0.6.9：Pillow 兜底压缩（支持高级参数）。"""
     try:
         from PIL import Image
         img = Image.open(src)
@@ -264,10 +266,22 @@ def _compress_pillow(src: str, dst: str, fmt: str, quality: int, opts: dict) -> 
         if save_fmt == "JPEG":
             kw["quality"] = quality
             kw["optimize"] = True
+            if opts.get("progressive"):
+                kw["progressive"] = True
+            sub = opts.get("subsampling", "4:2:0")
+            if sub == "4:4:4": kw["subsampling"] = 0
+            elif sub == "4:2:2": kw["subsampling"] = 1
+            else: kw["subsampling"] = 2
         elif save_fmt == "PNG":
             kw["optimize"] = True
+            if opts.get("level") is not None:
+                kw["compress_level"] = int(opts["level"])
+            if opts.get("filter") is not None:
+                kw["filter"] = int(opts["filter"])
         elif save_fmt == "WEBP":
             kw["quality"] = quality
+            if opts.get("lossless"):
+                kw["lossless"] = True
         img.save(dst, format=save_fmt, **kw)
         return True
     except Exception:

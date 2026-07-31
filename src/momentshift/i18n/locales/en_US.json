@@ -376,7 +376,7 @@
   "advanced.compression.imagecodecs": "imagecodecs (Built-in)",
   "advanced.oxipng.only_png": "oxipng only supports PNG format",
   "advanced.help.backend": "Compression backend: tool for image compression.",
-  "advanced.help.quality": "Quality: 1=smallest, 100=best. Affects file size and clarity.",
+  "advanced.help.quality": "Quality: 1=smallest, 100=best. Uses 'level' param in imagecodecs",
   "advanced.help.level": "Compression level: 0=fastest(larger), 6=slowest(smallest).",
   "advanced.help.interlace": "Interlace: image loads progressively on web.",
   "advanced.help.strip": "Strip metadata: safe=keep color info, all=remove everything.",
@@ -404,5 +404,9 @@
   "advanced.help.zc": "Zlib level: 1=fastest(larger) 9=slowest(smallest). Default 6",
   "advanced.help.alpha": "Alpha optimize: optimize transparency channel compression",
   "advanced.help.progressive": "Progressive: generate progressively-loading JPEG",
-  "advanced.help.subsampling": "Subsampling: 4:4:4=best quality 4:2:0=smallest"
+  "advanced.help.subsampling": "Subsampling: 4:4:4=best quality 4:2:0=smallest",
+  "advanced.optimize": "Huffman Optimize",
+  "advanced.smoothing": "DCT Smoothing",
+  "advanced.help.optimize": "Huffman table optimization: reduces JPEG size by ~5-10%",
+  "advanced.help.smoothing": "DCT smoothing: slightly blur to reduce blocking artifacts & size"
 }
