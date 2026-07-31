@@ -214,6 +214,31 @@ class AdvancedPanel(QWidget):
             [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
             comp.get("strip", "safe"), lambda v: comp.__setitem__("strip", v))
         fr=field_row(tr("advanced.strip"),strip); self._add_help(fr,"advanced.help.strip"); oxi_l.addWidget(fr)
+        # v0.6.8：oxipng 高级参数
+        o_filt = _combo([(tr("advanced.filter.none"), 0), (tr("advanced.filter.sub"), 1),
+                          (tr("advanced.filter.up"), 2), (tr("advanced.filter.average"), 3),
+                          (tr("advanced.filter.paeth"), 4), (tr("advanced.filter.mixed"), 5)],
+                         comp.get("filter", 0), lambda v: comp.__setitem__("filter", int(v)))
+        fr=field_row(tr("advanced.filter"), o_filt); self._add_help(fr,"advanced.help.filter"); oxi_l.addWidget(fr)
+        zc = QSlider(Qt.Orientation.Horizontal)
+        zc.setRange(1, 9); zc.setValue(int(comp.get("zc", 6)))
+        zc_label = QLabel(str(comp.get("zc", 6)))
+        zc.valueChanged.connect(lambda v: (comp.__setitem__("zc", v), zc_label.setText(str(v))))
+        zc_row = QHBoxLayout(); zc_row.addWidget(zc_label); zc_row.addWidget(zc, 1)
+        fr=field_row(tr("advanced.zc"), zc_row); self._add_help(fr,"advanced.help.zc"); oxi_l.addWidget(fr)
+        alpha = SwitchButton(tr("advanced.alpha"))
+        alpha.setChecked(bool(comp.get("alpha", False)))
+        alpha.checkedChanged.connect(lambda b: comp.__setitem__("alpha", b))
+        fr=field_row(tr("advanced.alpha"), alpha); self._add_help(fr,"advanced.help.alpha"); oxi_l.addWidget(fr)
+        # v0.6.8：imagecodecs 高级参数（progressive, subsampling — 仅 JPEG）
+        prog = SwitchButton(tr("advanced.progressive"))
+        prog.setChecked(bool(comp.get("progressive", False)))
+        prog.checkedChanged.connect(lambda b: comp.__setitem__("progressive", b))
+        fr=field_row(tr("advanced.progressive"), prog); self._add_help(fr,"advanced.help.progressive"); oxi_l.addWidget(fr)
+        sub = _combo([("4:2:0", "4:2:0"), ("4:2:2", "4:2:2"), ("4:4:4", "4:4:4")],
+                      comp.get("subsampling", "4:2:0"),
+                      lambda v: comp.__setitem__("subsampling", v))
+        fr=field_row(tr("advanced.subsampling"), sub); self._add_help(fr,"advanced.help.subsampling"); oxi_l.addWidget(fr)
         self.vbox.addWidget(oxi_grp)
         oxi_grp._oxi_grp = True  # 标记用于 retheme
 

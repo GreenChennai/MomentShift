@@ -15,6 +15,7 @@ class Task:
 
     PENDING = "pending"
     RUNNING = "running"
+    COMPRESSING = "compressing"  # v0.6.8：转换完成，正在压缩
     DONE = "done"
     FAILED = "failed"
     CANCELED = "canceled"

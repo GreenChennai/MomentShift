@@ -120,9 +120,13 @@ def compress(src: str, dst: str, fmt: str, quality: int = 95,
         backend = "pillow"
 
     try:
-        return handlers[backend](src, dst, fmt, quality, opts or {})
+        ok = handlers[backend](src, dst, fmt, quality, opts or {})
+        if not ok and backend != "pillow":
+            log.warning("compress(%s) returned False, falling back to pillow", backend)
+            return _compress_pillow(src, dst, fmt, quality, opts or {})
+        return ok
     except Exception:
-        log.exception("compress(%s) failed, falling back to pillow", backend)
+        log.exception("compress(%s) crashed, falling back to pillow", backend)
         try:
             return _compress_pillow(src, dst, fmt, quality, opts or {})
         except Exception:
@@ -140,15 +144,27 @@ def _compress_oxipng(src: str, dst: str, fmt: str, quality: int, opts: dict) -> 
     if src != tmp:
         shutil.copy2(src, tmp)
     args = [ox, "--quiet"]
+    # 压缩等级 0-6
     level = int(opts.get("level", 3))
     if 0 <= level <= 6:
         args.append(f"--opt={level}")
     if opts.get("interlace"):
         args.append("--interlace=1")
-    if opts.get("strip") == "all":
-        args.append("--strip=all")
-    elif opts.get("strip", "safe") == "safe":
-        args.append("--strip=safe")
+    # 元数据清除
+    strip_val = opts.get("strip", "safe")
+    if strip_val in ("safe", "all"):
+        args.append(f"--strip={strip_val}")
+    # v0.6.8：过滤器 0-5
+    filt = opts.get("filter")
+    if filt is not None and 0 <= int(filt) <= 5:
+        args.append(f"--filter={int(filt)}")
+    # v0.6.8：zlib 压缩级别 1-9
+    zc = opts.get("zc")
+    if zc is not None and 1 <= int(zc) <= 9:
+        args.extend(["--zc", str(int(zc))])
+    # v0.6.8：alpha 优化
+    if opts.get("alpha"):
+        args.append("--alpha")
     args.append(tmp)
     try:
         subprocess.run(args, check=True, creationflags=WIN_SILENT, timeout=120)
@@ -161,27 +177,78 @@ def _compress_oxipng(src: str, dst: str, fmt: str, quality: int, opts: dict) -> 
 
 
 def _compress_imagecodecs(src: str, dst: str, fmt: str, quality: int, opts: dict) -> bool:
-    """imagecodecs 压缩（v0.6.4：jpg→jpeg 规范化）。"""
+    """v0.6.8：imagecodecs 压缩（逐格式专用编码器 + 高级参数）。"""
     try:
         from PIL import Image
         import numpy
-        from imagecodecs import imwrite
         img = Image.open(src)
         arr = numpy.array(img)
         fmt_norm = (fmt or "jpg").lower().lstrip(".")
-        if fmt_norm == "jpg": fmt_norm = "jpeg"
-        # imagecodecs 2026.6.26 无 jpeg8_encode，fallback to pillow
-        kw = {}
+        if fmt_norm == "jpg":
+            fmt_norm = "jpeg"
+
         if fmt_norm == "jpeg":
-            kw["quality"] = quality
-        try:
-            imwrite(dst, arr, codec=fmt_norm, **kw)
-        except Exception:
-            log.warning("imagecodecs '%s' failed, falling back to pillow", fmt_norm)
-            _compress_pillow(src, dst, fmt, quality, opts)
-        return True
+            return _ic_jpeg(dst, arr, quality, opts)
+        elif fmt_norm == "png":
+            return _ic_png(dst, arr, quality, opts)
+        elif fmt_norm == "webp":
+            return _ic_webp(dst, arr, quality, opts)
+        else:
+            # bmp/tiff: fallback to pillow directly
+            return _compress_pillow(src, dst, fmt, quality, opts)
     except Exception:
         log.exception("imagecodecs failed")
+        return False
+
+
+def _ic_jpeg(dst: str, arr, quality: int, opts: dict) -> bool:
+    from imagecodecs import jpeg_encode
+    kw = {"quality": quality}
+    # 高级参数
+    if opts.get("progressive", False):
+        kw["progressive"] = True
+    if "subsampling" in opts and opts["subsampling"]:
+        subs = opts["subsampling"]
+        if subs in ("4:2:0", "4:2:2", "4:4:4"):
+            kw["subsampling"] = subs
+    try:
+        jpeg_encode(arr, outfile=dst, **kw)
+        return True
+    except Exception:
+        log.warning("imagecodecs jpeg_encode failed, falling back to pillow")
+        return False
+
+
+def _ic_png(dst: str, arr, quality: int, opts: dict) -> bool:
+    from imagecodecs import spng_encode
+    kw = {}
+    if "level" in opts:
+        kw["level"] = int(opts["level"])
+    if opts.get("filter") is not None:
+        kw["filter"] = int(opts.get("filter", 0))
+    try:
+        spng_encode(arr, outfile=dst, **kw)
+        return True
+    except Exception:
+        try:
+            from imagecodecs import png_encode
+            png_encode(arr, outfile=dst, level=opts.get("level", 6))
+            return True
+        except Exception:
+            log.warning("imagecodecs spng_encode failed, falling back to pillow")
+            return False
+
+
+def _ic_webp(dst: str, arr, quality: int, opts: dict) -> bool:
+    from imagecodecs import webp_encode
+    kw = {"quality": quality}
+    if opts.get("lossless"):
+        kw["lossless"] = True
+    try:
+        webp_encode(arr, outfile=dst, **kw)
+        return True
+    except Exception:
+        log.warning("imagecodecs webp_encode failed, falling back to pillow")
         return False
 
 

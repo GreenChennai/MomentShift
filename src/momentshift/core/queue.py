@@ -488,6 +488,7 @@ class ConversionManager(QObject):
             task.error = log
             # v0.6.7：如果需要压缩，交给压缩线程池，不标记完成
             if ok and task.compress_enabled:
+                task.status = Task.COMPRESSING  # v0.6.8：不占用转换槽位
                 task.pre_compress_size = task.dst_size
                 cw = CompressWorker(task)
                 cw.signals.compress_started.connect(self.compress_started)
@@ -497,7 +498,7 @@ class ConversionManager(QObject):
                 task.status = Task.DONE if ok else Task.FAILED
         self._events.pop(task_id, None)
         get_logger("queue").info("Task %s %s", task_id, "done" if ok else "failed")
-        if task and not task.compress_enabled:
+        if task and not (ok and task.compress_enabled):
             self.task_finished.emit(task_id, ok, log)
 
         if not self._paused:

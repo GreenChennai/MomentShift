@@ -389,5 +389,20 @@
   "advanced.help.channels": "声道：stereo=双声道，mono=单声道。",
   "advanced.help": "帮助",
   "compress.status.done": "压缩完成",
-  "compress.label": "压缩"
+  "compress.label": "压缩",
+  "advanced.filter": "过滤器",
+  "advanced.zc": "Zlib 压缩级别",
+  "advanced.alpha": "Alpha 优化",
+  "advanced.subsampling": "色度采样",
+  "advanced.filter.none": "无",
+  "advanced.filter.sub": "Sub",
+  "advanced.filter.up": "Up",
+  "advanced.filter.average": "Average",
+  "advanced.filter.paeth": "Paeth",
+  "advanced.filter.mixed": "Mixed",
+  "advanced.help.filter": "过滤器：PNG 预压缩行过滤器。0=无 1=Sub 2=Up 3=Average 4=Paeth 5=混合",
+  "advanced.help.zc": "Zlib 压缩级别：1=最快（体积大）9=最慢（体积小）。推荐 6",
+  "advanced.help.alpha": "Alpha 优化：优化透明通道压缩。适用于含透明度的 PNG",
+  "advanced.help.progressive": "渐进式：生成逐行加载的 JPEG。支持渐进式解码器",
+  "advanced.help.subsampling": "色度采样：4:4:4=最高保真 4:2:0=最小体积"
 }
