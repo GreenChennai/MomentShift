@@ -335,7 +335,7 @@
   "upscale.staging.empty": "",
   "settings.group.conversion": "轉換",
   "settings.group.data": "資料與快取",
-  "advanced.compression.pillow": "Pillow (內建)",
+  "advanced.compression.pillow": "Pillow (內置)",
   "settings.close_to_tray": "關閉時最小化到托盤",
   "settings.close_to_tray.hint": "關閉視窗時最小化到托盤而非直接退出",
   "tray.title": "瞬變工坊",
@@ -371,5 +371,7 @@
   "convert.ffmpeg_status": "FFmpeg 狀態",
   "upscale.compare.original": "原圖",
   "upscale.compare.upscaled": "放大",
-  "upscale.compare.reset": "重置"
+  "upscale.compare.reset": "重置",
+  "advanced.compression.oxipng": "oxipng (內置)",
+  "advanced.compression.imagecodecs": "imagecodecs (內置)"
 }

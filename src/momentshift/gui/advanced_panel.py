@@ -116,17 +116,11 @@ class AdvancedPanel(QWidget):
         self._clear()
         self._categories = list(categories)
         if "image" in categories:
-            ex = self._add_image()
-            self._expanders.append(ex)
-            self.vbox.addWidget(ex)
+            self._add_image()
         if "video" in categories:
-            ex = self._add_video()
-            self._expanders.append(ex)
-            self.vbox.addWidget(ex)
+            self._add_video()
         if "audio" in categories:
-            ex = self._add_audio()
-            self._expanders.append(ex)
-            self.vbox.addWidget(ex)
+            self._add_audio()
         self.vbox.addStretch(1)
 
     def _add_expander(self, title_key: str, builder) -> ExpandWidget:
@@ -135,44 +129,39 @@ class AdvancedPanel(QWidget):
         self.vbox.addWidget(ex)
         return ex
 
-    def _add_image(self) -> ExpandWidget:
-        """v0.3.7 重构：复用压缩设置代码。压缩后端 + 质量 + 后端专用参数。"""
-        ex = ExpandWidget(tr("category.image"), expanded=True)
+    def _add_image(self):
+        """v0.4.2：图像压缩参数直接展开（无二级折叠）。"""
         adv = advanced.adv["image"]
         if not isinstance(adv.get("compress"), dict):
-            adv["compress"] = {"backend": "pillow", "level": 3, "interlace": False,
-                               "strip": "safe", "quality": 95, "progressive": False,
-                               "arithmetic": False}
+            adv["compress"] = {"backend": "oxipng", "level": 3, "interlace": False,
+                               "strip": "safe", "quality": 95}
         comp = adv["compress"]
 
-        # --- 压缩后端 ---
+        # 压缩后端
         backend = _combo(
             [(tr("advanced.compression.oxipng"), "oxipng"),
-             ("imagecodecs", "imagecodecs"),
+             (tr("advanced.compression.imagecodecs"), "imagecodecs"),
              (tr("advanced.compression.pillow"), "pillow")],
             comp.get("backend", "oxipng"),
             lambda v: comp.__setitem__("backend", v),
         )
-        ex.body_layout.addWidget(field_row(tr("advanced.compression.backend"), backend, label_width=80))
+        self.vbox.addWidget(field_row(tr("advanced.compression.backend"), backend, label_width=80))
 
-        # --- 质量滑块 ---
+        # 质量滑块
         q = QSlider(Qt.Orientation.Horizontal)
-        q.setRange(1, 100)
-        q.setValue(int(comp.get("quality", 95)))
+        q.setRange(1, 100); q.setValue(int(comp.get("quality", 95)))
         q.valueChanged.connect(lambda v: comp.__setitem__("quality", v))
-        ex.body_layout.addWidget(field_row(tr("advanced.quality"), q, label_width=80))
+        self.vbox.addWidget(field_row(tr("advanced.quality"), q, label_width=80))
 
-        # --- oxipng / optipng 专用参数 ---
+        # oxipng 专用参数
         oxi_grp = QWidget()
         oxi_grp.setStyleSheet("background: transparent;")
         oxi_l = QVBoxLayout(oxi_grp)
         oxi_l.setContentsMargins(0, 0, 0, 0); oxi_l.setSpacing(6)
         lvl = QSlider(Qt.Orientation.Horizontal)
-        lvl.setRange(0, 6)
-        lvl.setValue(int(comp.get("level", 3)))
+        lvl.setRange(0, 6); lvl.setValue(int(comp.get("level", 3)))
         lvl_label = QLabel(str(comp.get("level", 3)))
-        lvl.valueChanged.connect(
-            lambda v: (comp.__setitem__("level", v), lvl_label.setText(str(v))))
+        lvl.valueChanged.connect(lambda v: (comp.__setitem__("level", v), lvl_label.setText(str(v))))
         row = QHBoxLayout(); row.addWidget(lvl_label); row.addWidget(lvl, 1)
         oxi_l.addWidget(field_row(tr("advanced.level"), row))
         inter = SwitchButton(tr("advanced.interlace"))
@@ -183,92 +172,66 @@ class AdvancedPanel(QWidget):
             [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
             comp.get("strip", "safe"), lambda v: comp.__setitem__("strip", v))
         oxi_l.addWidget(field_row(tr("advanced.strip"), strip))
-        ex.body_layout.addWidget(oxi_grp)
+        self.vbox.addWidget(oxi_grp)
+        oxi_grp._oxi_grp = True  # 标记用于 retheme
 
-        # --- 根据后端选择显示/隐藏参数组 ---
         def _on_backend_change(val: str):
             oxi_grp.setVisible(val == "oxipng")
         _on_backend_change(comp.get("backend", "oxipng"))
         backend.currentTextChanged.connect(
             lambda t: _on_backend_change(backend._mapping.get(t, t)))
 
-        return ex
 
     def _add_video(self):
-        q.setRange(1, 100)
-        q.setValue(int(grp.get("quality", 100)))
-        q.valueChanged.connect(lambda v: grp.__setitem__("quality", v))
-        ex.body_layout.addWidget(field_row(tr("advanced.quality"), q, label_width=80))
-        prog = SwitchButton(tr("advanced.progressive"))
-        prog.setChecked(bool(grp.get("progressive", True)))
-        prog.checkedChanged.connect(lambda b: grp.__setitem__("progressive", b))
-        ex.body_layout.addWidget(field_row(tr("advanced.progressive"), prog, label_width=80))
-        stripx = SwitchButton(tr("advanced.strip"))
-        stripx.setChecked(bool(grp.get("strip", True)))
-        stripx.checkedChanged.connect(lambda b: grp.__setitem__("strip", b))
-        ex.body_layout.addWidget(field_row(tr("advanced.strip"), stripx, label_width=80))
-        arith = SwitchButton(tr("advanced.arithmetic"))
-        arith.setChecked(bool(grp.get("arithmetic", False)))
-        arith.checkedChanged.connect(lambda b: grp.__setitem__("arithmetic", b))
-        ex.body_layout.addWidget(field_row(tr("advanced.arithmetic"), arith, label_width=80))
-        return ex
-
-    def _add_video(self):
+        """v0.4.2：视频参数直接展开。"""
         adv = advanced.adv["video"]
-
-        def build(layout):
-            res = _combo(_opt_list(advanced.RESOLUTIONS),
-                         adv.get("resolution", "original"),
-                         lambda v: adv.__setitem__("resolution", v))
-            layout.addWidget(field_row(tr("advanced.resolution"), res, label_width=80))
-            fps = _combo(_opt_list(advanced.FPS_OPTIONS),
-                         adv.get("fps", "original"),
-                         lambda v: adv.__setitem__("fps", v))
-            layout.addWidget(field_row(tr("advanced.fps"), fps, label_width=80))
-            br = _combo(_opt_list(advanced.VIDEO_BITRATES),
-                        adv.get("bitrate", "original"),
-                        lambda v: adv.__setitem__("bitrate", v))
-            layout.addWidget(field_row(tr("advanced.bitrate"), br, label_width=80))
-            codec = _combo(
-                [(tr("advanced.original"), "original"),
-                 ("H.264", "H.264"), ("H.265", "H.265"), ("copy", "copy")],
-                adv.get("codec", "original"),
-                lambda v: adv.__setitem__("codec", v),
-            )
-            layout.addWidget(field_row(tr("advanced.codec"), codec, label_width=80))
-            merge = SwitchButton(tr("advanced.merge"))
-            merge.setChecked(bool(adv.get("merge", False)))
-            merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
-            layout.addWidget(field_row(tr("advanced.merge"), merge, label_width=80))
-
-        return self._add_expander("advanced.video.title", build)
+        res = _combo(_opt_list(advanced.RESOLUTIONS),
+                     adv.get("resolution", "original"),
+                     lambda v: adv.__setitem__("resolution", v))
+        self.vbox.addWidget(field_row(tr("advanced.resolution"), res, label_width=80))
+        fps = _combo(_opt_list(advanced.FPS_OPTIONS),
+                     adv.get("fps", "original"),
+                     lambda v: adv.__setitem__("fps", v))
+        self.vbox.addWidget(field_row(tr("advanced.fps"), fps, label_width=80))
+        br = _combo(_opt_list(advanced.VIDEO_BITRATES),
+                    adv.get("bitrate", "original"),
+                    lambda v: adv.__setitem__("bitrate", v))
+        self.vbox.addWidget(field_row(tr("advanced.bitrate"), br, label_width=80))
+        codec = _combo(
+            [(tr("advanced.original"), "original"),
+             ("H.264", "H.264"), ("H.265", "H.265"), ("copy", "copy")],
+            adv.get("codec", "original"),
+            lambda v: adv.__setitem__("codec", v),
+        )
+        self.vbox.addWidget(field_row(tr("advanced.codec"), codec, label_width=80))
+        merge = SwitchButton(tr("advanced.merge"))
+        merge.setChecked(bool(adv.get("merge", False)))
+        merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
+        self.vbox.addWidget(field_row(tr("advanced.merge"), merge, label_width=80))
 
     def _add_audio(self):
+        """v0.4.2：音频参数直接展开。"""
         adv = advanced.adv["audio"]
-
-        def build(layout):
-            br = _combo(_opt_list(advanced.AUDIO_BITRATES),
-                        adv.get("bitrate", "original"),
-                        lambda v: adv.__setitem__("bitrate", v))
-            layout.addWidget(field_row(tr("advanced.bitrate"), br, label_width=80))
-            sr = _combo(_opt_list(advanced.SAMPLE_RATES),
-                        adv.get("sample_rate", "original"),
-                        lambda v: adv.__setitem__("sample_rate", v))
-            layout.addWidget(field_row(tr("advanced.sample_rate"), sr, label_width=80))
-            ch = _combo(
-                [(tr("advanced.original"), "original"),
-                 (tr("advanced.channels.stereo"), "stereo"),
-                 (tr("advanced.channels.mono"), "mono")],
-                adv.get("channels", "original"),
-                lambda v: adv.__setitem__("channels", v),
-            )
-            layout.addWidget(field_row(tr("advanced.channels"), ch, label_width=80))
-            merge = SwitchButton(tr("advanced.merge"))
-            merge.setChecked(bool(adv.get("merge", False)))
-            merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
-            layout.addWidget(field_row(tr("advanced.merge"), merge, label_width=80))
-
-        return self._add_expander("advanced.audio.title", build)
+        br = _combo(_opt_list(advanced.AUDIO_BITRATES),
+                    adv.get("bitrate", "original"),
+                    lambda v: adv.__setitem__("bitrate", v))
+        self.vbox.addWidget(field_row(tr("advanced.bitrate"), br, label_width=80))
+        sr = _combo(_opt_list(advanced.SAMPLE_RATES),
+                    adv.get("sample_rate", "original"),
+                    lambda v: adv.__setitem__("sample_rate", v))
+        self.vbox.addWidget(field_row(tr("advanced.sample_rate"), sr, label_width=80))
+        ch = _combo(
+            [(tr("advanced.original"), "original"),
+             (tr("advanced.channels.stereo"), "stereo"),
+             (tr("advanced.channels.mono"), "mono")],
+            adv.get("channels", "original"),
+            lambda v: adv.__setitem__("channels", v),
+        )
+        self.vbox.addWidget(field_row(tr("advanced.channels"), ch, label_width=80))
+        merge = SwitchButton(tr("advanced.merge"))
+        merge.setChecked(bool(adv.get("merge", False)))
+        merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
+        self.vbox.addWidget(field_row(tr("advanced.merge"), merge, label_width=80))
 
     # -- updates ----------------------------------------------------------
     def get_args(self, category: str, target: str = "") -> list[str]:

@@ -335,7 +335,7 @@
   "upscale.staging.empty": "",
   "settings.group.conversion": "Conversion",
   "settings.group.data": "Data & cache",
-  "advanced.compression.pillow": "Pillow (built-in)",
+  "advanced.compression.pillow": "Pillow (Built-in)",
   "settings.close_to_tray": "Close to system tray",
   "settings.close_to_tray.hint": "Minimise to tray instead of quitting when the window is closed",
   "tray.title": "MomentShift",
@@ -371,5 +371,7 @@
   "convert.ffmpeg_status": "FFmpeg Status",
   "upscale.compare.original": "Original",
   "upscale.compare.upscaled": "Upscaled",
-  "upscale.compare.reset": "Reset"
+  "upscale.compare.reset": "Reset",
+  "advanced.compression.oxipng": "oxipng (Built-in)",
+  "advanced.compression.imagecodecs": "imagecodecs (Built-in)"
 }
