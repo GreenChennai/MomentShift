@@ -428,5 +428,33 @@ def _patch_switch_button_label_background():
         setCustomStyleSheet(self.label, light_qss, dark_qss)
     SwitchButton.setTextColor = _set_text_color
 
+
+def _patch_tooltip_style():
+    """v0.7.2 F4：确保 qfluentwidgets 的 ``ToolTip`` 也是浅底深字，且文字可见。
+
+    本项目图标按钮未安装 ``ToolTipFilter``（走原生 QToolTip，已由 __main__ 的
+    全局 QSS 修复），但为稳妥起见，这里也对 qfluentwidgets 自带 ``ToolTip``
+    做同样的配色覆盖，避免任何路径下出现「黑块无文字」。
+    """
+    try:
+        from qfluentwidgets.components.widgets.tool_tip import ToolTip
+    except Exception:
+        return
+    _orig = ToolTip._ToolTip__setQss
+    _OVERRIDE = (
+        "ToolTip > QFrame#container {"
+        " background-color: #ffffff; border: 1px solid #d0d0d0;"
+        " border-radius: 8px;"
+        "}"
+        "ToolTip QLabel#contentLabel {"
+        " color: #212121; background-color: transparent;"
+        "}"
+    )
+    def _set_qss(self):
+        _orig(self)
+        self.setStyleSheet((self.styleSheet() or "") + _OVERRIDE)
+    ToolTip._ToolTip__setQss = _set_qss
+
 _patch_fluent_label_background()
 _patch_switch_button_label_background()
+_patch_tooltip_style()

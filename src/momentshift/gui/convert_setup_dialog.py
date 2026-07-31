@@ -183,6 +183,9 @@ class ConvertSetupDialog(QDialog):
 
         self.advancedPanel = AdvancedPanel(self)
         self.advancedPanel.refresh([self._category])
+        # v0.7.2 F3：弹窗首次打开即按默认目标格式禁用不匹配的压缩程序
+        # （例如默认 .jpg 时应禁用 oxipng），避免用户看到全部可选但实际不可用。
+        self.advancedPanel.on_format_change(default)
         adv_card.body.addWidget(self.advancedPanel)
         right_lay.addWidget(adv_card)
         self._adv_card = adv_card

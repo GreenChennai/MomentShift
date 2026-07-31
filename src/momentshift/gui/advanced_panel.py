@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from PyQt6.QtGui import QColor, QPixmap, QTransform
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QSpinBox, QMessageBox
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QSpinBox
 
 from qfluentwidgets import FluentIcon as FIF, ComboBox, SwitchButton, CaptionLabel
 
@@ -112,24 +112,9 @@ class AdvancedPanel(QWidget):
         self._expanders: list[ExpandWidget] = []
 
     def _add_help(self, widget, help_key: str):
-        """帮助按钮：灰色图标 + 点击弹窗（白色背景对话框）。"""
-        from qfluentwidgets import TransparentToolButton
-        from PyQt6.QtGui import QColor
-        btn = TransparentToolButton(FIF.HELP.icon(color=QColor("#888888")), self)
-        btn.setFixedSize(20, 20)
-        def _show_help():
-            dlg = QMessageBox(self)
-            dlg.setWindowTitle(tr("advanced.help"))
-            dlg.setText(tr(help_key))
-            dlg.setIcon(QMessageBox.Icon.Information)
-            dlg.setStyleSheet(
-                "QMessageBox{ background: #ffffff; }"
-                "QLabel{ color: #1a1a1a; }"
-                "QPushButton{ color: #1a1a1a; background: #e0e0e0;"
-                " border: 1px solid #ccc; border-radius: 4px; padding: 4px 12px; }")
-            dlg.exec()
-        btn.clicked.connect(_show_help)
-        widget.layout().addWidget(btn)
+        """帮助按钮：灰色图标 + 点击弹出美化弹窗（无音效）。"""
+        from .help_bubble import attach_help
+        attach_help(widget, help_key, self)
 
     # -- build ------------------------------------------------------------
     def refresh(self, categories: list[str]):

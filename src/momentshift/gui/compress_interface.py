@@ -36,6 +36,7 @@ from .theme import (
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
+from .help_bubble import attach_help
 from .queue_widget import ProgressBar, StatusPill, human_size
 
 
@@ -359,12 +360,20 @@ class CompressInterface(InterfaceBase):
         svb.addWidget(self.paramsGroup)
 
         # 各后端专用参数组（v0.7.0：三后端独立面板）
+        # v0.7.2 F1：auto 模式下三个组直接堆进 svb 会挤在一起，
+        # 这里统一收进 _backend_container（纵向间距 16），三后端同显时留出呼吸感。
+        self._backend_container = QWidget()
+        self._backend_container.setStyleSheet("background: transparent;")
+        _bcont_ly = QVBoxLayout(self._backend_container)
+        _bcont_ly.setContentsMargins(0, 0, 0, 0)
+        _bcont_ly.setSpacing(16)
         self.oxipngGroup = self._build_oxipng()
-        svb.addWidget(self.oxipngGroup)
+        _bcont_ly.addWidget(self.oxipngGroup)
         self.joGroup = self._build_jpegoptim()
-        svb.addWidget(self.joGroup)
+        _bcont_ly.addWidget(self.joGroup)
         self.pilGroup = self._build_pillow()
-        svb.addWidget(self.pilGroup)
+        _bcont_ly.addWidget(self.pilGroup)
+        svb.addWidget(self._backend_container)
 
         # 输出位置
         self.outputSwitch = SwitchButton(tr("compress.output.same"))
@@ -435,7 +444,7 @@ class CompressInterface(InterfaceBase):
         w.setStyleSheet("background: transparent;")
         ly = QVBoxLayout(w)
         ly.setContentsMargins(0, 0, 0, 0)
-        ly.setSpacing(6)
+        ly.setSpacing(10)
         lvl = QSlider(Qt.Orientation.Horizontal)
         lvl.setRange(0, 6)
         lvl.setValue(int(grp["level"]))
@@ -445,22 +454,26 @@ class CompressInterface(InterfaceBase):
         row = QHBoxLayout()
         row.addWidget(lvl_label)
         row.addWidget(lvl, 1)
-        ly.addWidget(field_row(tr("advanced.level"), row))
+        fr = field_row(tr("advanced.level"), row)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.level")
         inter = SwitchButton(tr("advanced.interlace"))
         inter.setChecked(bool(grp["interlace"]))
         inter.checkedChanged.connect(lambda b: grp.__setitem__("interlace", b))
         self._switches.append(inter)
-        ly.addWidget(field_row(tr("advanced.interlace"), inter))
+        fr = field_row(tr("advanced.interlace"), inter)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.interlace")
         strip = self._make_combo(
             [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
             grp["strip"], lambda v: grp.__setitem__("strip", v))
-        ly.addWidget(field_row(tr("advanced.strip"), strip))
+        fr = field_row(tr("advanced.strip"), strip)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.strip")
         filt = self._make_combo(
             [(tr("advanced.filter.none"), 0), (tr("advanced.filter.sub"), 1),
              (tr("advanced.filter.up"), 2), (tr("advanced.filter.average"), 3),
              (tr("advanced.filter.paeth"), 4), (tr("advanced.filter.mixed"), 5)],
             grp["filter"], lambda v: grp.__setitem__("filter", int(v)))
-        ly.addWidget(field_row(tr("advanced.filter"), filt))
+        fr = field_row(tr("advanced.filter"), filt)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.filter")
         zc = QSlider(Qt.Orientation.Horizontal)
         zc.setRange(1, 9)
         zc.setValue(int(grp["zc"]))
@@ -470,12 +483,14 @@ class CompressInterface(InterfaceBase):
         zc_row = QHBoxLayout()
         zc_row.addWidget(zc_label)
         zc_row.addWidget(zc, 1)
-        ly.addWidget(field_row(tr("advanced.zc"), zc_row))
+        fr = field_row(tr("advanced.zc"), zc_row)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.zc")
         alpha = SwitchButton(tr("advanced.alpha"))
         alpha.setChecked(bool(grp["alpha"]))
         alpha.checkedChanged.connect(lambda b: grp.__setitem__("alpha", b))
         self._switches.append(alpha)
-        ly.addWidget(field_row(tr("advanced.alpha"), alpha))
+        fr = field_row(tr("advanced.alpha"), alpha)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.alpha")
         return w
 
     def _build_jpegoptim(self):
@@ -484,13 +499,14 @@ class CompressInterface(InterfaceBase):
         w.setStyleSheet("background: transparent;")
         ly = QVBoxLayout(w)
         ly.setContentsMargins(0, 0, 0, 0)
-        ly.setSpacing(6)
+        ly.setSpacing(10)
         jo_mode = self._make_combo(
             [(tr("advanced.jo.mode.lossless"), "lossless"),
              (tr("advanced.jo.mode.lossy"), "lossy")],
             grp["jo_mode"],
             lambda v: (grp.__setitem__("jo_mode", v), self._sync_jo_max(v)))
-        ly.addWidget(field_row(tr("advanced.jo.mode"), jo_mode))
+        fr = field_row(tr("advanced.jo.mode"), jo_mode)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.mode")
         jo_max = QSlider(Qt.Orientation.Horizontal)
         jo_max.setRange(0, 100)
         jo_max.setValue(int(grp["jo_max"]))
@@ -506,7 +522,7 @@ class CompressInterface(InterfaceBase):
         jm_row.addWidget(jo_max, 1)
         jm_row.addWidget(jo_max_spin)
         jo_max_fr = field_row(tr("advanced.jo.max"), jm_row)
-        ly.addWidget(jo_max_fr)
+        ly.addWidget(jo_max_fr); attach_help(jo_max_fr, "advanced.help.jo.max")
         jo_strip = self._make_combo(
             [(tr("advanced.jo.strip.none"), "none"),
              (tr("advanced.jo.strip.meta"), "meta"),
@@ -514,31 +530,36 @@ class CompressInterface(InterfaceBase):
              (tr("advanced.jo.strip.icc"), "icc"),
              (tr("advanced.jo.strip.all"), "all")],
             grp["jo_strip"], lambda v: grp.__setitem__("jo_strip", v))
-        ly.addWidget(field_row(tr("advanced.jo.strip"), jo_strip))
+        fr = field_row(tr("advanced.jo.strip"), jo_strip)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.strip")
         jo_prog = self._make_combo(
             [(tr("advanced.jo.prog.auto"), "auto"),
              (tr("advanced.jo.prog.keep"), "keep"),
              (tr("advanced.jo.prog.progressive"), "progressive"),
              (tr("advanced.jo.prog.normal"), "normal")],
             grp["jo_progressive"], lambda v: grp.__setitem__("jo_progressive", v))
-        ly.addWidget(field_row(tr("advanced.jo.prog"), jo_prog))
+        fr = field_row(tr("advanced.jo.prog"), jo_prog)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.prog")
         jo_thr = QSpinBox()
         jo_thr.setRange(0, 99)
         jo_thr.setSuffix("%")
         jo_thr.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         jo_thr.setValue(int(grp["jo_threshold"]))
         jo_thr.valueChanged.connect(lambda v: grp.__setitem__("jo_threshold", v))
-        ly.addWidget(field_row(tr("advanced.jo.threshold"), jo_thr))
+        fr = field_row(tr("advanced.jo.threshold"), jo_thr)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.threshold")
         jo_pres = SwitchButton(tr("advanced.jo.preserve"))
         jo_pres.setChecked(bool(grp["jo_preserve"]))
         jo_pres.checkedChanged.connect(lambda b: grp.__setitem__("jo_preserve", b))
         self._switches.append(jo_pres)
-        ly.addWidget(field_row(tr("advanced.jo.preserve"), jo_pres))
+        fr = field_row(tr("advanced.jo.preserve"), jo_pres)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.preserve")
         jo_retry = SwitchButton(tr("advanced.jo.retry"))
         jo_retry.setChecked(bool(grp["jo_retry"]))
         jo_retry.checkedChanged.connect(lambda b: grp.__setitem__("jo_retry", b))
         self._switches.append(jo_retry)
-        ly.addWidget(field_row(tr("advanced.jo.retry"), jo_retry))
+        fr = field_row(tr("advanced.jo.retry"), jo_retry)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.retry")
         self._jo_max_fr = jo_max_fr
         self._sync_jo_max(grp["jo_mode"])
         return w
@@ -553,7 +574,7 @@ class CompressInterface(InterfaceBase):
         w.setStyleSheet("background: transparent;")
         ly = QVBoxLayout(w)
         ly.setContentsMargins(0, 0, 0, 0)
-        ly.setSpacing(6)
+        ly.setSpacing(10)
         pq = QSlider(Qt.Orientation.Horizontal)
         pq.setRange(0, 95)
         pq.setValue(int(grp["pil_quality"]))
@@ -568,37 +589,42 @@ class CompressInterface(InterfaceBase):
         pq_row = QHBoxLayout()
         pq_row.addWidget(pq, 1)
         pq_row.addWidget(pq_spin)
-        ly.addWidget(field_row(tr("advanced.pil.quality"), pq_row))
+        fr = field_row(tr("advanced.pil.quality"), pq_row)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.pil.quality")
         pil_opt = SwitchButton(tr("advanced.pil.optimize"))
         pil_opt.setChecked(bool(grp["pil_optimize"]))
         pil_opt.checkedChanged.connect(lambda b: grp.__setitem__("pil_optimize", b))
         self._switches.append(pil_opt)
-        ly.addWidget(field_row(tr("advanced.pil.optimize"), pil_opt))
+        fr = field_row(tr("advanced.pil.optimize"), pil_opt)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.pil.optimize")
         pil_prog = SwitchButton(tr("advanced.pil.progressive"))
         pil_prog.setChecked(bool(grp["pil_progressive"]))
         pil_prog.checkedChanged.connect(
             lambda b: grp.__setitem__("pil_progressive", b))
         self._switches.append(pil_prog)
-        ly.addWidget(field_row(tr("advanced.pil.progressive"), pil_prog))
+        fr = field_row(tr("advanced.pil.progressive"), pil_prog)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.pil.progressive")
         pil_sub = self._make_combo(
             [(tr("advanced.pil.sub.444"), "4:4:4"),
              (tr("advanced.pil.sub.422"), "4:2:2"),
              (tr("advanced.pil.sub.420"), "4:2:0")],
             grp["pil_subsampling"],
             lambda v: grp.__setitem__("pil_subsampling", v))
-        ly.addWidget(field_row(tr("advanced.pil.subsampling"), pil_sub))
+        fr = field_row(tr("advanced.pil.subsampling"), pil_sub)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.pil.subsampling")
         return w
 
     def _on_program(self, p):
         self._program = p
+        # 容器始终可见；auto 显示全部三个组（纵向留白），指定程序只留对应组
+        self._backend_container.setVisible(True)
+        self.oxipngGroup.setVisible(p == "oxipng")
+        self.joGroup.setVisible(p == "jpegoptim")
+        self.pilGroup.setVisible(p == "pillow")
         if p == "auto":
             self.oxipngGroup.setVisible(True)
             self.joGroup.setVisible(True)
             self.pilGroup.setVisible(True)
-        else:
-            self.oxipngGroup.setVisible(p == "oxipng")
-            self.joGroup.setVisible(p == "jpegoptim")
-            self.pilGroup.setVisible(p == "pillow")
         self._route_hint.setVisible(p == "auto")
         self._refresh_tool_status()
 
@@ -669,6 +695,7 @@ class CompressInterface(InterfaceBase):
         try:
             d = QFileDialog.getExistingDirectory(
                 None, tr("compress.output.browse"), self._folder or "",
+                QFileDialog.DontUseNativeDialog,
                 )
             if d:
                 self._folder = d
@@ -712,6 +739,7 @@ class CompressInterface(InterfaceBase):
             flt = "Images (" + " ".join(f"*{e}" for e in sorted(IMAGE_EXTS)) + ")"
             files, _ = QFileDialog.getOpenFileNames(
                 None, tr("compress.add.files"), "", flt, "",
+                QFileDialog.DontUseNativeDialog,
             )
             if files:
                 self._on_files(files)
@@ -726,6 +754,7 @@ class CompressInterface(InterfaceBase):
         try:
             d = QFileDialog.getExistingDirectory(
                 None, tr("compress.add.folder"), "",
+                QFileDialog.DontUseNativeDialog,
                 )
             if d:
                 self._on_files([d])

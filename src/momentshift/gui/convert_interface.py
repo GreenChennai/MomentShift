@@ -126,7 +126,6 @@ class ConvertInterface(InterfaceBase):
         self.queueList = QueueListWidget(self)
         self.queueList.removeRequested.connect(self.manager.remove)
         self.queueList.retryRequested.connect(self.manager.retry)
-        self.queueList.formatChanged.connect(self._on_row_format)
         self.queueScroll = self._make_scroll(280)
         self.queueScroll.setWidget(self.queueList)
         qvb.addWidget(self.queueScroll)
@@ -200,6 +199,7 @@ class ConvertInterface(InterfaceBase):
             flt = "Media (" + " ".join(f"*{e}" for e in sorted(_CONVERT_EXTS)) + ")"
             files, _ = QFileDialog.getOpenFileNames(
                 None, tr("convert.add.files"), "", flt, "",
+                QFileDialog.DontUseNativeDialog,
             )
             if files:
                 self._open_setup(files)
@@ -214,6 +214,7 @@ class ConvertInterface(InterfaceBase):
         try:
             d = QFileDialog.getExistingDirectory(
                 None, tr("convert.add.folder"), "",
+                QFileDialog.DontUseNativeDialog,
                 )
             if d:
                 self._open_setup([d])
@@ -247,6 +248,7 @@ class ConvertInterface(InterfaceBase):
         try:
             d = QFileDialog.getExistingDirectory(
                 None, tr("convert.output.browse"), cfg.outputFolder.value or "",
+                QFileDialog.DontUseNativeDialog,
                 )
             if d:
                 cfg.outputFolder.value = d
@@ -258,10 +260,6 @@ class ConvertInterface(InterfaceBase):
     # =========================================================================
     # 队列操作
     # =========================================================================
-
-    def _on_row_format(self, task_id: str, fmt: str):
-        """队列行内格式变更 → 同步到 manager。"""
-        self.manager.set_task_target(task_id, fmt)
 
     def _refresh_ff_status(self):
         """v0.3.5 美化：胶囊样式状态指示器。"""

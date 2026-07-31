@@ -4,22 +4,23 @@ Public API preserved for ``convert_interface``:
 - ``human_size(n)``, ``format_size_compare(before, after)``
 - ``StatusPill(status)`` + ``set_status(status)``
 - ``ProgressBar()`` + ``set_value(int)`` / ``set_error(bool)``
-- ``QueueItemWidget(task)`` + ``set_progress/set_status/set_format/retranslate``
-  and signals ``removeRequested(str)``, ``retryRequested(str)``, ``formatChanged(str,str)``
-- ``QueueListWidget()`` + ``add_item/update_progress/update_status/update_format/
-  remove_item/sync/clear/retranslate/_update_stats`` and the same three signals.
+- ``QueueItemWidget(task)`` + ``set_progress/set_status/retranslate``
+  and signals ``removeRequested(str)``, ``retryRequested(str)``
+- ``QueueListWidget()`` + ``add_item/update_progress/update_status/
+  remove_item/sync/clear/retranslate/_update_stats`` and the same two signals.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6.QtGui import QColor, QPainter, QBrush, QPen
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QComboBox, QVBoxLayout, QHBoxLayout, QSpacerItem, QSizePolicy
+from PyQt6.QtWidgets import QLabel, QVBoxLayout, QHBoxLayout
 
-from qfluentwidgets import FluentIcon as FIF, ComboBox, CaptionLabel, BodyLabel
+from qfluentwidgets import FluentIcon as FIF, CaptionLabel, BodyLabel
 
 from ..core.qt_compat import QWidget, Signal, QApplication
-from ..core.presets import TARGET_GROUPS
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, icon_btn, muted_text, accent_color, sub_text,
@@ -154,13 +155,25 @@ class StatusPill(QLabel):
         )
 
 
+class FormatPill(QLabel):
+    """格式指示胶囊（v0.7.2 Feat5）：显示「.SRC → .TGT」。中性浅灰样式。"""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet(
+            "color:#424242; background:#eceff1; border-radius:9px;"
+            " padding:2px 9px; font-weight:600; font-size:11px;"
+        )
+        self.setText(text)
+
+
 # --------------------------------------------------------------------------
 # QueueItemWidget
 # --------------------------------------------------------------------------
 class QueueItemWidget(ThemedCard):
     removeRequested = Signal(str)
     retryRequested = Signal(str)
-    formatChanged = Signal(str, str)
 
     def __init__(self, task, parent=None):
         super().__init__(parent)
@@ -181,6 +194,11 @@ class QueueItemWidget(ThemedCard):
         self.nameLbl.setToolTip(self._task.input_path)
         top.addWidget(self.iconLbl)
         top.addWidget(self.nameLbl, 1)
+        # v0.7.2 Feat5：格式指示胶囊 .SRC → .TGT（如 .JPG → .PNG）
+        src_ext = Path(self._task.input_path).suffix.upper().lstrip(".")
+        tgt = (self._task.target_format or "").upper()
+        self.fmtPill = FormatPill(f".{src_ext} → .{tgt}")
+        top.addWidget(self.fmtPill)
         self.pill = StatusPill(self._task.status)
         top.addWidget(self.pill)
         vb.addLayout(top)
@@ -193,19 +211,6 @@ class QueueItemWidget(ThemedCard):
         self.detailLbl.setObjectName("queueStatus")
         self.detailLbl.setWordWrap(True)
         self.detailLbl.setStyleSheet("color: #000000; background: transparent;")
-        vb.addWidget(self.detailLbl)
-
-        bottom = QHBoxLayout()
-        self.fmtCombo = ComboBox()
-        for f in TARGET_GROUPS.get(self._task.category, []):
-            self.fmtCombo.addItem(f.upper())
-        self.fmtCombo.setCurrentText(self._task.target_format.upper())
-        self.fmtCombo.setFixedWidth(78)
-        self.fmtCombo.currentTextChanged.connect(
-            lambda t: self.formatChanged.emit(self._task.id, t.lower())
-        )
-        bottom.addWidget(self.fmtCombo)
-        bottom.addStretch(1)
 
         self.retryBtn = icon_btn(FIF.SYNC, tr("convert.action.retry"), self)
         self.retryBtn.clicked.connect(lambda: self.retryRequested.emit(self._task.id))
@@ -213,6 +218,10 @@ class QueueItemWidget(ThemedCard):
         self.copyBtn.clicked.connect(self._copy_path)
         self.delBtn = icon_btn(FIF.DELETE, tr("convert.action.remove"), self)
         self.delBtn.clicked.connect(lambda: self.removeRequested.emit(self._task.id))
+
+        # v0.7.2 Feat6：大小对比文本与操作按钮同行右对齐，按钮水平对齐文本行
+        bottom = QHBoxLayout()
+        bottom.addWidget(self.detailLbl, 1)
         bottom.addWidget(self.retryBtn)
         bottom.addWidget(self.copyBtn)
         bottom.addWidget(self.delBtn)
@@ -302,12 +311,6 @@ class QueueItemWidget(ThemedCard):
         """回到「已完成」态（压缩过的任务保持蓝色压缩完成）。"""
         self.set_status("done")
 
-    def set_format(self, fmt: str):
-        self._task.target_format = fmt
-        self.fmtCombo.blockSignals(True)
-        self.fmtCombo.setCurrentText(fmt.upper())
-        self.fmtCombo.blockSignals(False)
-
     def retranslate(self):
         self.pill.set_status(self._task.status)
         self.retryBtn.setToolTip(tr("convert.action.retry"))
@@ -316,7 +319,9 @@ class QueueItemWidget(ThemedCard):
         self.set_status(self._task.status, self._task.error)
 
     def _copy_path(self):
-        QApplication.clipboard().setText(self._task.output_path)
+        # v0.7.2 Bug5：只复制输出文件所在文件夹路径，而非完整文件路径
+        folder = str(Path(self._task.output_path).parent)
+        QApplication.clipboard().setText(folder)
 
 
 # --------------------------------------------------------------------------
@@ -325,7 +330,6 @@ class QueueItemWidget(ThemedCard):
 class QueueListWidget(QWidget):
     removeRequested = Signal(str)
     retryRequested = Signal(str)
-    formatChanged = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -374,7 +378,6 @@ class QueueListWidget(QWidget):
         w = QueueItemWidget(task)
         w.removeRequested.connect(self.removeRequested)
         w.retryRequested.connect(self.retryRequested)
-        w.formatChanged.connect(self.formatChanged)
         self.items[task.id] = w
         # insert before the trailing stretch
         self.listLayout.insertWidget(self.listLayout.count() - 1, w)
@@ -391,11 +394,6 @@ class QueueListWidget(QWidget):
             w.set_status(status, error)
             if status in ("done", "failed", "canceled"):
                 self._update_stats(_counts_from(self.items))
-
-    def update_format(self, task_id: str, fmt: str):
-        w = self.items.get(task_id)
-        if w:
-            w.set_format(fmt)
 
     def update_compress(self, task_id: str, pct: int, done: bool = False):
         """v0.6.0：更新压缩阶段 UI（蓝色进度条）。"""
