@@ -185,21 +185,7 @@ class AdvancedPanel(QWidget):
         oxi_l.addWidget(field_row(tr("advanced.strip"), strip))
         ex.body_layout.addWidget(oxi_grp)
 
-        moz_l.setContentsMargins(0, 0, 0, 0); moz_l.setSpacing(6)
-        prog = SwitchButton(tr("advanced.progressive"))
-        prog.setChecked(bool(comp.get("progressive", False)))
-        prog.checkedChanged.connect(lambda b: comp.__setitem__("progressive", b))
-        moz_l.addWidget(field_row(tr("advanced.progressive"), prog))
-        arith = SwitchButton(tr("advanced.arithmetic"))
-        arith.setChecked(bool(comp.get("arithmetic", False)))
-        arith.checkedChanged.connect(lambda b: comp.__setitem__("arithmetic", b))
-        moz_l.addWidget(field_row(tr("advanced.arithmetic"), arith))
-        strip2 = _combo(
-            [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
-            comp.get("strip", "safe"), lambda v: comp.__setitem__("strip", v))
-        moz_l.addWidget(field_row(tr("advanced.strip"), strip2))
-
-        # --- 根据后端选择显示/隐藏参数组 (v0.3.11 fix) ---
+        # --- 根据后端选择显示/隐藏参数组 ---
         def _on_backend_change(val: str):
             oxi_grp.setVisible(val == "oxipng")
         _on_backend_change(comp.get("backend", "oxipng"))
