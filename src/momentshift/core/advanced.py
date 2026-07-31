@@ -39,17 +39,11 @@ def default_options() -> dict:
             "png_quality": None,
             "jpg_quality": None,
             "webp_quality": None,
-            # --- image compression (post-conversion / dedicated Compress) ---
-            "compress": False,          # disabled by default; user must opt in
-            "compress_mode": "lossless",   # lossless | lossy
-            "compress_backend": "ffmpeg",   # ffmpeg | oxipng | optipng | mozjpeg
-            # per-backend parameter groups (only the relevant ones are used)
-            "png_oxipng": {"level": 2, "interlace": False, "strip": "safe"},
-            "png_optipng": {"level": 2, "strip": "all"},
-            "jpg_mozjpeg": {
-                "quality": 100, "progressive": True,
-                "strip": True, "arithmetic": False,
-            },
+            # v0.4.0 压缩后端：always dict (ffmpeg / oxipng / imagecodecs)
+            "compress": {"backend": "oxipng", "level": 3, "interlace": False,
+                         "strip": "safe", "quality": 95, "progressive": False,
+                         "arithmetic": False},
+            "compress_mode": "lossless",
         },
         "video": {
             "resolution": "original",

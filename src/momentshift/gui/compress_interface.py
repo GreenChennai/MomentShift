@@ -302,12 +302,11 @@ class CompressInterface(InterfaceBase):
         # =====================================================================
         scard, svb, self.tSettings = self._make_card("compress.settings.title")
 
-        # 压缩后端选择
+        # 压缩后端选择（v0.4.0：内置 oxipng + imagecodecs，删除 OptiPNG/MozJPEG）
         self.programCombo = self._make_combo(
-            [(tr("advanced.compression.pillow"), "pillow"),
-             ("oxipng", "oxipng"),
-             ("OptiPNG", "optipng"),
-             ("Mozilla JPEG", "mozjpeg")],
+            [(tr("advanced.compression.oxipng"), "oxipng"),
+             ("imagecodecs", "imagecodecs"),
+             (tr("advanced.compression.pillow"), "pillow")],
             self._program, lambda v: self._on_program(v))
         svb.addWidget(field_row(tr("advanced.compression.backend"), self.programCombo))
 
@@ -332,11 +331,7 @@ class CompressInterface(InterfaceBase):
 
         # 各后端专用参数组
         self.oxipngGroup = self._build_oxipng()
-        self.optipngGroup = self._build_optipng()
-        self.mozjpegGroup = self._build_mozjpeg()
         svb.addWidget(self.oxipngGroup)
-        svb.addWidget(self.optipngGroup)
-        svb.addWidget(self.mozjpegGroup)
 
         # 输出位置
         self.outputSwitch = SwitchButton(tr("compress.output.same"))
@@ -430,72 +425,9 @@ class CompressInterface(InterfaceBase):
         ly.addWidget(field_row(tr("advanced.strip"), strip))
         return w
 
-    def _build_optipng(self):
-        grp = self._tool_opts["optipng"]
-        w = QWidget()
-        w.setStyleSheet("background: transparent;")
-        ly = QVBoxLayout(w)
-        ly.setContentsMargins(0, 0, 0, 0)
-        ly.setSpacing(6)
-        lvl = QSlider(Qt.Orientation.Horizontal)
-        lvl.setRange(0, 7)
-        lvl.setValue(int(grp["level"]))
-        lvl_label = QLabel(str(grp["level"]))
-        lvl.valueChanged.connect(
-            lambda v: (grp.__setitem__("level", v), lvl_label.setText(str(v))))
-        row = QHBoxLayout()
-        row.addWidget(lvl_label)
-        row.addWidget(lvl, 1)
-        ly.addWidget(field_row(tr("advanced.level"), row))
-        strip = self._make_combo(
-            [(tr("advanced.strip.all"), "all"), (tr("advanced.strip.safe"), "safe")],
-            grp["strip"], lambda v: grp.__setitem__("strip", v))
-        ly.addWidget(field_row(tr("advanced.strip"), strip))
-        return w
-
-    def _build_mozjpeg(self):
-        grp = self._tool_opts["mozjpeg"]
-        w = QWidget()
-        w.setStyleSheet("background: transparent;")
-        ly = QVBoxLayout(w)
-        ly.setContentsMargins(0, 0, 0, 0)
-        ly.setSpacing(6)
-        q = QSlider(Qt.Orientation.Horizontal)
-        q.setRange(1, 100)
-        q.setValue(int(grp["quality"]))
-        q_label = QLabel(str(grp["quality"]))
-        q.valueChanged.connect(
-            lambda v: (grp.__setitem__("quality", v), q_label.setText(str(v))))
-        row = QHBoxLayout()
-        row.addWidget(q_label)
-        row.addWidget(q, 1)
-        ly.addWidget(field_row(tr("advanced.quality"), row))
-        prog = SwitchButton(tr("advanced.progressive"))
-        prog.setChecked(bool(grp["progressive"]))
-        prog.checkedChanged.connect(lambda b: grp.__setitem__("progressive", b))
-        self._moz_prog = prog
-        ly.addWidget(field_row(tr("advanced.progressive"), prog))
-        stripx = SwitchButton(tr("advanced.strip"))
-        stripx.setChecked(bool(grp["strip"]))
-        stripx.checkedChanged.connect(lambda b: grp.__setitem__("strip", b))
-        self._moz_strip = stripx
-        ly.addWidget(field_row(tr("advanced.strip"), stripx))
-        arith = SwitchButton(tr("advanced.arithmetic"))
-        arith.setChecked(bool(grp["arithmetic"]))
-        arith.checkedChanged.connect(lambda b: grp.__setitem__("arithmetic", b))
-        self._moz_arith = arith
-        ly.addWidget(field_row(tr("advanced.arithmetic"), arith))
-        return w
-
-    # =========================================================================
-    # 设置交互
-    # =========================================================================
-
     def _on_program(self, p):
         self._program = p
         self.oxipngGroup.setVisible(p == "oxipng")
-        self.optipngGroup.setVisible(p == "optipng")
-        self.mozjpegGroup.setVisible(p == "mozjpeg")
         self._refresh_tool_status()
 
     def _refresh_tool_status(self):
@@ -538,7 +470,7 @@ class CompressInterface(InterfaceBase):
         self.folderRow.setVisible(not same)
 
     def _restyle_switches(self):
-        for sw in (self._ox_inter, self._moz_prog, self._moz_strip, self._moz_arith):
+        for sw in (self._ox_inter,):
             sw.setOnText(tr("common.on"))
             sw.setOffText(tr("common.off"))
 

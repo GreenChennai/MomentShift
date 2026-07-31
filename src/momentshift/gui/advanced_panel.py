@@ -147,11 +147,10 @@ class AdvancedPanel(QWidget):
 
         # --- 压缩后端 ---
         backend = _combo(
-            [(tr("advanced.compression.pillow"), "pillow"),
-             ("oxipng", "oxipng"),
-             ("OptiPNG", "optipng"),
-             ("Mozilla JPEG", "mozjpeg")],
-            comp.get("backend", "pillow"),
+            [(tr("advanced.compression.oxipng"), "oxipng"),
+             ("imagecodecs", "imagecodecs"),
+             (tr("advanced.compression.pillow"), "pillow")],
+            comp.get("backend", "oxipng"),
             lambda v: comp.__setitem__("backend", v),
         )
         ex.body_layout.addWidget(field_row(tr("advanced.compression.backend"), backend, label_width=80))
@@ -186,10 +185,6 @@ class AdvancedPanel(QWidget):
         oxi_l.addWidget(field_row(tr("advanced.strip"), strip))
         ex.body_layout.addWidget(oxi_grp)
 
-        # --- mozjpeg 专用参数 ---
-        moz_grp = QWidget()
-        moz_grp.setStyleSheet("background: transparent;")
-        moz_l = QVBoxLayout(moz_grp)
         moz_l.setContentsMargins(0, 0, 0, 0); moz_l.setSpacing(6)
         prog = SwitchButton(tr("advanced.progressive"))
         prog.setChecked(bool(comp.get("progressive", False)))
@@ -203,55 +198,17 @@ class AdvancedPanel(QWidget):
             [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
             comp.get("strip", "safe"), lambda v: comp.__setitem__("strip", v))
         moz_l.addWidget(field_row(tr("advanced.strip"), strip2))
-        ex.body_layout.addWidget(moz_grp)
 
         # --- 根据后端选择显示/隐藏参数组 (v0.3.11 fix) ---
         def _on_backend_change(val: str):
-            oxi_grp.setVisible(val in ("oxipng", "optipng"))
-            moz_grp.setVisible(val == "mozjpeg")
-        _on_backend_change(comp.get("backend", "pillow"))
+            oxi_grp.setVisible(val == "oxipng")
+        _on_backend_change(comp.get("backend", "oxipng"))
         backend.currentTextChanged.connect(
             lambda t: _on_backend_change(backend._mapping.get(t, t)))
 
         return ex
-    def _oxipng_ex(self, adv):
-        grp = adv.setdefault("png_oxipng", {})
-        ex = ExpandWidget(tr("advanced.oxipng"))
-        lvl = QSlider(Qt.Orientation.Horizontal)
-        lvl.setRange(0, 6)
-        lvl.setValue(int(grp.get("level", 2)))
-        lvl.valueChanged.connect(lambda v: grp.__setitem__("level", v))
-        ex.body_layout.addWidget(field_row(tr("advanced.level"), lvl, label_width=80))
-        inter = SwitchButton(tr("advanced.interlace"))
-        inter.setChecked(bool(grp.get("interlace", False)))
-        inter.checkedChanged.connect(lambda b: grp.__setitem__("interlace", b))
-        ex.body_layout.addWidget(field_row(tr("advanced.interlace"), inter, label_width=80))
-        strip = _combo([(tr("advanced.strip.safe"), "safe"),
-                        (tr("advanced.strip.all"), "all")],
-                       grp.get("strip", "safe"),
-                       lambda v: grp.__setitem__("strip", v))
-        ex.body_layout.addWidget(field_row(tr("advanced.strip"), strip, label_width=80))
-        return ex
 
-    def _optipng_ex(self, adv):
-        grp = adv.setdefault("png_optipng", {})
-        ex = ExpandWidget(tr("advanced.optipng"))
-        lvl = QSlider(Qt.Orientation.Horizontal)
-        lvl.setRange(0, 7)
-        lvl.setValue(int(grp.get("level", 2)))
-        lvl.valueChanged.connect(lambda v: grp.__setitem__("level", v))
-        ex.body_layout.addWidget(field_row(tr("advanced.level"), lvl, label_width=80))
-        strip = _combo([(tr("advanced.strip.all"), "all"),
-                        (tr("advanced.strip.safe"), "safe")],
-                       grp.get("strip", "all"),
-                       lambda v: grp.__setitem__("strip", v))
-        ex.body_layout.addWidget(field_row(tr("advanced.strip"), strip, label_width=80))
-        return ex
-
-    def _mozjpeg_ex(self, adv):
-        grp = adv.setdefault("jpg_mozjpeg", {})
-        ex = ExpandWidget(tr("advanced.mozjpeg"))
-        q = QSlider(Qt.Orientation.Horizontal)
+    def _add_video(self):
         q.setRange(1, 100)
         q.setValue(int(grp.get("quality", 100)))
         q.valueChanged.connect(lambda v: grp.__setitem__("quality", v))
