@@ -10,7 +10,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QFrame,
-    QDialog, QPushButton,
+    QDialog, QPushButton, QGridLayout,
 )
 from qfluentwidgets import (
     FluentIcon as FIF, FlowLayout, SwitchButton,
@@ -29,7 +29,7 @@ _FMT_CARD_CSS = (
     "QPushButton{"
     "  background: #e8f5e9; border: 2px solid #c8e6c9; border-radius: 10px;"
     "  color: #2e7d32; font-weight: 700; font-size: 16px;"
-    "  min-width: 75px; min-height: 75px; max-width: 75px; max-height: 75px;"
+    "  min-width: 150px; min-height: 75px; max-width: 150px; max-height: 75px;"
     "}"
     "QPushButton:hover{ background: #c8e6c9; border-color: #238636; }"
     "QPushButton:checked{"
@@ -144,26 +144,27 @@ class ConvertSetupDialog(QDialog):
         right_lay.setContentsMargins(0, 0, 0, 0)
         right_lay.setSpacing(12)
 
-        # ---- 选择目标格式（CollapsibleCard）----
+        # ---- 选择目标格式（2×3 网格）----
         fmt_card, fmt_vb, _ = self._fmt_card = CollapsibleCard(
             tr("convert.setup.format"), "", self, collapsed=False), None, None
         fmt_card.body.setSpacing(10)
-        self.fmtGrid = FlowLayout()
-        self.fmtGrid.setSpacing(10)
         self._fmt_list = self._load_formats(self._category)
         self._fmt_btns = {}
         default = self._selection.get(self._category, "").upper()
-        for fmt in self._fmt_list:
+        import math
+        cols = 3
+        rows = max(1, math.ceil(len(self._fmt_list) / cols))
+        self.fmtGrid = QGridLayout()
+        self.fmtGrid.setSpacing(10)
+        for i, fmt in enumerate(self._fmt_list):
             btn = QPushButton(f".{fmt}")
             btn.setCheckable(True)
             btn.setChecked(fmt == default)
             btn.setStyleSheet(_FMT_CARD_CSS)
             btn.clicked.connect(lambda checked, f=fmt: self._select_fmt(f))
             self._fmt_btns[fmt] = btn
-            self.fmtGrid.addWidget(btn)
-        fmt_w = QWidget()
-        fmt_w.setLayout(self.fmtGrid)
-        fmt_card.body.addWidget(fmt_w)
+            self.fmtGrid.addWidget(btn, i // cols, i % cols)
+        fmt_card.body.addLayout(self.fmtGrid)
         right_lay.addWidget(fmt_card)
 
         # ---- 高级设置（v0.4.4：SwitchButton 替换折叠箭头）----
@@ -174,7 +175,9 @@ class ConvertSetupDialog(QDialog):
         adv_card._toggleBtn.hide()
         self.advMasterSwitch = SwitchButton()
         self.advMasterSwitch.setChecked(False)
+        self.advMasterSwitch.setText(" ")
         self.advMasterSwitch.checkedChanged.connect(self._on_adv_master)
+        self.advMasterSwitch.checkedChanged.connect(lambda: self.advMasterSwitch.setText(" "))
         # 插入到 header bar 中（在标题和 stretch 之间）
         adv_card._bar.layout().insertWidget(2, self.advMasterSwitch)
 
@@ -273,7 +276,8 @@ class ConvertSetupDialog(QDialog):
         gpu = self._gpu()
         self.manager.add_files(
             self._paths, fmt_text,
-            folder if mode == "fixed" else None, gpu, mode, suffix)
+            folder if mode == "fixed" else None, gpu, mode, suffix,
+            compress_enabled=self.advMasterSwitch.isChecked())
         self.accept()
 
     def get_selection(self):

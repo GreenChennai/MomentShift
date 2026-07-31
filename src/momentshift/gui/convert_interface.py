@@ -153,6 +153,8 @@ class ConvertInterface(InterfaceBase):
         self.manager.queue_changed.connect(self._sync_queue)
         self.manager.progress_updated.connect(self.queueList.update_progress)
         self.manager.task_finished.connect(self._on_finished)
+        self.manager.compress_started.connect(self.queueList.update_compress_start)
+        self.manager.compress_finished.connect(self.queueList.update_compress_done)
         self.manager.state_changed.connect(self._on_state_changed)
 
         self._update_controls()

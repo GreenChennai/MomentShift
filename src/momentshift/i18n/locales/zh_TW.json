@@ -374,5 +374,20 @@
   "upscale.compare.reset": "重置",
   "advanced.compression.oxipng": "oxipng (內置)",
   "advanced.compression.imagecodecs": "imagecodecs (內置)",
-  "advanced.oxipng.only_png": "oxipng 僅支持 PNG 格式"
+  "advanced.oxipng.only_png": "oxipng 僅支持 PNG 格式",
+  "advanced.help.backend": "壓縮程序：選擇用什麼工具壓縮圖片。oxipng 僅 PNG；imagecodecs 通用；Pillow 備用。",
+  "advanced.help.quality": "質量：1=最小體積，100=最高畫質。影響輸出檔案大小和清晰度。",
+  "advanced.help.level": "壓縮等級：0=最快（體積大），6=最慢（體積最小）。",
+  "advanced.help.interlace": "隔行掃描：開啟後圖片在網路加載時逐行顯示。",
+  "advanced.help.strip": "清除元數據：safe=保留顏色信息，all=清除所有元數據。",
+  "advanced.help.resolution": "分辨率：修改影片畫面尺寸，original=保持原解析度。",
+  "advanced.help.fps": "幀率：改變影片每秒幀數，original=保持原始幀率。",
+  "advanced.help.bitrate": "碼率：控制音影片數據量，higher=更好畫質更大體積。",
+  "advanced.help.codec": "編碼器：H.264相容性最好，H.265效率更高但相容性稍差。",
+  "advanced.help.merge": "合併：將轉換後的檔案合併為一個檔案。",
+  "advanced.help.sample_rate": "採樣率：音頻每秒採樣次數，越高越保真。",
+  "advanced.help.channels": "聲道：stereo=雙聲道，mono=單聲道。",
+  "advanced.help": "說明",
+  "compress.status.done": "壓縮完成",
+  "compress.label": "壓縮"
 }

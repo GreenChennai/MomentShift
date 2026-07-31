@@ -217,6 +217,35 @@ class QueueItemWidget(ThemedCard):
         else:
             self.detailLbl.setText("")
 
+    def set_compress(self, pct: int, done: bool = False):
+        """v0.6.7：压缩阶段进度（金色条 + 标签）。"""
+        self.prog.set_value(pct)
+        gold = "#c7920a"
+        if done:
+            # 压缩后大小对比
+            pre = getattr(self._task, 'pre_compress_size', 0) or self._task.dst_size
+            post = self._task.dst_size
+            self.detailLbl.setText(
+                f"{format_size_compare(pre, post)}  "
+                f"({tr('compress.label')})")
+            self.pill.setStyleSheet(
+                f"background: {gold}; color: #fff; border-radius: 9px;"
+                " padding: 2px 10px; font-size: 11px; font-weight: 600;")
+            self.pill.setText("压缩完成")
+        else:
+            self.pill.setStyleSheet(
+                f"background: {gold}; color: #fff; border-radius: 9px;"
+                " padding: 2px 10px; font-size: 11px; font-weight: 600;")
+            self.pill.setText("压缩中")
+            self.detailLbl.setText(f"{pct}%")
+
+    def restore_after_compress(self):
+        """压缩完成后恢复为正常的绿色已完成状态。"""
+        self.pill.setStyleSheet("")
+        self.pill.set_status("done")
+        self.detailLbl.setText(
+            format_size_compare(self._task.src_size, self._task.dst_size))
+
     def set_format(self, fmt: str):
         self._task.target_format = fmt
         self.fmtCombo.blockSignals(True)
@@ -311,6 +340,40 @@ class QueueListWidget(QWidget):
         w = self.items.get(task_id)
         if w:
             w.set_format(fmt)
+
+    def update_compress(self, task_id: str, pct: int, done: bool = False):
+        """v0.6.0：更新压缩阶段 UI（蓝色进度条）。"""
+        w = self.items.get(task_id)
+        if w:
+            w.set_compress(pct, done)
+
+    def restore_compress(self, task_id: str):
+        """压缩完成后恢复绿色已完成状态。"""
+        w = self.items.get(task_id)
+        if w:
+            w.restore_after_compress()
+
+    def update_compress_start(self, task_id: str):
+        """v0.6.6：压缩开始 → 黄色'等待中' → 蓝色'压缩中'。"""
+        w = self.items.get(task_id)
+        if w:
+            w.set_compress(0, done=False)
+
+    def update_compress_waiting(self, task_id: str):
+        """v0.6.6：等待压缩 → 黄色标签。"""
+        w = self.items.get(task_id)
+        if w:
+            w.pill.setStyleSheet(
+                "background: #e6a817; color: #fff; border-radius: 9px;"
+                " padding: 2px 10px; font-size: 11px; font-weight: 600;")
+            w.pill.setText("等待中")
+            w.prog.set_value(0)
+
+    def update_compress_done(self, task_id: str):
+        """v0.6.5：压缩完成 → 蓝色 100% + '压缩完成'。"""
+        w = self.items.get(task_id)
+        if w:
+            w.set_compress(100, done=True)
 
     def remove_item(self, task_id: str):
         w = self.items.pop(task_id, None)

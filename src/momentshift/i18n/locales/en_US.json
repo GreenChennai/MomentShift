@@ -374,5 +374,20 @@
   "upscale.compare.reset": "Reset",
   "advanced.compression.oxipng": "oxipng (Built-in)",
   "advanced.compression.imagecodecs": "imagecodecs (Built-in)",
-  "advanced.oxipng.only_png": "oxipng only supports PNG format"
+  "advanced.oxipng.only_png": "oxipng only supports PNG format",
+  "advanced.help.backend": "Compression backend: tool for image compression.",
+  "advanced.help.quality": "Quality: 1=smallest, 100=best. Affects file size and clarity.",
+  "advanced.help.level": "Compression level: 0=fastest(larger), 6=slowest(smallest).",
+  "advanced.help.interlace": "Interlace: image loads progressively on web.",
+  "advanced.help.strip": "Strip metadata: safe=keep color info, all=remove everything.",
+  "advanced.help.resolution": "Resolution: modify video frame size.",
+  "advanced.help.fps": "FPS: change frames per second.",
+  "advanced.help.bitrate": "Bitrate: higher=better quality+larger file.",
+  "advanced.help.codec": "Codec: H.264=best compat, H.265=better compression.",
+  "advanced.help.merge": "Merge: combine output files into one.",
+  "advanced.help.sample_rate": "Sample rate: higher=better fidelity.",
+  "advanced.help.channels": "Channels: stereo or mono.",
+  "advanced.help": "Help",
+  "compress.status.done": "Compressed",
+  "compress.label": "compressed"
 }

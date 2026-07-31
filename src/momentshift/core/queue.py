@@ -27,48 +27,47 @@ log = get_logger("queue")
 
 
 def compress_after_conversion(task: "Task") -> None:
-    """Optional post-step: compress an image output if the user opted in.
-
-    Runs only for image tasks whose advanced ``compress`` flag is set. Never
-    raises — a compression failure must not fail an otherwise-good conversion;
-    we just keep the ffmpeg output and log a warning.
-    """
-    adv = task.adv or {}
-    if not adv.get("compress"):
-        return
-    if task.category != "image":
-        return
-
+    """v0.6.0：格式转换后按需运行压缩（两步管线）。"""
     from pathlib import Path as _Path
     from . import compressor
 
-    mode = adv.get("compress_mode", "lossless")
-    preferred = adv.get("compress_backend", "auto")
-    preferred = None if preferred == "auto" else preferred
-    quality = int(adv.get("quality", 100))
-    fmt = _Path(task.output_path).suffix.lower().lstrip(".")
+    log.info("compress_after_conversion ENTER: enabled=%s cat=%s",
+             task.compress_enabled, task.category)
 
-    opts: dict = {}
-    if fmt == "png":
-        opts = dict(adv.get("png_oxipng", {}))
-    elif fmt in ("jpg", "jpeg"):
-        opts = dict(adv.get("jpg_mozjpeg", {}))
+    if not task.compress_enabled:
+        log.info("compress_after_conversion SKIP: compress_enabled=False")
+        return
+    if task.category != "image":
+        log.info("compress_after_conversion SKIP: category=%s", task.category)
+        return
+
+    adv = task.adv or {}
+    comp = adv.get("compress", {})
+    if not isinstance(comp, dict):
+        log.warning("compress_after_conversion: compress is not dict")
+        return
+    backend = comp.get("backend", "oxipng")
+    quality = int(comp.get("quality", 95))
+    fmt = _Path(task.output_path).suffix.lower().lstrip(".")
+    opts = dict(comp)
+
+    log.info("compress_after_conversion START: %s -> %s (backend=%s, quality=%d)",
+             task.input_path, backend, quality)
 
     tmp = str(task.output_path) + ".cmp.tmp"
     try:
-        ok, detail, saved = compressor.compress_auto(
-            task.output_path, tmp, mode, quality, opts, preferred=preferred
-        )
+        ok = compressor.compress(task.output_path, tmp, fmt, quality, backend=backend, opts=opts)
         if ok and _Path(tmp).exists():
             _Path(tmp).replace(task.output_path)
             task.dst_size = _Path(task.output_path).stat().st_size
-            log.info("compressed %s -> %s (saved %d bytes)", task.input_path, detail, saved)
+            task.compress_done = True
+            log.info("compress_after_conversion DONE: %s (size=%d)", task.input_path, task.dst_size)
         else:
-            log.warning("image compression skipped: %s", detail)
+            log.warning("compress FAILED: ok=%s tmp=%s", ok, _Path(tmp).exists())
             if _Path(tmp).exists():
                 _Path(tmp).unlink()
-    except Exception:  # pragma: no cover - defensive
-        log.exception("image compression failed for %s", task.output_path)
+    except Exception:
+        log.exception("compress CRASH for %s", task.output_path)
         if _Path(tmp).exists():
             _Path(tmp).unlink()
 
@@ -79,6 +78,9 @@ class WorkerSignals(QObject):
     started = Signal(str)
     progress = Signal(str, int)
     finished = Signal(str, bool, str)
+    compress_started = Signal(str)   # v0.6.5：压缩开始
+    compress_progress = Signal(str, int)  # v0.6.5：压缩进度
+    compress_finished = Signal(str)  # v0.6.5：压缩完成
 
 
 class ConversionWorker(QRunnable):
@@ -112,12 +114,30 @@ class ConversionWorker(QRunnable):
                 cancel_event=self.cancel_event,
             )
             ok = returncode == 0
-            if ok and self.task.category == "image":
-                compress_after_conversion(self.task)
             self.signals.finished.emit(self.task.id, ok, (err or "") if not ok else "")
         except Exception:
             get_logger("queue").exception("Worker crashed for task %s", self.task.id)
             self.signals.finished.emit(self.task.id, False, "internal worker error (see log)")
+
+
+class CompressWorker(QRunnable):
+    """v0.6.7：独立压缩线程（与格式转换异步）。"""
+
+    def __init__(self, task: Task):
+        super().__init__()
+        self.setAutoDelete(True)
+        self.task = task
+        self.signals = WorkerSignals()
+
+    def run(self) -> None:
+        try:
+            self.signals.compress_started.emit(self.task.id)
+            self.task.pre_compress_size = self.task.dst_size
+            compress_after_conversion(self.task)
+            self.signals.compress_finished.emit(self.task.id)
+        except Exception:
+            get_logger("queue").exception("CompressWorker crashed: %s", self.task.id)
+            self.signals.compress_finished.emit(self.task.id)
 
 
 class ConversionManager(QObject):
@@ -127,6 +147,8 @@ class ConversionManager(QObject):
     progress_updated = Signal(str, int)
     task_started = Signal(str)
     task_finished = Signal(str, bool, str)
+    compress_started = Signal(str)   # v0.6.5
+    compress_finished = Signal(str)  # v0.6.5
     queue_changed = Signal()
     state_changed = Signal()
 
@@ -135,6 +157,8 @@ class ConversionManager(QObject):
         self.tasks: list[Task] = []
         self._events: dict[str, threading.Event] = {}
         self._pool = QThreadPool.globalInstance()
+        self._compress_pool = QThreadPool()  # v0.6.7：独立压缩线程池
+        self._compress_pool.setMaxThreadCount(3)
         self._max = 4
         self.ffmpeg_path = ffmpeg_path or find_ffmpeg(cfg.ffmpegSource.value)
         # Defer hardware-accel probing to a background thread so it never blocks
@@ -208,6 +232,7 @@ class ConversionManager(QObject):
         use_gpu: bool,
         output_mode: str = "fixed",
         suffix: str = "",
+        compress_enabled: bool = False,
     ) -> tuple[list[Task], list[str]]:
         """Add files as pending tasks. Returns (added_tasks, skipped_names).
 
@@ -249,12 +274,15 @@ class ConversionManager(QObject):
                 category=category,
                 use_gpu=False,
                 adv=dict(advanced.get(category)),
+                compress_enabled=compress_enabled,
                 merge=True,
                 input_paths=list(existing),
             )
             task.src_size = sum(self._safe_size(p) for p in existing)
             self.tasks.append(task)
             added.append(task)
+            log.info("add_files(merge): task=%s compress_enabled=%s",
+                     task.id, task.compress_enabled)
             self.task_added.emit(task)
             self.queue_changed.emit()
             return added, skipped
@@ -285,10 +313,13 @@ class ConversionManager(QObject):
                 category=category,
                 use_gpu=bool(use_gpu and profile["category"] == "video"),
                 adv=dict(advanced.get(category)),
+                compress_enabled=compress_enabled,
             )
             task.src_size = self._safe_size(str(src))
             self.tasks.append(task)
             added.append(task)
+            log.info("add_files: task=%s cat=%s fmt=%s compress_enabled=%s",
+                     task.id, task.category, task.target_format, task.compress_enabled)
             self.task_added.emit(task)
 
         self.queue_changed.emit()
@@ -437,6 +468,8 @@ class ConversionManager(QObject):
         worker.signals.started.connect(self._on_started)
         worker.signals.progress.connect(self._on_progress)
         worker.signals.finished.connect(self._on_finished)
+        worker.signals.compress_started.connect(self.compress_started)
+        worker.signals.compress_finished.connect(self.compress_finished)
         self._pool.start(worker)
 
     def _on_started(self, task_id: str) -> None:
@@ -451,15 +484,36 @@ class ConversionManager(QObject):
     def _on_finished(self, task_id: str, ok: bool, log: str) -> None:
         task = self.get_task(task_id)
         if task:
-            task.status = Task.DONE if ok else Task.FAILED
             task.progress = 100 if ok else task.progress
             task.error = log
+            # v0.6.7：如果需要压缩，交给压缩线程池，不标记完成
+            if ok and task.compress_enabled:
+                task.pre_compress_size = task.dst_size
+                cw = CompressWorker(task)
+                cw.signals.compress_started.connect(self.compress_started)
+                cw.signals.compress_finished.connect(self._on_compress_finished)
+                self._compress_pool.start(cw)
+            else:
+                task.status = Task.DONE if ok else Task.FAILED
         self._events.pop(task_id, None)
         get_logger("queue").info("Task %s %s", task_id, "done" if ok else "failed")
-        self.task_finished.emit(task_id, ok, log)
+        if task and not task.compress_enabled:
+            self.task_finished.emit(task_id, ok, log)
 
         if not self._paused:
             self._fill_slots()
+        if self._running_count() == 0:
+            self._running = False
+        self.state_changed.emit()
+
+    def _on_compress_finished(self, task_id: str) -> None:
+        """v0.6.7：压缩完成 → 标记任务 DONE → 发出 task_finished 信号。"""
+        task = self.get_task(task_id)
+        if task:
+            task.status = Task.DONE
+            task.compress_done = True
+        self.task_finished.emit(task_id, True, "")
+        get_logger("queue").info("Task %s compress done", task_id)
         if self._running_count() == 0:
             self._running = False
         self.state_changed.emit()

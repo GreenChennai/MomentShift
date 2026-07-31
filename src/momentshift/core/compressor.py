@@ -31,7 +31,7 @@ def _bundled_oxipng() -> Optional[str]:
     """返回内置 oxipng.exe 的路径（v0.4.0 内置）。"""
     import sys
     if getattr(sys, "frozen", False):
-        base = Path(sys.executable).parent
+        base = Path(sys._MEIPASS) / "momentshift" / "resources"
     else:
         base = Path(__file__).parent.parent / "resources"
     p = base / "oxipng.exe"
@@ -161,17 +161,24 @@ def _compress_oxipng(src: str, dst: str, fmt: str, quality: int, opts: dict) -> 
 
 
 def _compress_imagecodecs(src: str, dst: str, fmt: str, quality: int, opts: dict) -> bool:
-    """imagecodecs 压缩（v0.4.0：Python 库）。"""
+    """imagecodecs 压缩（v0.6.4：jpg→jpeg 规范化）。"""
     try:
-        from imagecodecs import imwrite, imread
-        data = imread(src)
-        if data is None:
-            return False
-        ext = "." + (fmt or "jpg")
+        from PIL import Image
+        import numpy
+        from imagecodecs import imwrite
+        img = Image.open(src)
+        arr = numpy.array(img)
+        fmt_norm = (fmt or "jpg").lower().lstrip(".")
+        if fmt_norm == "jpg": fmt_norm = "jpeg"
+        # imagecodecs 2026.6.26 无 jpeg8_encode，fallback to pillow
         kw = {}
-        if ext.lower() in (".jpg", ".jpeg"):
+        if fmt_norm == "jpeg":
             kw["quality"] = quality
-        imwrite(dst, data, codec=ext, **kw)
+        try:
+            imwrite(dst, arr, codec=fmt_norm, **kw)
+        except Exception:
+            log.warning("imagecodecs '%s' failed, falling back to pillow", fmt_norm)
+            _compress_pillow(src, dst, fmt, quality, opts)
         return True
     except Exception:
         log.exception("imagecodecs failed")
@@ -183,7 +190,9 @@ def _compress_pillow(src: str, dst: str, fmt: str, quality: int, opts: dict) -> 
     try:
         from PIL import Image
         img = Image.open(src)
-        save_fmt = fmt.upper() if fmt.upper() in ("PNG", "JPEG", "WEBP", "BMP", "TIFF") else "PNG"
+        save_fmt = fmt.upper()
+        if save_fmt == "JPG": save_fmt = "JPEG"
+        if save_fmt not in ("PNG", "JPEG", "WEBP", "BMP", "TIFF"): save_fmt = "PNG"
         kw = {}
         if save_fmt == "JPEG":
             kw["quality"] = quality

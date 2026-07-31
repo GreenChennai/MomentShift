@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from PyQt6.QtGui import QColor, QPixmap, QTransform
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QSpinBox, QMessageBox
 
 from qfluentwidgets import FluentIcon as FIF, ComboBox, SwitchButton, CaptionLabel
 
@@ -108,8 +108,28 @@ class AdvancedPanel(QWidget):
         self._categories: list[str] = []
         self.vbox = QVBoxLayout(self)
         self.vbox.setContentsMargins(0, 0, 0, 0)
-        self.vbox.setSpacing(10)
+        self.vbox.setSpacing(12)
         self._expanders: list[ExpandWidget] = []
+
+    def _add_help(self, widget, help_key: str):
+        """帮助按钮：灰色图标 + 点击弹窗（白色背景对话框）。"""
+        from qfluentwidgets import TransparentToolButton
+        from PyQt6.QtGui import QColor
+        btn = TransparentToolButton(FIF.HELP.icon(color=QColor("#888888")), self)
+        btn.setFixedSize(20, 20)
+        def _show_help():
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle(tr("advanced.help"))
+            dlg.setText(tr(help_key))
+            dlg.setIcon(QMessageBox.Icon.Information)
+            dlg.setStyleSheet(
+                "QMessageBox{ background: #ffffff; }"
+                "QLabel{ color: #1a1a1a; }"
+                "QPushButton{ color: #1a1a1a; background: #e0e0e0;"
+                " border: 1px solid #ccc; border-radius: 4px; padding: 4px 12px; }")
+            dlg.exec()
+        btn.clicked.connect(_show_help)
+        widget.layout().addWidget(btn)
 
     # -- build ------------------------------------------------------------
     def refresh(self, categories: list[str]):
@@ -124,36 +144,16 @@ class AdvancedPanel(QWidget):
         self.vbox.addStretch(1)
 
     def on_format_change(self, fmt: str):
-        """v0.4.4：格式切换 → 自动推荐后端，非 PNG 禁用 oxipng。"""
-        if not hasattr(self, '_backend_combo'):
-            return
+        """v0.6.3：格式切换 → 自动推荐后端。"""
+        if not hasattr(self, '_backend_combo'): return
         combo = self._backend_combo
-        fmt = fmt.lower().lstrip(".")
-
-        # oxipng 索引（假设顺序：oxipng, imagecodecs, pillow）
-        # 在 _mapping 中查找各后端对应的显示文本
-        oxi_idx, img_idx, pil_idx = 0, 1, 2  # 默认顺序
-
-        # 启用/禁用 oxipng
-        model = combo.model()
-        item = model.item(oxi_idx)
-        if item:
-            item.setEnabled(fmt == "png")
-
-        # 自动切换后端
-        if fmt == "png":
-            if item and item.isEnabled():
-                combo.setCurrentIndex(oxi_idx)
-            else:
-                combo.setCurrentIndex(img_idx)
-        else:
-            combo.setCurrentIndex(img_idx)
-
-        # 同步到 advanced store
+        is_png = (fmt.lower().lstrip(".") == "png")
+        target = "oxipng" if is_png else "imagecodecs"
+        for txt, val in combo._mapping.items():
+            if val == target: combo.setCurrentText(txt); break
         adv = advanced.adv["image"]
         comp = adv.get("compress", {})
-        if isinstance(comp, dict):
-            comp["backend"] = "oxipng" if fmt == "png" else "imagecodecs"
+        if isinstance(comp, dict): comp["backend"] = target
 
     def _add_expander(self, title_key: str, builder) -> ExpandWidget:
         ex = ExpandWidget(tr(title_key))
@@ -178,33 +178,42 @@ class AdvancedPanel(QWidget):
             lambda v: comp.__setitem__("backend", v),
         )
         self._backend_combo = backend
-        self.vbox.addWidget(field_row(tr("advanced.compression.backend"), backend, label_width=80))
+        fr=field_row(tr("advanced.compression.backend"),backend,label_width=80); self._add_help(fr,"advanced.help.backend"); self.vbox.addWidget(fr)
 
-        # 质量滑块
+        # 质量: 滑条 + 输入框 + 帮助
         q = QSlider(Qt.Orientation.Horizontal)
         q.setRange(1, 100); q.setValue(int(comp.get("quality", 95)))
         q.valueChanged.connect(lambda v: comp.__setitem__("quality", v))
-        self.vbox.addWidget(field_row(tr("advanced.quality"), q, label_width=80))
+        q_spin = QSpinBox(); q_spin.setRange(1, 100); q_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        q_spin.setValue(int(comp.get("quality", 95))); q_spin.setSuffix("%")
+        q_spin.valueChanged.connect(lambda v: (q.setValue(v), comp.__setitem__("quality", v)))
+        q.valueChanged.connect(lambda v: q_spin.setValue(v))
+        q_row = QHBoxLayout(); q_row.addWidget(q, 1); q_row.addWidget(q_spin)
+        fr = QHBoxLayout(); lbl = QLabel(tr("advanced.quality"))
+        lbl.setFixedWidth(80); fr.addWidget(lbl); fr.addLayout(q_row, 1)
+        qw = QWidget(); qw.setLayout(fr)
+        self._add_help(qw, "advanced.help.quality")
+        self.vbox.addWidget(qw)
 
         # oxipng 专用参数
         oxi_grp = QWidget()
         oxi_grp.setStyleSheet("background: transparent;")
         oxi_l = QVBoxLayout(oxi_grp)
-        oxi_l.setContentsMargins(0, 0, 0, 0); oxi_l.setSpacing(6)
+        oxi_l.setContentsMargins(8, 0, 0, 0); oxi_l.setSpacing(6)
         lvl = QSlider(Qt.Orientation.Horizontal)
         lvl.setRange(0, 6); lvl.setValue(int(comp.get("level", 3)))
         lvl_label = QLabel(str(comp.get("level", 3)))
         lvl.valueChanged.connect(lambda v: (comp.__setitem__("level", v), lvl_label.setText(str(v))))
         row = QHBoxLayout(); row.addWidget(lvl_label); row.addWidget(lvl, 1)
-        oxi_l.addWidget(field_row(tr("advanced.level"), row))
+        fr=field_row(tr("advanced.level"),row); self._add_help(fr,"advanced.help.level"); oxi_l.addWidget(fr)
         inter = SwitchButton(tr("advanced.interlace"))
         inter.setChecked(bool(comp.get("interlace", False)))
         inter.checkedChanged.connect(lambda b: comp.__setitem__("interlace", b))
-        oxi_l.addWidget(field_row(tr("advanced.interlace"), inter))
+        fr=field_row(tr("advanced.interlace"),inter); self._add_help(fr,"advanced.help.interlace"); oxi_l.addWidget(fr)
         strip = _combo(
             [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
             comp.get("strip", "safe"), lambda v: comp.__setitem__("strip", v))
-        oxi_l.addWidget(field_row(tr("advanced.strip"), strip))
+        fr=field_row(tr("advanced.strip"),strip); self._add_help(fr,"advanced.help.strip"); oxi_l.addWidget(fr)
         self.vbox.addWidget(oxi_grp)
         oxi_grp._oxi_grp = True  # 标记用于 retheme
 

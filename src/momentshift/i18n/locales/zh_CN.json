@@ -374,5 +374,20 @@
   "upscale.compare.reset": "重置",
   "advanced.compression.oxipng": "oxipng (内置)",
   "advanced.compression.imagecodecs": "imagecodecs (内置)",
-  "advanced.oxipng.only_png": "oxipng 仅支持 PNG 格式"
+  "advanced.oxipng.only_png": "oxipng 仅支持 PNG 格式",
+  "advanced.help.backend": "压缩程序：选择用什么工具压缩图片。oxipng 仅 PNG；imagecodecs 通用；Pillow 兜底。",
+  "advanced.help.quality": "质量：1=最小体积，100=最高画质。影响输出文件大小和清晰度。",
+  "advanced.help.level": "压缩等级：0=最快（体积大），6=最慢（体积最小）。",
+  "advanced.help.interlace": "隔行扫描：开启后图片在网络加载时逐行显示。",
+  "advanced.help.strip": "清除元数据：safe=保留颜色信息，all=清除所有元数据。",
+  "advanced.help.resolution": "分辨率：修改视频画面尺寸，original=保持原分辨率。",
+  "advanced.help.fps": "帧率：改变视频每秒帧数，original=保持原始帧率。",
+  "advanced.help.bitrate": "码率：控制音视频数据量，higher=更好画质更大体积。",
+  "advanced.help.codec": "编码器：H.264兼容性最好，H.265效率更高但兼容性稍差。",
+  "advanced.help.merge": "合并：将转换后的文件合并为一个文件（仅同格式）。",
+  "advanced.help.sample_rate": "采样率：音频每秒采样次数，越高越保真。",
+  "advanced.help.channels": "声道：stereo=双声道，mono=单声道。",
+  "advanced.help": "帮助",
+  "compress.status.done": "压缩完成",
+  "compress.label": "压缩"
 }
