@@ -166,17 +166,19 @@ class ConvertSetupDialog(QDialog):
         fmt_card.body.addWidget(fmt_w)
         right_lay.addWidget(fmt_card)
 
-        # ---- 高级设置（v0.4.3：总开关控制折叠/展开）----
+        # ---- 高级设置（v0.4.4：SwitchButton 替换折叠箭头）----
         adv_card = CollapsibleCard(tr("convert.setup.advanced"), "", self, collapsed=True)
         adv_card.body.setSpacing(8)
 
-        # 总开关：置于高级设置卡片内顶部
+        # 隐藏原始折叠箭头，用 SwitchButton 替换
+        adv_card._toggleBtn.hide()
         self.advMasterSwitch = SwitchButton()
         self.advMasterSwitch.setChecked(False)
         self.advMasterSwitch.setOnText(tr("common.on"))
         self.advMasterSwitch.setOffText(tr("common.off"))
         self.advMasterSwitch.checkedChanged.connect(self._on_adv_master)
-        adv_card.body.addWidget(self.advMasterSwitch)
+        # 插入到 header bar 中（在标题和 stretch 之间）
+        adv_card._bar.layout().insertWidget(2, self.advMasterSwitch)
 
         self.advancedPanel = AdvancedPanel(self)
         self.advancedPanel.refresh([self._category])

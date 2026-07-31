@@ -124,41 +124,36 @@ class AdvancedPanel(QWidget):
         self.vbox.addStretch(1)
 
     def on_format_change(self, fmt: str):
-        """v0.4.3：格式切换 → 自动推荐后端，非 PNG 禁用 oxipng。"""
+        """v0.4.4：格式切换 → 自动推荐后端，非 PNG 禁用 oxipng。"""
         if not hasattr(self, '_backend_combo'):
             return
         combo = self._backend_combo
         fmt = fmt.lower().lstrip(".")
 
-        # 启用/禁用 oxipng（仅 PNG 可用）
+        # oxipng 索引（假设顺序：oxipng, imagecodecs, pillow）
+        # 在 _mapping 中查找各后端对应的显示文本
+        oxi_idx, img_idx, pil_idx = 0, 1, 2  # 默认顺序
+
+        # 启用/禁用 oxipng
         model = combo.model()
-        oxi_idx = -1
-        for i in range(model.rowCount()):
-            if model.item(i).text() == tr("advanced.compression.oxipng"):
-                oxi_idx = i
-                break
-        if oxi_idx >= 0:
-            item = model.item(oxi_idx)
+        item = model.item(oxi_idx)
+        if item:
             item.setEnabled(fmt == "png")
-            item.setToolTip("" if fmt == "png" else tr("advanced.oxipng.only_png"))
 
         # 自动切换后端
-        target = "oxipng" if fmt == "png" else "imagecodecs"
-        # 如果当前 oxipng 被禁用且之前是 oxipng，切换到 imagecodecs
-        current = combo.currentText()
-        if fmt != "png" and current == tr("advanced.compression.oxipng"):
-            combo.setCurrentIndex(1)  # imagecodecs is usually at index 1
+        if fmt == "png":
+            if item and item.isEnabled():
+                combo.setCurrentIndex(oxi_idx)
+            else:
+                combo.setCurrentIndex(img_idx)
         else:
-            for val, text in combo._mapping.items():
-                if text == target:
-                    combo.setCurrentText(val)
-                    break
+            combo.setCurrentIndex(img_idx)
 
         # 同步到 advanced store
         adv = advanced.adv["image"]
         comp = adv.get("compress", {})
         if isinstance(comp, dict):
-            comp["backend"] = target
+            comp["backend"] = "oxipng" if fmt == "png" else "imagecodecs"
 
     def _add_expander(self, title_key: str, builder) -> ExpandWidget:
         ex = ExpandWidget(tr(title_key))
