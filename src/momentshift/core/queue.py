@@ -27,47 +27,51 @@ log = get_logger("queue")
 
 
 def compress_after_conversion(task: "Task") -> None:
-    """v0.6.0：格式转换后按需运行压缩（两步管线）。"""
+    """v0.6.0：格式转换后按需运行压缩（两步管线）。
+
+    v0.7.0：移除 v0.6.2 加入的逐节点 log.info，只保留失败路径的日志。
+    后端为 ``auto``（默认）时由 compressor 按格式路由：
+    png→oxipng / jpg→jpegoptim / 其他→pillow。
+    """
     from pathlib import Path as _Path
     from . import compressor
 
-    log.info("compress_after_conversion ENTER: enabled=%s cat=%s",
-             task.compress_enabled, task.category)
-
-    if not task.compress_enabled:
-        log.info("compress_after_conversion SKIP: compress_enabled=False")
-        return
-    if task.category != "image":
-        log.info("compress_after_conversion SKIP: category=%s", task.category)
+    if not task.compress_enabled or task.category != "image":
         return
 
     adv = task.adv or {}
     comp = adv.get("compress", {})
     if not isinstance(comp, dict):
-        log.warning("compress_after_conversion: compress is not dict")
         return
-    backend = comp.get("backend", "oxipng")
-    quality = int(comp.get("quality", 95))
-    fmt = _Path(task.output_path).suffix.lower().lstrip(".")
-    opts = dict(comp)
 
-    log.info("compress_after_conversion START: %s -> %s (backend=%s, quality=%d)",
-             task.input_path, backend, quality)
+    fmt = _Path(task.output_path).suffix.lower().lstrip(".")
+    backend = comp.get("backend") or "auto"
+    if backend == "auto":
+        backend = compressor.default_backend(fmt)
+    quality = int(comp.get("quality", 95))
+    opts = dict(comp)
 
     tmp = str(task.output_path) + ".cmp.tmp"
     try:
-        ok = compressor.compress(task.output_path, tmp, fmt, quality, backend=backend, opts=opts)
+        ok = compressor.compress(task.output_path, tmp, fmt, quality,
+                                 backend=backend, opts=opts)
         if ok and _Path(tmp).exists():
-            _Path(tmp).replace(task.output_path)
-            task.dst_size = _Path(task.output_path).stat().st_size
+            new_size = _Path(tmp).stat().st_size
+            old_size = task.dst_size or _Path(task.output_path).stat().st_size
+            if 0 < new_size < old_size:
+                _Path(tmp).replace(task.output_path)
+                task.dst_size = new_size
+            else:
+                # 压缩没能变小：保留转换结果，仍记为压缩完成（节省 0）
+                _Path(tmp).unlink()
+                task.dst_size = old_size
             task.compress_done = True
-            log.info("compress_after_conversion DONE: %s (size=%d)", task.input_path, task.dst_size)
         else:
-            log.warning("compress FAILED: ok=%s tmp=%s", ok, _Path(tmp).exists())
+            log.warning("压缩未产出结果，保留原文件：%s", _Path(task.output_path).name)
             if _Path(tmp).exists():
                 _Path(tmp).unlink()
     except Exception:
-        log.exception("compress CRASH for %s", task.output_path)
+        log.exception("压缩异常：%s", task.output_path)
         if _Path(tmp).exists():
             _Path(tmp).unlink()
 
@@ -482,39 +486,49 @@ class ConversionManager(QObject):
         self.progress_updated.emit(task_id, pct)
 
     def _on_finished(self, task_id: str, ok: bool, log: str) -> None:
+        """转换结束。
+
+        v0.7.0：无论是否还要压缩，都先把任务标记为「已完成」并发出
+        ``task_finished``，让队列 UI 先亮绿色；随后再进入压缩阶段
+        （UI 由 ``compress_started`` 切换成黄色「压缩中」）。这样状态序列
+        才是 等待中 → 已完成 → 压缩中 → 压缩完成。
+        """
         task = self.get_task(task_id)
+        need_compress = bool(task and ok and task.compress_enabled)
+
         if task:
             task.progress = 100 if ok else task.progress
             task.error = log
-            # v0.6.7：如果需要压缩，交给压缩线程池，不标记完成
-            if ok and task.compress_enabled:
-                task.status = Task.COMPRESSING  # v0.6.8：不占用转换槽位
-                task.pre_compress_size = task.dst_size
-                cw = CompressWorker(task)
-                cw.signals.compress_started.connect(self.compress_started)
-                cw.signals.compress_finished.connect(self._on_compress_finished)
-                self._compress_pool.start(cw)
-            else:
-                task.status = Task.DONE if ok else Task.FAILED
+            task.status = Task.DONE if ok else Task.FAILED
+
         self._events.pop(task_id, None)
-        get_logger("queue").info("Task %s %s", task_id, "done" if ok else "failed")
-        if task and not (ok and task.compress_enabled):
-            self.task_finished.emit(task_id, ok, log)
+        self.task_finished.emit(task_id, ok, log)
+
+        if need_compress:
+            # 压缩在独立线程池执行，COMPRESSING 不占用转换槽位（v0.6.8）
+            task.status = Task.COMPRESSING
+            task.pre_compress_size = task.dst_size
+            cw = CompressWorker(task)
+            cw.signals.compress_started.connect(self.compress_started)
+            cw.signals.compress_finished.connect(self._on_compress_finished)
+            self._compress_pool.start(cw)
 
         if not self._paused:
             self._fill_slots()
-        if self._running_count() == 0:
+        if self._running_count() == 0 and not need_compress:
             self._running = False
         self.state_changed.emit()
 
     def _on_compress_finished(self, task_id: str) -> None:
-        """v0.6.7：压缩完成 → 标记任务 DONE → 发出 task_finished 信号。"""
+        """压缩阶段结束 → 回到 DONE 并中继 ``compress_finished``。
+
+        不再重复发 ``task_finished``：转换结束时已经发过一次，重复发送会让
+        队列 UI 把黄/蓝的压缩状态又刷回绿色。
+        """
         task = self.get_task(task_id)
         if task:
             task.status = Task.DONE
-            task.compress_done = True
-        self.task_finished.emit(task_id, True, "")
-        get_logger("queue").info("Task %s compress done", task_id)
+        self.compress_finished.emit(task_id)
         if self._running_count() == 0:
             self._running = False
         self.state_changed.emit()

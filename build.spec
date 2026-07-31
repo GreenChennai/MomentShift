@@ -29,6 +29,7 @@ datas = [
     (os.path.join(SRC_DIR, "momentshift", "resources", "icons"), "momentshift/resources/icons"),
     (os.path.join(SRC_DIR, "momentshift", "i18n", "locales"), "momentshift/i18n/locales"),
     (os.path.join(SRC_DIR, "momentshift", "resources", "oxipng.exe"), "momentshift/resources"),
+    (os.path.join(SRC_DIR, "momentshift", "resources", "jpegoptim.exe"), "momentshift/resources"),
 ]
 
 hiddenimports = [

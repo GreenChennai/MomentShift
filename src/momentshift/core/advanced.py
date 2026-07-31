@@ -39,10 +39,22 @@ def default_options() -> dict:
             "png_quality": None,
             "jpg_quality": None,
             "webp_quality": None,
-            # v0.4.0 压缩后端：always dict (ffmpeg / oxipng / imagecodecs)
-            "compress": {"backend": "oxipng", "level": 3, "interlace": False,
-                         "strip": "safe", "quality": 95, "progressive": False,
-                         "arithmetic": False},
+            # v0.7.0 压缩后端：always dict。backend="auto" 时按格式路由
+            # （png→oxipng / jpg→jpegoptim / 其他→pillow）。
+            "compress": {
+                "backend": "auto",
+                "quality": 95,
+                # oxipng
+                "level": 3, "interlace": False, "strip": "safe",
+                "filter": 0, "zc": 6, "alpha": False,
+                # jpegoptim
+                "jo_mode": "lossless", "jo_max": 85, "jo_strip": "none",
+                "jo_progressive": "auto", "jo_threshold": 0,
+                "jo_preserve": True, "jo_retry": False,
+                # pillow
+                "pil_quality": 95, "pil_optimize": True,
+                "pil_progressive": True, "pil_subsampling": "4:4:4",
+            },
             "compress_mode": "lossless",
         },
         "video": {

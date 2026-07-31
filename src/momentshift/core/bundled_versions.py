@@ -1,4 +1,4 @@
-"""内置工具版本号（v0.4.0）。"""
+"""内置工具版本号（v0.7.0）。"""
 
 OXIPNG_VERSION = "10.1.1"
-IMAGECODECS_VERSION = "2026.6.26"
+JPEGOPTIM_VERSION = "1.5.6"

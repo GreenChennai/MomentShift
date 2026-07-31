@@ -44,14 +44,18 @@ def human_size(n: int) -> str:
 
 
 def format_size_compare(before: int, after: int) -> str:
+    """``1.2 MB → 800.0 KB (-33%)``；变大时显示 ``+N%``（v0.7.0）。"""
+    before, after = int(before or 0), int(after or 0)
     if not before:
-        return ""
-    if after and after < before:
-        pct = (before - after) / before * 100
-        return f"{human_size(before)} → {human_size(after)}  (-{pct:.0f}%)"
-    if after:
-        return f"{human_size(before)} → {human_size(after)}"
-    return human_size(before)
+        return human_size(after) if after else ""
+    if not after:
+        return human_size(before)
+    delta = (after - before) / before * 100
+    if abs(delta) < 0.5:
+        pct = "±0%"
+    else:
+        pct = f"{delta:+.0f}%"
+    return f"{human_size(before)} → {human_size(after)}  ({pct})"
 
 
 _CATEGORY_ICON = {
@@ -63,12 +67,17 @@ _CATEGORY_ICON = {
 # Status pill colours. The pill background is the status colour (vivid, theme
 # independent); the text is the inverse (near-white) so it reads clearly on any
 # status colour. This matches the requested "胶囊 = 状态色, 文字 = 反色" rule.
+#
+# v0.7.0 状态流转：
+#   等待中(灰) → 转换中(蓝) → 已完成(绿) →〔开启压缩时〕压缩中(黄) → 压缩完成(蓝)
 _STATUS_PILL_BG = {
-    "pending": "#8a8a8a",
+    "pending": "#8A8A8A",
     "running": "#2F98FF",
     "done": "#3EB68F",
     "failed": "#FF7279",
-    "canceled": "#8a8a8a",
+    "canceled": "#8A8A8A",
+    "compressing": "#C7920A",
+    "compress_done": "#3964FE",
 }
 _STATUS_PILL_FG = "#F5F5F5"
 
@@ -201,53 +210,83 @@ class QueueItemWidget(ThemedCard):
     def set_progress(self, pct: int):
         self.prog.set_value(pct)
 
+    # -- 详情行 ---------------------------------------------------------
+    def _convert_sizes(self) -> tuple[int, int]:
+        """(转换前, 转换后)。压缩已跑过时，转换后大小存在 pre_compress_size。"""
+        before = int(getattr(self._task, "src_size", 0) or 0)
+        pre = int(getattr(self._task, "pre_compress_size", 0) or 0)
+        after = pre or int(getattr(self._task, "dst_size", 0) or 0)
+        return before, after
+
+    def _compress_sizes(self) -> tuple[int, int]:
+        """(压缩前, 压缩后)。"""
+        pre = int(getattr(self._task, "pre_compress_size", 0) or 0)
+        post = int(getattr(self._task, "dst_size", 0) or 0)
+        return pre, post
+
+    def _detail_text(self) -> str:
+        """组合「转换前后」与「压缩前后」两段对比（v0.7.0 Bug 2）。
+
+        转换阶段： ``转换 1.2 MB → 900.0 KB (-25%)``
+        压缩之后： ``转换 … · 压缩 900.0 KB → 700.0 KB (-22%)``
+        """
+        parts: list[str] = []
+
+        cb, ca = self._convert_sizes()
+        conv = format_size_compare(cb, ca)
+        if conv:
+            parts.append(f"{tr('convert.label.convert')} {conv}")
+
+        if getattr(self._task, "compress_done", False):
+            pb, pa = self._compress_sizes()
+            comp = format_size_compare(pb, pa)
+            if comp:
+                parts.append(f"{tr('convert.label.compress')} {comp}")
+
+        return "   ·   ".join(parts)
+
+    # -- 状态 -----------------------------------------------------------
     def set_status(self, status: str, error: str = ""):
-        # v0.6.9：压缩完成任务不覆盖金色状态（必须在 pill 修改前检查）
-        if status == "done" and getattr(self._task, 'compress_done', False):
-            return
-        self._task.status = status
+        """更新状态胶囊与详情行。
+
+        v0.7.0：压缩相关状态也走这里统一上色，不再用 setStyleSheet 打补丁。
+        任务已进入压缩阶段后，再收到 ``done`` 不会把胶囊刷回绿色。
+        """
+        compressed = getattr(self._task, "compress_done", False)
+        if status == "done" and compressed:
+            status = "compress_done"
+
+        if status not in ("compressing", "compress_done"):
+            self._task.status = status
         self.pill.set_status(status)
         self.prog.set_error(status == "failed")
         self.retryBtn.setVisible(status in ("failed", "canceled"))
-        if status == "done":
-            self.detailLbl.setText(
-                format_size_compare(self._task.src_size, self._task.dst_size)
-            )
+
+        if status in ("done", "compress_done"):
+            self.detailLbl.setText(self._detail_text())
         elif status == "failed":
             self.detailLbl.setText((error or tr("convert.status.failed"))[:60])
         elif status == "running":
             self.detailLbl.setText(f"{self._task.progress}%")
+        elif status == "compressing":
+            self.detailLbl.setText(self._detail_text())
         else:
             self.detailLbl.setText("")
 
     def set_compress(self, pct: int, done: bool = False):
-        """v0.6.7：压缩阶段进度（金色条 + 标签）。"""
+        """压缩阶段：进度 + 黄「压缩中」/ 蓝「压缩完成」胶囊。"""
         self.prog.set_value(pct)
-        gold = "#c7920a"
+        self.prog.set_error(False)
+        self.pill.set_status("compress_done" if done else "compressing")
         if done:
-            # 压缩后大小对比
-            pre = getattr(self._task, 'pre_compress_size', 0) or self._task.dst_size
-            post = self._task.dst_size
-            self.detailLbl.setText(
-                f"{format_size_compare(pre, post)}  "
-                f"({tr('compress.label')})")
-            self.pill.setStyleSheet(
-                f"background: {gold}; color: #fff; border-radius: 9px;"
-                " padding: 2px 10px; font-size: 11px; font-weight: 600;")
-            self.pill.setText("压缩完成")
+            self.detailLbl.setText(self._detail_text())
         else:
-            self.pill.setStyleSheet(
-                f"background: {gold}; color: #fff; border-radius: 9px;"
-                " padding: 2px 10px; font-size: 11px; font-weight: 600;")
-            self.pill.setText("压缩中")
-            self.detailLbl.setText(f"{pct}%")
+            base = self._detail_text()
+            self.detailLbl.setText(f"{base}   ·   {pct}%" if base else f"{pct}%")
 
     def restore_after_compress(self):
-        """压缩完成后恢复为正常的绿色已完成状态。"""
-        self.pill.setStyleSheet("")
-        self.pill.set_status("done")
-        self.detailLbl.setText(
-            format_size_compare(self._task.src_size, self._task.dst_size))
+        """回到「已完成」态（压缩过的任务保持蓝色压缩完成）。"""
+        self.set_status("done")
 
     def set_format(self, fmt: str):
         self._task.target_format = fmt
@@ -357,26 +396,24 @@ class QueueListWidget(QWidget):
             w.restore_after_compress()
 
     def update_compress_start(self, task_id: str):
-        """v0.6.6：压缩开始 → 黄色'等待中' → 蓝色'压缩中'。"""
+        """压缩开始 → 黄色「压缩中」。"""
         w = self.items.get(task_id)
         if w:
             w.set_compress(0, done=False)
 
     def update_compress_waiting(self, task_id: str):
-        """v0.6.6：等待压缩 → 黄色标签。"""
+        """排队等待压缩 → 灰色「等待中」。"""
         w = self.items.get(task_id)
         if w:
-            w.pill.setStyleSheet(
-                "background: #e6a817; color: #fff; border-radius: 9px;"
-                " padding: 2px 10px; font-size: 11px; font-weight: 600;")
-            w.pill.setText("等待中")
+            w.pill.set_status("pending")
             w.prog.set_value(0)
 
     def update_compress_done(self, task_id: str):
-        """v0.6.5：压缩完成 → 蓝色 100% + '压缩完成'。"""
+        """压缩完成 → 蓝色「压缩完成」+ 双段大小对比。"""
         w = self.items.get(task_id)
         if w:
             w.set_compress(100, done=True)
+            self._update_stats(_counts_from(self.items))
 
     def remove_item(self, task_id: str):
         w = self.items.pop(task_id, None)

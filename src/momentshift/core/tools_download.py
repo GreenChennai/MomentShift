@@ -1,10 +1,12 @@
-"""Download the optional image-compression tools (oxipng / optipng / mozjpeg)
+"""Download the optional image-compression tools (oxipng / jpegoptim)
 into the unified ``tools/`` folder next to the executable.
 
 These binaries are *small* (unlike ffmpeg) so the app can manage them itself
 via a one-click download button, keeping them in one tidy place instead of
 expecting the user to drop files next to the exe. Pillow always covers the
 baseline, so a missing tool only disables that one high-end backend.
+
+v0.7.0：移除 OptiPNG / MozJPEG（已被内置的 jpegoptim 取代）。
 
 Pure stdlib networking + Qt worker plumbing — no pip dependencies.
 """
@@ -34,19 +36,13 @@ _TOOLS: dict[str, dict] = {
         "repo": "oxipng/oxipng",
         "asset": "x86_64-pc-windows-msvc.zip",
         "binaries": ["oxipng.exe"],
-        "fallback": "https://github.com/oxipng/oxipng/releases/download/v9.1.1/oxipng-9.1.1-x86_64-pc-windows-msvc.zip",
+        "fallback": "https://github.com/oxipng/oxipng/releases/download/v10.1.1/oxipng-10.1.1-x86_64-pc-windows-msvc.zip",
     },
-    "optipng": {
-        # OptiPNG has no official GitHub Windows release; the SourceForge
-        # redistributable zip contains optipng.exe. Best-effort only.
-        "url": "https://downloads.sourceforge.net/project/optipng/OptiPNG/optipng-0.7.8/optipng-0.7.8-win32.zip",
-        "binaries": ["optipng.exe"],
-    },
-    "mozjpeg": {
-        "repo": "mozilla/mozjpeg",
-        "asset": "windows-gpl.zip",
-        "binaries": ["cjpeg.exe", "jpegtran.exe"],
-        "fallback": "https://github.com/mozilla/mozjpeg/releases/download/v4.1.5/mozjpeg-4.1.5-release-windows-gpl.zip",
+    "jpegoptim": {
+        "repo": "tjko/jpegoptim",
+        "asset": "x64-windows.zip",
+        "binaries": ["jpegoptim.exe"],
+        "fallback": "https://github.com/tjko/jpegoptim/releases/download/v1.5.6/jpegoptim-1.5.6-x64-windows.zip",
     },
 }
 

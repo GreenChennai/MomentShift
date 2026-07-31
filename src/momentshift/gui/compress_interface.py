@@ -1,7 +1,7 @@
 """压缩界面 —— 批量图片压缩（v0.2.9 重写）。
 
-自管任务队列（QRunnable 线程池模型），支持多种压缩后端（pillow/oxipng/optipng/mozjpeg）。
-v0.2.9 改动：使用 InterfaceBase 共享组件构建器，精简代码。
+自管任务队列（QRunnable 线程池模型），支持多种压缩后端（pillow/oxipng/jpegoptim）。
+v0.7.0 改动：后端改为 auto/oxipng/jpegoptim/pillow 三套独立参数面板，移除 imagecodecs/optipng/mozjpeg。
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QFileDialog, QScrollArea,
-    QSlider, QLabel, QMessageBox,
+    QSlider, QLabel, QMessageBox, QSpinBox,
 )
 from PyQt6.QtCore import Qt
 
@@ -58,7 +58,7 @@ class CompressWorker(QRunnable):
         self.target_fmt = target_fmt
         self.mode = mode
         self.quality = quality
-        self.preferred = preferred  # "pillow"/"oxipng"/"optipng"/"mozjpeg" 或 None
+        self.preferred = preferred  # "pillow"/"oxipng"/"jpegoptim" 或 None
         self.opts = opts or {}
         self.signals = _WorkerSignals()
 
@@ -250,7 +250,7 @@ class CompressListWidget(QWidget):
 class CompressInterface(InterfaceBase):
     """图片压缩标签页。
 
-    自管任务队列（QRunnable + QThreadPool），支持 pillow/oxipng/optipng/mozjpeg
+    自管任务队列（QRunnable + QThreadPool），支持 auto/oxipng/jpegoptim/pillow
     多种压缩后端，以及无损/有损两种模式。
     """
 
@@ -266,17 +266,19 @@ class CompressInterface(InterfaceBase):
         # 重入防护（v0.3.0）：防止模态对话框事件循环触发二次弹框
         self._picking = False
 
-        # 压缩参数默认值
-        self._program = "pillow"
+        # 压缩参数默认值（v0.7.0：oxipng / jpegoptim / pillow 三后端）
+        self._program = "auto"
         self._tool_opts = {
-            "pillow": {},
-            "oxipng": {"level": 2, "interlace": False, "strip": "safe"},
-            "optipng": {"level": 2, "strip": "all"},
-            "mozjpeg": {"quality": 100, "progressive": True, "strip": True,
-                        "arithmetic": False},
+            "oxipng": {"level": 3, "interlace": False, "strip": "safe",
+                       "filter": 0, "zc": 6, "alpha": False},
+            "jpegoptim": {"jo_mode": "lossless", "jo_max": 85, "jo_strip": "none",
+                          "jo_progressive": "auto", "jo_threshold": 0,
+                          "jo_preserve": True, "jo_retry": False},
+            "pillow": {"pil_quality": 95, "pil_optimize": True,
+                       "pil_progressive": True, "pil_subsampling": "4:4:4"},
         }
-        self._quality = 100
         self._target = "same"
+        self._switches: list = []
         self._output_mode = cfg.compressMode.value
         self._suffix = cfg.compressSuffix.value
         self._folder = cfg.compressFolder.value or ""
@@ -302,15 +304,23 @@ class CompressInterface(InterfaceBase):
         # =====================================================================
         scard, svb, self.tSettings = self._make_card("compress.settings.title")
 
-        # 压缩后端选择（v0.4.0：内置 oxipng + imagecodecs，删除 OptiPNG/MozJPEG）
+        # 压缩后端选择（v0.7.0：auto / oxipng / jpegoptim / pillow）
         self.programCombo = self._make_combo(
-            [(tr("advanced.compression.oxipng"), "oxipng"),
-             ("imagecodecs", "imagecodecs"),
+            [(tr("advanced.compression.auto"), "auto"),
+             (tr("advanced.compression.oxipng"), "oxipng"),
+             (tr("advanced.compression.jpegoptim"), "jpegoptim"),
              (tr("advanced.compression.pillow"), "pillow")],
             self._program, lambda v: self._on_program(v))
         svb.addWidget(field_row(tr("advanced.compression.backend"), self.programCombo))
 
-        # 通用压缩参数（目标格式 + 质量）
+        # 路由提示（仅 auto 时显示）
+        rhint = CaptionLabel(tr("advanced.compression.route"))
+        rhint.setWordWrap(True)
+        rhint.setStyleSheet(f"color: {muted_text()}; background: transparent;")
+        svb.addWidget(rhint)
+        self._route_hint = rhint
+
+        # 通用压缩参数（目标格式）
         self.paramsGroup = QWidget()
         # 强制透明背景，防止在深/浅色主题下出现异常色块 (v0.3.1, #6)
         self.paramsGroup.setStyleSheet("background: transparent;")
@@ -322,16 +332,15 @@ class CompressInterface(InterfaceBase):
              ("WebP", "webp"), ("BMP", "bmp"), ("TIFF", "tiff")],
             self._target, lambda v: setattr(self, "_target", v))
         fq.addWidget(field_row(tr("compress.target"), self.targetCombo))
-        self.quality = QSlider(Qt.Orientation.Horizontal)
-        self.quality.setRange(1, 100)
-        self.quality.setValue(self._quality)
-        self.quality.valueChanged.connect(lambda v: setattr(self, "_quality", v))
-        fq.addWidget(field_row(tr("compress.quality"), self.quality))
         svb.addWidget(self.paramsGroup)
 
-        # 各后端专用参数组
+        # 各后端专用参数组（v0.7.0：三后端独立面板）
         self.oxipngGroup = self._build_oxipng()
         svb.addWidget(self.oxipngGroup)
+        self.joGroup = self._build_jpegoptim()
+        svb.addWidget(self.joGroup)
+        self.pilGroup = self._build_pillow()
+        svb.addWidget(self.pilGroup)
 
         # 输出位置
         self.outputSwitch = SwitchButton(tr("compress.output.same"))
@@ -417,43 +426,195 @@ class CompressInterface(InterfaceBase):
         inter = SwitchButton(tr("advanced.interlace"))
         inter.setChecked(bool(grp["interlace"]))
         inter.checkedChanged.connect(lambda b: grp.__setitem__("interlace", b))
-        self._ox_inter = inter
+        self._switches.append(inter)
         ly.addWidget(field_row(tr("advanced.interlace"), inter))
         strip = self._make_combo(
             [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
             grp["strip"], lambda v: grp.__setitem__("strip", v))
         ly.addWidget(field_row(tr("advanced.strip"), strip))
+        filt = self._make_combo(
+            [(tr("advanced.filter.none"), 0), (tr("advanced.filter.sub"), 1),
+             (tr("advanced.filter.up"), 2), (tr("advanced.filter.average"), 3),
+             (tr("advanced.filter.paeth"), 4), (tr("advanced.filter.mixed"), 5)],
+            grp["filter"], lambda v: grp.__setitem__("filter", int(v)))
+        ly.addWidget(field_row(tr("advanced.filter"), filt))
+        zc = QSlider(Qt.Orientation.Horizontal)
+        zc.setRange(1, 9)
+        zc.setValue(int(grp["zc"]))
+        zc_label = QLabel(str(grp["zc"]))
+        zc.valueChanged.connect(
+            lambda v: (grp.__setitem__("zc", v), zc_label.setText(str(v))))
+        zc_row = QHBoxLayout()
+        zc_row.addWidget(zc_label)
+        zc_row.addWidget(zc, 1)
+        ly.addWidget(field_row(tr("advanced.zc"), zc_row))
+        alpha = SwitchButton(tr("advanced.alpha"))
+        alpha.setChecked(bool(grp["alpha"]))
+        alpha.checkedChanged.connect(lambda b: grp.__setitem__("alpha", b))
+        self._switches.append(alpha)
+        ly.addWidget(field_row(tr("advanced.alpha"), alpha))
+        return w
+
+    def _build_jpegoptim(self):
+        grp = self._tool_opts["jpegoptim"]
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 0, 0, 0)
+        ly.setSpacing(6)
+        jo_mode = self._make_combo(
+            [(tr("advanced.jo.mode.lossless"), "lossless"),
+             (tr("advanced.jo.mode.lossy"), "lossy")],
+            grp["jo_mode"],
+            lambda v: (grp.__setitem__("jo_mode", v), self._sync_jo_max(v)))
+        ly.addWidget(field_row(tr("advanced.jo.mode"), jo_mode))
+        jo_max = QSlider(Qt.Orientation.Horizontal)
+        jo_max.setRange(0, 100)
+        jo_max.setValue(int(grp["jo_max"]))
+        jo_max_spin = QSpinBox()
+        jo_max_spin.setRange(0, 100)
+        jo_max_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        jo_max_spin.setValue(int(grp["jo_max"]))
+        jo_max.valueChanged.connect(
+            lambda v: (grp.__setitem__("jo_max", v), jo_max_spin.setValue(v)))
+        jo_max_spin.valueChanged.connect(
+            lambda v: (grp.__setitem__("jo_max", v), jo_max.setValue(v)))
+        jm_row = QHBoxLayout()
+        jm_row.addWidget(jo_max, 1)
+        jm_row.addWidget(jo_max_spin)
+        jo_max_fr = field_row(tr("advanced.jo.max"), jm_row)
+        ly.addWidget(jo_max_fr)
+        jo_strip = self._make_combo(
+            [(tr("advanced.jo.strip.none"), "none"),
+             (tr("advanced.jo.strip.meta"), "meta"),
+             (tr("advanced.jo.strip.exif"), "exif"),
+             (tr("advanced.jo.strip.icc"), "icc"),
+             (tr("advanced.jo.strip.all"), "all")],
+            grp["jo_strip"], lambda v: grp.__setitem__("jo_strip", v))
+        ly.addWidget(field_row(tr("advanced.jo.strip"), jo_strip))
+        jo_prog = self._make_combo(
+            [(tr("advanced.jo.prog.auto"), "auto"),
+             (tr("advanced.jo.prog.keep"), "keep"),
+             (tr("advanced.jo.prog.progressive"), "progressive"),
+             (tr("advanced.jo.prog.normal"), "normal")],
+            grp["jo_progressive"], lambda v: grp.__setitem__("jo_progressive", v))
+        ly.addWidget(field_row(tr("advanced.jo.prog"), jo_prog))
+        jo_thr = QSpinBox()
+        jo_thr.setRange(0, 99)
+        jo_thr.setSuffix("%")
+        jo_thr.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        jo_thr.setValue(int(grp["jo_threshold"]))
+        jo_thr.valueChanged.connect(lambda v: grp.__setitem__("jo_threshold", v))
+        ly.addWidget(field_row(tr("advanced.jo.threshold"), jo_thr))
+        jo_pres = SwitchButton(tr("advanced.jo.preserve"))
+        jo_pres.setChecked(bool(grp["jo_preserve"]))
+        jo_pres.checkedChanged.connect(lambda b: grp.__setitem__("jo_preserve", b))
+        self._switches.append(jo_pres)
+        ly.addWidget(field_row(tr("advanced.jo.preserve"), jo_pres))
+        jo_retry = SwitchButton(tr("advanced.jo.retry"))
+        jo_retry.setChecked(bool(grp["jo_retry"]))
+        jo_retry.checkedChanged.connect(lambda b: grp.__setitem__("jo_retry", b))
+        self._switches.append(jo_retry)
+        ly.addWidget(field_row(tr("advanced.jo.retry"), jo_retry))
+        self._jo_max_fr = jo_max_fr
+        self._sync_jo_max(grp["jo_mode"])
+        return w
+
+    def _sync_jo_max(self, mode: str):
+        if hasattr(self, "_jo_max_fr"):
+            self._jo_max_fr.setEnabled(mode == "lossy")
+
+    def _build_pillow(self):
+        grp = self._tool_opts["pillow"]
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 0, 0, 0)
+        ly.setSpacing(6)
+        pq = QSlider(Qt.Orientation.Horizontal)
+        pq.setRange(0, 95)
+        pq.setValue(int(grp["pil_quality"]))
+        pq_spin = QSpinBox()
+        pq_spin.setRange(0, 95)
+        pq_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        pq_spin.setValue(int(grp["pil_quality"]))
+        pq.valueChanged.connect(
+            lambda v: (grp.__setitem__("pil_quality", v), pq_spin.setValue(v)))
+        pq_spin.valueChanged.connect(
+            lambda v: (grp.__setitem__("pil_quality", v), pq.setValue(v)))
+        pq_row = QHBoxLayout()
+        pq_row.addWidget(pq, 1)
+        pq_row.addWidget(pq_spin)
+        ly.addWidget(field_row(tr("advanced.pil.quality"), pq_row))
+        pil_opt = SwitchButton(tr("advanced.pil.optimize"))
+        pil_opt.setChecked(bool(grp["pil_optimize"]))
+        pil_opt.checkedChanged.connect(lambda b: grp.__setitem__("pil_optimize", b))
+        self._switches.append(pil_opt)
+        ly.addWidget(field_row(tr("advanced.pil.optimize"), pil_opt))
+        pil_prog = SwitchButton(tr("advanced.pil.progressive"))
+        pil_prog.setChecked(bool(grp["pil_progressive"]))
+        pil_prog.checkedChanged.connect(
+            lambda b: grp.__setitem__("pil_progressive", b))
+        self._switches.append(pil_prog)
+        ly.addWidget(field_row(tr("advanced.pil.progressive"), pil_prog))
+        pil_sub = self._make_combo(
+            [(tr("advanced.pil.sub.444"), "4:4:4"),
+             (tr("advanced.pil.sub.422"), "4:2:2"),
+             (tr("advanced.pil.sub.420"), "4:2:0")],
+            grp["pil_subsampling"],
+            lambda v: grp.__setitem__("pil_subsampling", v))
+        ly.addWidget(field_row(tr("advanced.pil.subsampling"), pil_sub))
         return w
 
     def _on_program(self, p):
         self._program = p
-        self.oxipngGroup.setVisible(p == "oxipng")
+        if p == "auto":
+            self.oxipngGroup.setVisible(True)
+            self.joGroup.setVisible(True)
+            self.pilGroup.setVisible(True)
+        else:
+            self.oxipngGroup.setVisible(p == "oxipng")
+            self.joGroup.setVisible(p == "jpegoptim")
+            self.pilGroup.setVisible(p == "pillow")
+        self._route_hint.setVisible(p == "auto")
         self._refresh_tool_status()
 
     def _refresh_tool_status(self):
-        if self._program == "pillow":
+        if self._program in ("pillow", "auto"):
             self.toolsBtn.setVisible(False)
             self.toolsStatus.setVisible(False)
             return
         installed = False
         if self._program == "oxipng":
             installed = compressor.find_tool("oxipng") is not None
-        elif self._program == "optipng":
-            installed = compressor.find_tool("optipng") is not None
-        elif self._program == "mozjpeg":
-            installed = (compressor.find_tool("jpegtran") is not None
-                         or compressor.find_tool("cjpeg") is not None)
+        elif self._program == "jpegoptim":
+            installed = compressor.find_tool("jpegoptim") is not None
         self.toolsBtn.setVisible(not installed)
         self.toolsStatus.setVisible(installed)
         if installed:
             self.toolsStatus.setText(tr("compress.tools.done"))
 
     def _current_mode(self):
-        if self._program in ("oxipng", "optipng"):
+        if self._program == "oxipng":
             return "lossless"
-        return "lossless" if self._quality == 100 else "lossy"
+        if self._program == "jpegoptim":
+            return self._tool_opts["jpegoptim"].get("jo_mode", "lossless")
+        return "lossy"
+
+    def _current_quality(self) -> int:
+        if self._program == "jpegoptim":
+            o = self._tool_opts["jpegoptim"]
+            return int(o["jo_max"]) if o.get("jo_mode") == "lossy" else 100
+        if self._program == "pillow":
+            return int(self._tool_opts["pillow"]["pil_quality"])
+        return 100
 
     def _current_opts(self):
+        if self._program == "auto":
+            merged: dict = {}
+            for g in self._tool_opts.values():
+                merged.update(g)
+            return merged
         return self._tool_opts.get(self._program, {})
 
     def _on_output_mode(self, checked):
@@ -470,7 +631,7 @@ class CompressInterface(InterfaceBase):
         self.folderRow.setVisible(not same)
 
     def _restyle_switches(self):
-        for sw in (self._ox_inter,):
+        for sw in getattr(self, "_switches", []):
             sw.setOnText(tr("common.on"))
             sw.setOffText(tr("common.off"))
 
@@ -600,7 +761,7 @@ class CompressInterface(InterfaceBase):
             self.listWidget.set_status(src, "running")
             worker = CompressWorker(
                 src, src, out, self._target, self._current_mode(),
-                self._quality, self._program, opts=self._current_opts())
+                self._current_quality(), self._program, opts=self._current_opts())
             worker.signals.progress.connect(self.listWidget.set_progress)
             worker.signals.finished.connect(self._on_finished)
             QThreadPool.globalInstance().start(worker)
@@ -671,10 +832,10 @@ class CompressInterface(InterfaceBase):
         self.addFolderBtn.setText(tr("compress.add.folder"))
         self.toolsBtn.setText(tr("compress.tools.download"))
         self._repopulate_combo(self.programCombo, [
+            (tr("advanced.compression.auto"), "auto"),
+            (tr("advanced.compression.oxipng"), "oxipng"),
+            (tr("advanced.compression.jpegoptim"), "jpegoptim"),
             (tr("advanced.compression.pillow"), "pillow"),
-            ("oxipng", "oxipng"),
-            ("OptiPNG", "optipng"),
-            ("Mozilla JPEG", "mozjpeg"),
         ])
         self._repopulate_combo(self.targetCombo, [
             (tr("compress.target.same"), "same"),

@@ -144,16 +144,17 @@ class AdvancedPanel(QWidget):
         self.vbox.addStretch(1)
 
     def on_format_change(self, fmt: str):
-        """v0.6.3：格式切换 → 自动推荐后端。"""
-        if not hasattr(self, '_backend_combo'): return
-        combo = self._backend_combo
-        is_png = (fmt.lower().lstrip(".") == "png")
-        target = "oxipng" if is_png else "imagecodecs"
-        for txt, val in combo._mapping.items():
-            if val == target: combo.setCurrentText(txt); break
-        adv = advanced.adv["image"]
-        comp = adv.get("compress", {})
-        if isinstance(comp, dict): comp["backend"] = target
+        """目标格式切换（v0.7.0：png→oxipng / jpg→jpegoptim / 其他→pillow）。
+
+        后端为「自动」时只刷新参数组显示，不覆盖用户手动选择的后端。
+        """
+        self._current_fmt = (fmt or "").lower().lstrip(".")
+        if not hasattr(self, "_backend_combo"):
+            return
+        comp = advanced.adv["image"].get("compress", {})
+        current = comp.get("backend", "auto") if isinstance(comp, dict) else "auto"
+        if hasattr(self, "_sync_backend_groups"):
+            self._sync_backend_groups(current)
 
     def _add_expander(self, title_key: str, builder) -> ExpandWidget:
         ex = ExpandWidget(tr(title_key))
@@ -162,99 +163,221 @@ class AdvancedPanel(QWidget):
         return ex
 
     def _add_image(self):
-        """v0.4.2：图像压缩参数直接展开（无二级折叠）。"""
+        """图像压缩参数（v0.7.0：oxipng / jpegoptim / Pillow 三组按后端切换）。"""
+        from ..core.compressor import default_backend
+
         adv = advanced.adv["image"]
         if not isinstance(adv.get("compress"), dict):
-            adv["compress"] = {"backend": "oxipng", "level": 3, "interlace": False,
-                               "strip": "safe", "quality": 95}
+            adv["compress"] = dict(advanced.default_options()["image"]["compress"])
         comp = adv["compress"]
 
-        # 压缩后端
+        # -- 压缩后端 ---------------------------------------------------
         backend = _combo(
-            [(tr("advanced.compression.oxipng"), "oxipng"),
-             (tr("advanced.compression.imagecodecs"), "imagecodecs"),
+            [(tr("advanced.compression.auto"), "auto"),
+             (tr("advanced.compression.oxipng"), "oxipng"),
+             (tr("advanced.compression.jpegoptim"), "jpegoptim"),
              (tr("advanced.compression.pillow"), "pillow")],
-            comp.get("backend", "oxipng"),
+            comp.get("backend", "auto"),
             lambda v: comp.__setitem__("backend", v),
         )
         self._backend_combo = backend
-        fr=field_row(tr("advanced.compression.backend"),backend,label_width=80); self._add_help(fr,"advanced.help.backend"); self.vbox.addWidget(fr)
+        fr = field_row(tr("advanced.compression.backend"), backend, label_width=80)
+        self._add_help(fr, "advanced.help.backend")
+        self.vbox.addWidget(fr)
 
-        # 质量: 滑条 + 输入框 + 帮助
-        q = QSlider(Qt.Orientation.Horizontal)
-        q.setRange(1, 100); q.setValue(int(comp.get("quality", 95)))
-        q.valueChanged.connect(lambda v: comp.__setitem__("quality", v))
-        q_spin = QSpinBox(); q_spin.setRange(1, 100); q_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-        q_spin.setValue(int(comp.get("quality", 95))); q_spin.setSuffix("%")
-        q_spin.valueChanged.connect(lambda v: (q.setValue(v), comp.__setitem__("quality", v)))
-        q.valueChanged.connect(lambda v: q_spin.setValue(v))
-        q_row = QHBoxLayout(); q_row.addWidget(q, 1); q_row.addWidget(q_spin)
-        fr = QHBoxLayout(); lbl = QLabel(tr("advanced.quality"))
-        lbl.setFixedWidth(80); fr.addWidget(lbl); fr.addLayout(q_row, 1)
-        qw = QWidget(); qw.setLayout(fr)
-        self._add_help(qw, "advanced.help.quality")
-        self.vbox.addWidget(qw)
+        # 路由提示
+        hint = CaptionLabel(tr("advanced.compression.route"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {muted_text()}; background: transparent;")
+        self.vbox.addWidget(hint)
+        self._route_hint = hint
 
-        # oxipng 专用参数
-        oxi_grp = QWidget()
-        oxi_grp.setStyleSheet("background: transparent;")
-        oxi_l = QVBoxLayout(oxi_grp)
-        oxi_l.setContentsMargins(8, 0, 0, 0); oxi_l.setSpacing(6)
+        # -- oxipng 参数组 ----------------------------------------------
+        oxi_grp, oxi_l = self._param_group()
         lvl = QSlider(Qt.Orientation.Horizontal)
-        lvl.setRange(0, 6); lvl.setValue(int(comp.get("level", 3)))
+        lvl.setRange(0, 6)
+        lvl.setValue(int(comp.get("level", 3)))
         lvl_label = QLabel(str(comp.get("level", 3)))
-        lvl.valueChanged.connect(lambda v: (comp.__setitem__("level", v), lvl_label.setText(str(v))))
+        lvl.valueChanged.connect(
+            lambda v: (comp.__setitem__("level", v), lvl_label.setText(str(v))))
         row = QHBoxLayout(); row.addWidget(lvl_label); row.addWidget(lvl, 1)
-        fr=field_row(tr("advanced.level"),row); self._add_help(fr,"advanced.help.level"); oxi_l.addWidget(fr)
+        fr = field_row(tr("advanced.level"), row)
+        self._add_help(fr, "advanced.help.level"); oxi_l.addWidget(fr)
+
         inter = SwitchButton(tr("advanced.interlace"))
         inter.setChecked(bool(comp.get("interlace", False)))
         inter.checkedChanged.connect(lambda b: comp.__setitem__("interlace", b))
-        fr=field_row(tr("advanced.interlace"),inter); self._add_help(fr,"advanced.help.interlace"); oxi_l.addWidget(fr)
+        fr = field_row(tr("advanced.interlace"), inter)
+        self._add_help(fr, "advanced.help.interlace"); oxi_l.addWidget(fr)
+
         strip = _combo(
             [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
             comp.get("strip", "safe"), lambda v: comp.__setitem__("strip", v))
-        fr=field_row(tr("advanced.strip"),strip); self._add_help(fr,"advanced.help.strip"); oxi_l.addWidget(fr)
-        # v0.6.8：oxipng 高级参数
+        fr = field_row(tr("advanced.strip"), strip)
+        self._add_help(fr, "advanced.help.strip"); oxi_l.addWidget(fr)
+
         o_filt = _combo([(tr("advanced.filter.none"), 0), (tr("advanced.filter.sub"), 1),
-                          (tr("advanced.filter.up"), 2), (tr("advanced.filter.average"), 3),
-                          (tr("advanced.filter.paeth"), 4), (tr("advanced.filter.mixed"), 5)],
-                         comp.get("filter", 0), lambda v: comp.__setitem__("filter", int(v)))
-        fr=field_row(tr("advanced.filter"), o_filt); self._add_help(fr,"advanced.help.filter"); oxi_l.addWidget(fr)
+                         (tr("advanced.filter.up"), 2), (tr("advanced.filter.average"), 3),
+                         (tr("advanced.filter.paeth"), 4), (tr("advanced.filter.mixed"), 5)],
+                        comp.get("filter", 0),
+                        lambda v: comp.__setitem__("filter", int(v)))
+        fr = field_row(tr("advanced.filter"), o_filt)
+        self._add_help(fr, "advanced.help.filter"); oxi_l.addWidget(fr)
+
         zc = QSlider(Qt.Orientation.Horizontal)
-        zc.setRange(1, 9); zc.setValue(int(comp.get("zc", 6)))
+        zc.setRange(1, 9)
+        zc.setValue(int(comp.get("zc", 6)))
         zc_label = QLabel(str(comp.get("zc", 6)))
-        zc.valueChanged.connect(lambda v: (comp.__setitem__("zc", v), zc_label.setText(str(v))))
+        zc.valueChanged.connect(
+            lambda v: (comp.__setitem__("zc", v), zc_label.setText(str(v))))
         zc_row = QHBoxLayout(); zc_row.addWidget(zc_label); zc_row.addWidget(zc, 1)
-        fr=field_row(tr("advanced.zc"), zc_row); self._add_help(fr,"advanced.help.zc"); oxi_l.addWidget(fr)
+        fr = field_row(tr("advanced.zc"), zc_row)
+        self._add_help(fr, "advanced.help.zc"); oxi_l.addWidget(fr)
+
         alpha = SwitchButton(tr("advanced.alpha"))
         alpha.setChecked(bool(comp.get("alpha", False)))
         alpha.checkedChanged.connect(lambda b: comp.__setitem__("alpha", b))
-        fr=field_row(tr("advanced.alpha"), alpha); self._add_help(fr,"advanced.help.alpha"); oxi_l.addWidget(fr)
-        # v0.6.9：imagecodecs 高级参数
-        prog = SwitchButton(tr("advanced.progressive"))
-        prog.setChecked(bool(comp.get("progressive", False)))
-        prog.checkedChanged.connect(lambda b: comp.__setitem__("progressive", b))
-        fr=field_row(tr("advanced.progressive"), prog); self._add_help(fr,"advanced.help.progressive"); oxi_l.addWidget(fr)
-        sub = _combo([("4:2:0", "4:2:0"), ("4:2:2", "4:2:2"), ("4:4:4", "4:4:4")],
-                      comp.get("subsampling", "4:2:0"),
-                      lambda v: comp.__setitem__("subsampling", v))
-        fr=field_row(tr("advanced.subsampling"), sub); self._add_help(fr,"advanced.help.subsampling"); oxi_l.addWidget(fr)
-        opt = SwitchButton(tr("advanced.optimize"))
-        opt.setChecked(bool(comp.get("optimize", False)))
-        opt.checkedChanged.connect(lambda b: comp.__setitem__("optimize", b))
-        fr=field_row(tr("advanced.optimize"), opt); self._add_help(fr,"advanced.help.optimize"); oxi_l.addWidget(fr)
-        smooth = SwitchButton(tr("advanced.smoothing"))
-        smooth.setChecked(bool(comp.get("smoothing", False)))
-        smooth.checkedChanged.connect(lambda b: comp.__setitem__("smoothing", b))
-        fr=field_row(tr("advanced.smoothing"), smooth); self._add_help(fr,"advanced.help.smoothing"); oxi_l.addWidget(fr)
+        fr = field_row(tr("advanced.alpha"), alpha)
+        self._add_help(fr, "advanced.help.alpha"); oxi_l.addWidget(fr)
         self.vbox.addWidget(oxi_grp)
-        oxi_grp._oxi_grp = True
 
-        def _on_backend_change(val: str):
-            oxi_grp.setVisible(val in ("oxipng", "imagecodecs"))
-        _on_backend_change(comp.get("backend", "oxipng"))
+        # -- jpegoptim 参数组 -------------------------------------------
+        jo_grp, jo_l = self._param_group()
+        jo_mode = _combo(
+            [(tr("advanced.jo.mode.lossless"), "lossless"),
+             (tr("advanced.jo.mode.lossy"), "lossy")],
+            comp.get("jo_mode", "lossless"),
+            lambda v: (comp.__setitem__("jo_mode", v), _sync_jo_max(v)))
+        fr = field_row(tr("advanced.jo.mode"), jo_mode)
+        self._add_help(fr, "advanced.help.jo.mode"); jo_l.addWidget(fr)
+
+        jo_max = QSlider(Qt.Orientation.Horizontal)
+        jo_max.setRange(0, 100)
+        jo_max.setValue(int(comp.get("jo_max", 85)))
+        jo_max_spin = QSpinBox()
+        jo_max_spin.setRange(0, 100)
+        jo_max_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        jo_max_spin.setValue(int(comp.get("jo_max", 85)))
+        jo_max.valueChanged.connect(
+            lambda v: (comp.__setitem__("jo_max", v), jo_max_spin.setValue(v)))
+        jo_max_spin.valueChanged.connect(
+            lambda v: (comp.__setitem__("jo_max", v), jo_max.setValue(v)))
+        jm_row = QHBoxLayout(); jm_row.addWidget(jo_max, 1); jm_row.addWidget(jo_max_spin)
+        jo_max_fr = field_row(tr("advanced.jo.max"), jm_row)
+        self._add_help(jo_max_fr, "advanced.help.jo.max"); jo_l.addWidget(jo_max_fr)
+
+        def _sync_jo_max(mode: str):
+            jo_max_fr.setEnabled(mode == "lossy")
+        _sync_jo_max(comp.get("jo_mode", "lossless"))
+
+        jo_strip = _combo(
+            [(tr("advanced.jo.strip.none"), "none"),
+             (tr("advanced.jo.strip.meta"), "meta"),
+             (tr("advanced.jo.strip.exif"), "exif"),
+             (tr("advanced.jo.strip.icc"), "icc"),
+             (tr("advanced.jo.strip.all"), "all")],
+            comp.get("jo_strip", "none"),
+            lambda v: comp.__setitem__("jo_strip", v))
+        fr = field_row(tr("advanced.jo.strip"), jo_strip)
+        self._add_help(fr, "advanced.help.jo.strip"); jo_l.addWidget(fr)
+
+        jo_prog = _combo(
+            [(tr("advanced.jo.prog.auto"), "auto"),
+             (tr("advanced.jo.prog.keep"), "keep"),
+             (tr("advanced.jo.prog.progressive"), "progressive"),
+             (tr("advanced.jo.prog.normal"), "normal")],
+            comp.get("jo_progressive", "auto"),
+            lambda v: comp.__setitem__("jo_progressive", v))
+        fr = field_row(tr("advanced.jo.prog"), jo_prog)
+        self._add_help(fr, "advanced.help.jo.prog"); jo_l.addWidget(fr)
+
+        jo_thr = QSpinBox()
+        jo_thr.setRange(0, 99)
+        jo_thr.setSuffix("%")
+        jo_thr.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        jo_thr.setValue(int(comp.get("jo_threshold", 0)))
+        jo_thr.valueChanged.connect(lambda v: comp.__setitem__("jo_threshold", v))
+        fr = field_row(tr("advanced.jo.threshold"), jo_thr)
+        self._add_help(fr, "advanced.help.jo.threshold"); jo_l.addWidget(fr)
+
+        jo_pres = SwitchButton(tr("advanced.jo.preserve"))
+        jo_pres.setChecked(bool(comp.get("jo_preserve", True)))
+        jo_pres.checkedChanged.connect(lambda b: comp.__setitem__("jo_preserve", b))
+        fr = field_row(tr("advanced.jo.preserve"), jo_pres)
+        self._add_help(fr, "advanced.help.jo.preserve"); jo_l.addWidget(fr)
+
+        jo_retry = SwitchButton(tr("advanced.jo.retry"))
+        jo_retry.setChecked(bool(comp.get("jo_retry", False)))
+        jo_retry.checkedChanged.connect(lambda b: comp.__setitem__("jo_retry", b))
+        fr = field_row(tr("advanced.jo.retry"), jo_retry)
+        self._add_help(fr, "advanced.help.jo.retry"); jo_l.addWidget(fr)
+        self.vbox.addWidget(jo_grp)
+
+        # -- Pillow 参数组 ----------------------------------------------
+        pil_grp, pil_l = self._param_group()
+        pq = QSlider(Qt.Orientation.Horizontal)
+        pq.setRange(0, 95)
+        pq.setValue(int(comp.get("pil_quality", 95)))
+        pq_spin = QSpinBox()
+        pq_spin.setRange(0, 95)
+        pq_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        pq_spin.setValue(int(comp.get("pil_quality", 95)))
+        pq.valueChanged.connect(
+            lambda v: (comp.__setitem__("pil_quality", v), pq_spin.setValue(v)))
+        pq_spin.valueChanged.connect(
+            lambda v: (comp.__setitem__("pil_quality", v), pq.setValue(v)))
+        pq_row = QHBoxLayout(); pq_row.addWidget(pq, 1); pq_row.addWidget(pq_spin)
+        fr = field_row(tr("advanced.pil.quality"), pq_row)
+        self._add_help(fr, "advanced.help.pil.quality"); pil_l.addWidget(fr)
+
+        pil_opt = SwitchButton(tr("advanced.pil.optimize"))
+        pil_opt.setChecked(bool(comp.get("pil_optimize", True)))
+        pil_opt.checkedChanged.connect(lambda b: comp.__setitem__("pil_optimize", b))
+        fr = field_row(tr("advanced.pil.optimize"), pil_opt)
+        self._add_help(fr, "advanced.help.pil.optimize"); pil_l.addWidget(fr)
+
+        pil_prog = SwitchButton(tr("advanced.pil.progressive"))
+        pil_prog.setChecked(bool(comp.get("pil_progressive", True)))
+        pil_prog.checkedChanged.connect(lambda b: comp.__setitem__("pil_progressive", b))
+        fr = field_row(tr("advanced.pil.progressive"), pil_prog)
+        self._add_help(fr, "advanced.help.pil.progressive"); pil_l.addWidget(fr)
+
+        pil_sub = _combo(
+            [(tr("advanced.pil.sub.444"), "4:4:4"),
+             (tr("advanced.pil.sub.422"), "4:2:2"),
+             (tr("advanced.pil.sub.420"), "4:2:0")],
+            comp.get("pil_subsampling", "4:4:4"),
+            lambda v: comp.__setitem__("pil_subsampling", v))
+        fr = field_row(tr("advanced.pil.subsampling"), pil_sub)
+        self._add_help(fr, "advanced.help.pil.subsampling"); pil_l.addWidget(fr)
+        self.vbox.addWidget(pil_grp)
+
+        # -- 按后端显示对应参数组 ----------------------------------------
+        self._backend_groups = {
+            "oxipng": oxi_grp, "jpegoptim": jo_grp, "pillow": pil_grp,
+        }
+
+        def _sync(val: str):
+            if val == "auto":
+                fmt = getattr(self, "_current_fmt", "png")
+                val = default_backend(fmt)
+            for bid, grp in self._backend_groups.items():
+                grp.setVisible(bid == val)
+            hint.setVisible(comp.get("backend", "auto") == "auto")
+
+        self._sync_backend_groups = _sync
+        _sync(comp.get("backend", "auto"))
         backend.currentTextChanged.connect(
-            lambda t: _on_backend_change(backend._mapping.get(t, t)))
+            lambda t: _sync(backend._mapping.get(t, t)))
+
+    def _param_group(self) -> tuple[QWidget, QVBoxLayout]:
+        """新建一个缩进的参数分组容器。"""
+        grp = QWidget()
+        grp.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout(grp)
+        lay.setContentsMargins(8, 0, 0, 0)
+        lay.setSpacing(6)
+        return grp, lay
 
 
     def _add_video(self):
