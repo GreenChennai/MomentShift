@@ -111,13 +111,10 @@ class SettingInterface(InterfaceBase):
         lang_options = [(name, key.value) for key, name in available_languages()]
         self.langCard = ComboSettingCard(
             cfg.language, FIF.LANGUAGE, tr("settings.language"), "", lang_options)
-        self.autoFoldCard = SwitchSettingCard(
-            FIF.HIDE, tr("settings.auto_fold"), tr("settings.auto_fold.hint"),
-            cfg.autoCollapse)
         self.trayCard = SwitchSettingCard(
             FIF.MINIMIZE, tr("settings.close_to_tray"), tr("settings.close_to_tray.hint"),
             cfg.closeToTray)
-        for c in (self.langCard, self.autoFoldCard, self.trayCard):
+        for c in (self.langCard, self.trayCard):
             self.g_general.addSettingCard(c)
         self.vbox.addWidget(self.g_general)
 
@@ -199,8 +196,6 @@ class SettingInterface(InterfaceBase):
         self.g_convert.titleLabel.setText(tr("settings.group.conversion"))
         self.g_data.titleLabel.setText(tr("settings.group.data"))
         self.langCard.setTitle(tr("settings.language"))
-        self.autoFoldCard.setTitle(tr("settings.auto_fold"))
-        self.autoFoldCard.setContent(tr("settings.auto_fold.hint"))
         self.trayCard.setTitle(tr("settings.close_to_tray"))
         self.trayCard.setContent(tr("settings.close_to_tray.hint"))
         self.hwCard.setTitle(tr("settings.hardware"))

@@ -147,6 +147,7 @@ class AdvancedPanel(QWidget):
         """目标格式切换（v0.7.0：png→oxipng / jpg→jpegoptim / 其他→pillow）。
 
         后端为「自动」时只刷新参数组显示，不覆盖用户手动选择的后端。
+        v0.7.1：按目标格式禁用不匹配的压缩程序（如 png 禁用 jpegoptim）。
         """
         self._current_fmt = (fmt or "").lower().lstrip(".")
         if not hasattr(self, "_backend_combo"):
@@ -155,6 +156,32 @@ class AdvancedPanel(QWidget):
         current = comp.get("backend", "auto") if isinstance(comp, dict) else "auto"
         if hasattr(self, "_sync_backend_groups"):
             self._sync_backend_groups(current)
+        self._sync_backend_enabled(fmt)
+
+    def _sync_backend_enabled(self, fmt: str):
+        """按目标格式禁用不匹配的压缩程序选项（v0.7.1, F5）。
+
+        png → 禁用 jpegoptim；jpg/jpeg → 禁用 oxipng；其他 → 二者均禁用。
+        若当前选中项被禁用，则回退到「自动选择」。
+        """
+        if not hasattr(self, "_backend_combo"):
+            return
+        from ..core.compressor import default_backend
+        f = (fmt or "").lower().lstrip(".")
+        valid_default = default_backend(f)  # oxipng / jpegoptim / pillow
+        for bid in ("oxipng", "jpegoptim"):
+            idx = self._backend_order.index(bid)
+            disabled = valid_default != bid
+            try:
+                self._backend_combo.setItemEnabled(idx, not disabled)
+            except Exception:
+                pass
+        comp = advanced.adv["image"].get("compress", {})
+        if isinstance(comp, dict):
+            cur = comp.get("backend", "auto")
+            if cur in ("oxipng", "jpegoptim") and valid_default != cur:
+                comp["backend"] = "auto"
+                self._backend_combo.setCurrentText(tr("advanced.compression.auto"))
 
     def _add_expander(self, title_key: str, builder) -> ExpandWidget:
         ex = ExpandWidget(tr(title_key))
@@ -181,6 +208,7 @@ class AdvancedPanel(QWidget):
             lambda v: comp.__setitem__("backend", v),
         )
         self._backend_combo = backend
+        self._backend_order = ["auto", "oxipng", "jpegoptim", "pillow"]
         fr = field_row(tr("advanced.compression.backend"), backend, label_width=80)
         self._add_help(fr, "advanced.help.backend")
         self.vbox.addWidget(fr)

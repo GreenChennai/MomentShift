@@ -4,7 +4,7 @@
 （ConvertSetupDialog）→ 确认后入队 → ConversionManager 驱动转换队列。
 
 v0.2.9 改动：使用 InterfaceBase 共享组件构建器（_make_card / _make_scroll /
-_expand_paths / _auto_collapse），消除与 Compress/Upscale 的重复代码。
+_expand_paths），消除与 Compress/Upscale 的重复代码。
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from ..core.config import cfg
 from ..core.models import Task
 from ..core.presets import IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS
 from ..i18n.translator import tr
+from qfluentwidgets import qconfig
 from .theme import (
     CollapsibleCard, field_row, primary_btn, ghost_btn, muted_text,
 )
@@ -100,7 +101,7 @@ class ConvertInterface(InterfaceBase):
         self.suffixEdit = QLineEdit(cfg.outputSuffix.value)
         self.suffixEdit.setPlaceholderText(tr("convert.output.suffix.ph"))
         self.suffixEdit.textChanged.connect(
-            lambda t: setattr(cfg.outputSuffix, "value", t))
+            lambda t: (setattr(cfg.outputSuffix, "value", t), qconfig.save()))
         self.suffixRow = field_row(tr("convert.output.suffix"), self.suffixEdit)
         ovb.addWidget(self.suffixRow)
         # 固定输出目录
@@ -143,9 +144,6 @@ class ConvertInterface(InterfaceBase):
         ctrl.addWidget(self.clearBtn)
         qvb.addLayout(ctrl)
         self.vbox.addWidget(qcard)
-
-        # 批次完成后自动折叠的卡片（队列始终展开）
-        self._auto_fold = [self._inputCard, ocard]
 
         # =====================================================================
         # 连接 ConversionManager 信号
@@ -229,6 +227,7 @@ class ConvertInterface(InterfaceBase):
     def _on_output_mode(self, checked: bool):
         """切换输出模式：同目录 + 后缀 vs 固定目录。"""
         cfg.outputMode.value = "same" if checked else "fixed"
+        qconfig.save()
         self._apply_output_mode()
 
     def _apply_output_mode(self):
@@ -251,6 +250,7 @@ class ConvertInterface(InterfaceBase):
                 )
             if d:
                 cfg.outputFolder.value = d
+                qconfig.save()
                 self.folderEdit.setText(d)
         finally:
             self._picking = False
@@ -295,10 +295,8 @@ class ConvertInterface(InterfaceBase):
             Task.DONE if ok else Task.FAILED, log)
 
     def _on_state_changed(self):
-        """manager 状态变更 → 更新按钮 + 自动折叠。"""
+        """manager 状态变更 → 更新按钮。"""
         self._update_controls()
-        if not self.manager.is_running and self.manager.tasks:
-            self._auto_collapse(*self._auto_fold)
 
     def _update_controls(self):
         """根据 manager 状态刷新各按钮的启用/文案。"""

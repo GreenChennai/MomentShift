@@ -74,22 +74,23 @@ class Config(QConfig):
 
     # Output location strategy: "fixed" => use outputFolder; "same" => next to
     # the source file with a custom suffix appended to the stem.
+    # v0.7.1: default to "same" (保存在源文件旁) per user request.
     outputMode = OptionsConfigItem(
-        "Folder", "OutputMode", "fixed", OptionsValidator(["fixed", "same"])
+        "Folder", "OutputMode", "same", OptionsValidator(["fixed", "same"])
     )
     outputSuffix = ConfigItem("Folder", "OutputSuffix", "_converted")
 
     # Compress module — its own output location (independent of Convert).
     compressFolder = ConfigItem("Folder", "CompressFolder", "", FolderValidator())
     compressMode = OptionsConfigItem(
-        "Folder", "CompressMode", "fixed", OptionsValidator(["fixed", "same"])
+        "Folder", "CompressMode", "same", OptionsValidator(["fixed", "same"])
     )
     compressSuffix = ConfigItem("Folder", "CompressSuffix", "_compressed")
 
     # Upscale module — its own output location (independent of Convert).
     upscaleFolder = ConfigItem("Folder", "UpscaleFolder", "", FolderValidator())
     upscaleMode = OptionsConfigItem(
-        "Folder", "UpscaleMode", "fixed", OptionsValidator(["fixed", "same"])
+        "Folder", "UpscaleMode", "same", OptionsValidator(["fixed", "same"])
     )
     upscaleSuffix = ConfigItem("Folder", "UpscaleSuffix", "_upscaled")
 
@@ -104,7 +105,6 @@ class Config(QConfig):
 
     # UI preferences.
     language = ConfigItem("UI", "Language", "Auto")  # Auto | zh_CN | zh_TW | en_US
-    autoCollapse = ConfigItem("UI", "AutoCollapse", True)
 
     # System tray: minimise to tray on close instead of quitting (v0.2.7, #3).
     closeToTray = ConfigItem("UI", "CloseToTray", True)

@@ -44,11 +44,11 @@ def default_options() -> dict:
             "compress": {
                 "backend": "auto",
                 "quality": 95,
-                # oxipng
-                "level": 3, "interlace": False, "strip": "safe",
+                # oxipng（v0.7.1「自动选择」默认：最优参数/无损/中等速度/优化全开）
+                "level": 3, "interlace": True, "strip": "all",
                 "filter": 0, "zc": 6, "alpha": False,
                 # jpegoptim
-                "jo_mode": "lossless", "jo_max": 85, "jo_strip": "none",
+                "jo_mode": "lossless", "jo_max": 85, "jo_strip": "all",
                 "jo_progressive": "auto", "jo_threshold": 0,
                 "jo_preserve": True, "jo_retry": False,
                 # pillow

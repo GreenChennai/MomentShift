@@ -145,20 +145,6 @@ class InterfaceBase(ScrollArea):
                 uniq.append(p)
         return uniq
 
-    def _auto_collapse(self, *cards):
-        from ..core.config import cfg
-        if not cfg.autoCollapse.value:
-            return
-        for c in cards:
-            c.setCollapsed(True)
-
-    def _auto_expand(self, *cards):
-        from ..core.config import cfg
-        if not cfg.autoCollapse.value:
-            return
-        for c in cards:
-            c.setCollapsed(False)
-
     def retheme(self):
         bg = WINDOW_BG
         oid = self.view.objectName() or "view"

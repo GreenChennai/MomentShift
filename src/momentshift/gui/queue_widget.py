@@ -44,7 +44,10 @@ def human_size(n: int) -> str:
 
 
 def format_size_compare(before: int, after: int) -> str:
-    """``1.2 MB → 800.0 KB (-33%)``；变大时显示 ``+N%``（v0.7.0）。"""
+    """返回富文本：``1.2 MB → 800.0 KB <font color>(-33%)</font>``。
+
+    百分比颜色：变小绿(#3EB68F)，变大红(#FF7279)，几乎无变化黑(#000000)。
+    """
     before, after = int(before or 0), int(after or 0)
     if not before:
         return human_size(after) if after else ""
@@ -53,9 +56,15 @@ def format_size_compare(before: int, after: int) -> str:
     delta = (after - before) / before * 100
     if abs(delta) < 0.5:
         pct = "±0%"
+        color = "#000000"
+    elif delta < 0:
+        pct = f"{delta:.0f}%"
+        color = "#3EB68F"
     else:
-        pct = f"{delta:+.0f}%"
-    return f"{human_size(before)} → {human_size(after)}  ({pct})"
+        pct = f"+{delta:.0f}%"
+        color = "#FF7279"
+    return (f"{human_size(before)} → {human_size(after)} "
+            f"<font color=\"{color}\">({pct})</font>")
 
 
 _CATEGORY_ICON = {
@@ -78,6 +87,7 @@ _STATUS_PILL_BG = {
     "canceled": "#8A8A8A",
     "compressing": "#C7920A",
     "compress_done": "#3964FE",
+    "done_sw": "#3964FE",
 }
 _STATUS_PILL_FG = "#F5F5F5"
 
@@ -132,11 +142,12 @@ class StatusPill(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.set_status(status)
 
-    def set_status(self, status: str):
+    def set_status(self, status: str, text: str = None):
         self._status = status
         bg = _STATUS_PILL_BG.get(status, _STATUS_PILL_BG["pending"])
         fg = _STATUS_PILL_FG
-        self.setText(tr(f"convert.status.{status}"))
+        label = text if text is not None else tr(f"convert.status.{status}")
+        self.setText(label)
         self.setStyleSheet(
             f"color:{fg}; background:{bg}; border-radius:9px; "
             f"padding:2px 9px; font-weight:600;"
@@ -177,12 +188,14 @@ class QueueItemWidget(ThemedCard):
         self.prog = ProgressBar()
         vb.addWidget(self.prog)
 
-        bottom = QHBoxLayout()
+        # 大小对比文本（独立成行，自动换行；v0.7.1 黑字 + 百分比绿/红）
         self.detailLbl = CaptionLabel()
         self.detailLbl.setObjectName("queueStatus")
-        self.detailLbl.setStyleSheet(f"color: {muted_text()};")
-        bottom.addWidget(self.detailLbl, 1)
+        self.detailLbl.setWordWrap(True)
+        self.detailLbl.setStyleSheet("color: #000000; background: transparent;")
+        vb.addWidget(self.detailLbl)
 
+        bottom = QHBoxLayout()
         self.fmtCombo = ComboBox()
         for f in TARGET_GROUPS.get(self._task.category, []):
             self.fmtCombo.addItem(f.upper())
@@ -192,6 +205,7 @@ class QueueItemWidget(ThemedCard):
             lambda t: self.formatChanged.emit(self._task.id, t.lower())
         )
         bottom.addWidget(self.fmtCombo)
+        bottom.addStretch(1)
 
         self.retryBtn = icon_btn(FIF.SYNC, tr("convert.action.retry"), self)
         self.retryBtn.clicked.connect(lambda: self.retryRequested.emit(self._task.id))
@@ -225,10 +239,10 @@ class QueueItemWidget(ThemedCard):
         return pre, post
 
     def _detail_text(self) -> str:
-        """组合「转换前后」与「压缩前后」两段对比（v0.7.0 Bug 2）。
+        """组合「转换前后」与「压缩前后」两段对比（v0.7.0 Bug 2，v0.7.1 换行）。
 
         转换阶段： ``转换 1.2 MB → 900.0 KB (-25%)``
-        压缩之后： ``转换 … · 压缩 900.0 KB → 700.0 KB (-22%)``
+        压缩之后：两段各占一行，百分比绿/红着色。
         """
         parts: list[str] = []
 
@@ -243,7 +257,7 @@ class QueueItemWidget(ThemedCard):
             if comp:
                 parts.append(f"{tr('convert.label.compress')} {comp}")
 
-        return "   ·   ".join(parts)
+        return "<br>".join(parts)
 
     # -- 状态 -----------------------------------------------------------
     def set_status(self, status: str, error: str = ""):
@@ -329,7 +343,7 @@ class QueueListWidget(QWidget):
         self.statRun = CaptionLabel()
         self.statErr = CaptionLabel()
         for w in (self.statTotal, self.statRun, self.statErr):
-            w.setStyleSheet(f"color: {muted_text()}; font-weight:600;")
+            w.setStyleSheet("color: #000000; font-weight:600;")
             hb.addWidget(w)
         hb.addStretch(1)
         vb.addWidget(self.statsBar)

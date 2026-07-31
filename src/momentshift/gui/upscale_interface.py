@@ -22,6 +22,7 @@ from qfluentwidgets import (
 
 from ..core.config import cfg
 from ..core import upscaler
+from qfluentwidgets import qconfig
 from ..core.qt_compat import Signal, QObject, QRunnable, QThreadPool
 from ..i18n.translator import tr
 from .theme import (
@@ -256,7 +257,7 @@ class UpscaleListWidget(QWidget):
         self.statDone = CaptionLabel()
         self.statErr = CaptionLabel()
         for w in (self.statTotal, self.statDone, self.statErr):
-            w.setStyleSheet(f"color: {muted_text()}; font-weight:600;")
+            w.setStyleSheet("color: #000000; font-weight:600;")
             hb.addWidget(w)
         hb.addStretch(1)
         vb.addWidget(self.statsBar)
@@ -418,7 +419,8 @@ class UpscaleInterface(InterfaceBase):
         self.suffixEdit.setPlaceholderText(tr("upscale.output.suffix_hint"))
         self.suffixEdit.textChanged.connect(
             lambda t: (setattr(self, "_suffix", t),
-                       setattr(cfg.upscaleSuffix, "value", t)))
+                       setattr(cfg.upscaleSuffix, "value", t),
+                       qconfig.save()))
         self.suffixRow = field_row(tr("upscale.output.suffix"), self.suffixEdit)
         setvb.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(self._folder)
@@ -456,8 +458,6 @@ class UpscaleInterface(InterfaceBase):
         ctrl.addWidget(self.clearBtn)
         qvb.addLayout(ctrl)
         self.vbox.addWidget(qcard)
-
-        self._auto_fold = [self._inputCard, setc]
 
         # =====================================================================
         # 前后对比组件
@@ -512,7 +512,6 @@ class UpscaleInterface(InterfaceBase):
                 self._items[p] = {"src": p, "out": self._out_path(p),
                                   "status": "pending", "saved": 0}
                 self.listWidget.add_item(p, p)
-        self._auto_expand(*self._auto_fold)
         self._update_controls()
 
     # =========================================================================
@@ -527,6 +526,7 @@ class UpscaleInterface(InterfaceBase):
     def _on_output_mode(self, checked):
         self._output_mode = "same" if checked else "fixed"
         cfg.upscaleMode.value = self._output_mode
+        qconfig.save()
         self._apply_output_mode()
 
     def _apply_output_mode(self):
@@ -549,6 +549,7 @@ class UpscaleInterface(InterfaceBase):
             if d:
                 self._folder = d
                 cfg.upscaleFolder.value = d
+                qconfig.save()
                 self.folderEdit.setText(d)
         finally:
             self._picking = False
@@ -631,7 +632,6 @@ class UpscaleInterface(InterfaceBase):
             self._launch_next()
         if not self._pending and not self._active:
             self._running = False
-            self._auto_collapse(*self._auto_fold)
         self._update_controls()
 
     def _on_pause(self):

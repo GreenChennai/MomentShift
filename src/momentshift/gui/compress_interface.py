@@ -22,6 +22,7 @@ from qfluentwidgets import (
 
 from ..core.config import cfg
 from ..core import compressor
+from qfluentwidgets import qconfig
 from ..core.presets import IMAGE_EXTS
 from ..core.qt_compat import Signal, QObject, QRunnable, QThreadPool
 from ..core.tools_download import ToolsDownloadWorker
@@ -43,7 +44,8 @@ from .queue_widget import ProgressBar, StatusPill, human_size
 # =============================================================================
 class _WorkerSignals(QObject):
     progress = Signal(str, int)
-    finished = Signal(str, bool, int, str)  # id, ok, saved_bytes, detail
+    # id, ok, saved_bytes, detail, effective_backend
+    finished = Signal(str, bool, int, str, str)
 
 
 class CompressWorker(QRunnable):
@@ -68,41 +70,50 @@ class CompressWorker(QRunnable):
         src_ext = Path(self.src).suffix.lower().lstrip(".")
         # "same" → 用源文件扩展名
         effective = src_ext if self.target_fmt in ("same", "", None) else self.target_fmt
+        # 解析「实际使用的后端」：若用户所选程序无法处理该格式，回退到能处理的程序
+        backend = compressor.best_backend(effective, self.mode, self.preferred)
+        backend = compressor._fallback_to_pillow(backend, self.src)
         log.info(
             "[compress] start id=%s src=%s ext=%s target=%s effective=%s mode=%s "
-            "quality=%s backend=%s",
+            "quality=%s preferred=%s resolved=%s",
             self.item_id, self.src, src_ext, self.target_fmt, effective,
-            self.mode, self.quality, self.preferred,
+            self.mode, self.quality, self.preferred, backend,
         )
         try:
             if compressor.needs_conversion(src_ext, effective):
                 ok, detail, saved = compressor.transcode_and_compress(
                     self.src, self.out, effective, self.mode,
-                    self.quality, self.opts, preferred=self.preferred)
+                    self.quality, self.opts, preferred=backend)
             else:
                 ok, detail, saved = compressor.compress_auto(
                     self.src, self.out, self.mode, self.quality, self.opts,
-                    preferred=self.preferred)
+                    preferred=backend)
         except Exception:
             log.exception("[compress] task %s raised an exception", self.item_id)
             ok, detail, saved = False, "exception (see log)", 0
-        log.info("[compress] finished id=%s ok=%s saved=%d", self.item_id, ok, saved)
-        self.signals.finished.emit(self.item_id, ok, saved, detail)
+        log.info("[compress] finished id=%s ok=%s saved=%d backend=%s",
+                 self.item_id, ok, saved, backend)
+        self.signals.finished.emit(self.item_id, ok, saved, detail, backend)
 
 
 # =============================================================================
 # 队列列表组件
 # =============================================================================
+# 后端显示名（用于「自动切换」后的状态提示，如 "jpegoptim 完成"）
+BACKEND_NAMES = {"oxipng": "oxipng", "jpegoptim": "jpegoptim", "pillow": "Pillow"}
+
+
 class CompressItemWidget(ThemedCard):
     """压缩队列中的单个任务卡片。"""
     removeRequested = Signal(str)
 
-    def __init__(self, item_id: str, src: str, parent=None):
+    def __init__(self, item_id: str, src: str, selected: str = "auto", parent=None):
         super().__init__(parent)
         self._id = item_id
         self._src = src
         self._saved = 0
         self._status = "pending"
+        self._selected = selected  # 用户选择的压缩程序（用于判断是否"自动切换"）
 
         vb = QVBoxLayout(self)
         vb.setContentsMargins(14, 12, 14, 12)
@@ -135,20 +146,31 @@ class CompressItemWidget(ThemedCard):
     def set_progress(self, pct: int):
         self.prog.set_value(pct)
 
-    def set_status(self, status: str, saved: int = 0, detail: str = ""):
+    def set_status(self, status: str, saved: int = 0, detail: str = "",
+                   backend: str = ""):
         self._status = status
-        self.pill.set_status(status)
-        self.prog.set_error(status == "failed")
         if status == "done":
-            self._saved = saved
+            # v0.7.1：若实际使用的后端与所选不同（自动切换），提示具体程序名
+            if (backend and self._selected in ("oxipng", "jpegoptim", "pillow")
+                    and backend != self._selected):
+                name = BACKEND_NAMES.get(backend, backend)
+                self.pill.set_status(
+                    "done_sw", text=f"{name} {tr('compress.done.by')}")
+            else:
+                self.pill.set_status("done")
             src_size = Path(self._src).stat().st_size if Path(self._src).exists() else 0
-            self.detailLbl.setText(
-                f"{human_size(src_size)} → {human_size(src_size - saved)}"
-                if saved else tr("compress.done"))
-        elif status == "failed":
-            self.detailLbl.setText((detail or tr("compress.failed"))[:60])
+            if saved:
+                self.detailLbl.setText(
+                    f"{human_size(src_size)} → {human_size(src_size - saved)}")
+            else:
+                self.detailLbl.setText(tr("compress.done"))
         else:
-            self.detailLbl.setText("")
+            self.pill.set_status(status)
+            self.prog.set_error(status == "failed")
+            if status == "failed":
+                self.detailLbl.setText((detail or tr("compress.failed"))[:60])
+            else:
+                self.detailLbl.setText("")
 
     def retranslate(self):
         self.pill.set_status(self._status)
@@ -174,7 +196,7 @@ class CompressListWidget(QWidget):
         self.statDone = CaptionLabel()
         self.statErr = CaptionLabel()
         for w in (self.statTotal, self.statDone, self.statErr):
-            w.setStyleSheet(f"color: {muted_text()}; font-weight:600;")
+            w.setStyleSheet("color: #000000; font-weight:600;")
             hb.addWidget(w)
         hb.addStretch(1)
         vb.addWidget(self.statsBar)
@@ -202,10 +224,10 @@ class CompressListWidget(QWidget):
         self.statDone.setText(tr("compress.queue.stats.done", n=done))
         self.statErr.setText(tr("compress.queue.stats.error", n=failed))
 
-    def add_item(self, item_id: str, src: str):
+    def add_item(self, item_id: str, src: str, selected: str = "auto"):
         if item_id in self.items:
             return
-        w = CompressItemWidget(item_id, src)
+        w = CompressItemWidget(item_id, src, selected)
         w.removeRequested.connect(self.removeRequested)
         self.items[item_id] = w
         self.listLayout.insertWidget(self.listLayout.count() - 1, w)
@@ -217,10 +239,11 @@ class CompressListWidget(QWidget):
         if w:
             w.set_progress(pct)
 
-    def set_status(self, item_id: str, status: str, saved: int = 0, detail: str = ""):
+    def set_status(self, item_id: str, status: str, saved: int = 0,
+                   detail: str = "", backend: str = ""):
         w = self.items.get(item_id)
         if w:
-            w.set_status(status, saved, detail)
+            w.set_status(status, saved, detail, backend)
             self._update_stats()
 
     def remove_item(self, item_id: str):
@@ -269,9 +292,9 @@ class CompressInterface(InterfaceBase):
         # 压缩参数默认值（v0.7.0：oxipng / jpegoptim / pillow 三后端）
         self._program = "auto"
         self._tool_opts = {
-            "oxipng": {"level": 3, "interlace": False, "strip": "safe",
+            "oxipng": {"level": 3, "interlace": True, "strip": "all",
                        "filter": 0, "zc": 6, "alpha": False},
-            "jpegoptim": {"jo_mode": "lossless", "jo_max": 85, "jo_strip": "none",
+            "jpegoptim": {"jo_mode": "lossless", "jo_max": 85, "jo_strip": "all",
                           "jo_progressive": "auto", "jo_threshold": 0,
                           "jo_preserve": True, "jo_retry": False},
             "pillow": {"pil_quality": 95, "pil_optimize": True,
@@ -302,7 +325,8 @@ class CompressInterface(InterfaceBase):
         # =====================================================================
         # 压缩设置卡片
         # =====================================================================
-        scard, svb, self.tSettings = self._make_card("compress.settings.title")
+        scard, svb, self.tSettings = self._make_card(
+            "compress.settings.title", collapsed=True)
 
         # 压缩后端选择（v0.7.0：auto / oxipng / jpegoptim / pillow）
         self.programCombo = self._make_combo(
@@ -349,7 +373,8 @@ class CompressInterface(InterfaceBase):
         self.suffixEdit = QLineEdit(self._suffix)
         self.suffixEdit.textChanged.connect(
             lambda t: (setattr(self, "_suffix", t),
-                       setattr(cfg.compressSuffix, "value", t)))
+                       setattr(cfg.compressSuffix, "value", t),
+                       qconfig.save()))
         self.suffixRow = field_row(tr("compress.output.suffix"), self.suffixEdit)
         svb.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(self._folder)
@@ -393,8 +418,6 @@ class CompressInterface(InterfaceBase):
         ctrl.addWidget(self.clearBtn)
         qvb.addLayout(ctrl)
         self.vbox.addWidget(qcard)
-
-        self._auto_fold = [self._inputCard, scard]
 
         self._on_program(self._program)
         self._restyle_switches()
@@ -595,6 +618,8 @@ class CompressInterface(InterfaceBase):
             self.toolsStatus.setText(tr("compress.tools.done"))
 
     def _current_mode(self):
+        if self._program == "auto":
+            return "lossless"
         if self._program == "oxipng":
             return "lossless"
         if self._program == "jpegoptim":
@@ -620,6 +645,7 @@ class CompressInterface(InterfaceBase):
     def _on_output_mode(self, checked):
         self._output_mode = "same" if checked else "fixed"
         cfg.compressMode.value = self._output_mode
+        qconfig.save()
         self._apply_output_mode()
 
     def _apply_output_mode(self):
@@ -647,6 +673,7 @@ class CompressInterface(InterfaceBase):
             if d:
                 self._folder = d
                 cfg.compressFolder.value = d
+                qconfig.save()
                 self.folderEdit.setText(d)
         finally:
             self._picking = False
@@ -709,8 +736,7 @@ class CompressInterface(InterfaceBase):
         if src in self._items:
             return
         self._items[src] = {"src": src, "status": "pending", "saved": 0}
-        self.listWidget.add_item(src, src)
-        self._auto_expand(*self._auto_fold)
+        self.listWidget.add_item(src, src, self._program)
 
     # =========================================================================
     # 输出路径计算
@@ -766,17 +792,16 @@ class CompressInterface(InterfaceBase):
             worker.signals.finished.connect(self._on_finished)
             QThreadPool.globalInstance().start(worker)
 
-    def _on_finished(self, item_id, ok, saved, detail):
+    def _on_finished(self, item_id, ok, saved, detail, backend):
         self._active.discard(item_id)
         status = "done" if ok else "failed"
         self._items[item_id]["status"] = status
         self._items[item_id]["saved"] = saved
-        self.listWidget.set_status(item_id, status, saved, detail)
+        self.listWidget.set_status(item_id, status, saved, detail, backend)
         if self._running and not self._paused:
             self._launch_next()
         if not self._pending and not self._active:
             self._running = False
-            self._auto_collapse(*self._auto_fold)
         self._update_controls()
 
     def _on_pause(self):
