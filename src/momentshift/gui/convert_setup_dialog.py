@@ -174,8 +174,6 @@ class ConvertSetupDialog(QDialog):
         adv_card._toggleBtn.hide()
         self.advMasterSwitch = SwitchButton()
         self.advMasterSwitch.setChecked(False)
-        self.advMasterSwitch.setOnText(tr("common.on"))
-        self.advMasterSwitch.setOffText(tr("common.off"))
         self.advMasterSwitch.checkedChanged.connect(self._on_adv_master)
         # 插入到 header bar 中（在标题和 stretch 之间）
         adv_card._bar.layout().insertWidget(2, self.advMasterSwitch)
@@ -209,9 +207,9 @@ class ConvertSetupDialog(QDialog):
     def _on_adv_master(self, checked: bool):
         """高级设置总开关：ON=展开+启用，OFF=折叠+不使用。"""
         if checked:
-            self._adv_card.set_expanded(True)
+            self._adv_card._apply_expanded()
         else:
-            self._adv_card.set_expanded(False)
+            self._adv_card._apply_collapsed()
 
     # -- 待处理列表 --
     def _render_staging(self):
