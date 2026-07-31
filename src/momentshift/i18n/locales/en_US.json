@@ -373,5 +373,6 @@
   "upscale.compare.upscaled": "Upscaled",
   "upscale.compare.reset": "Reset",
   "advanced.compression.oxipng": "oxipng (Built-in)",
-  "advanced.compression.imagecodecs": "imagecodecs (Built-in)"
+  "advanced.compression.imagecodecs": "imagecodecs (Built-in)",
+  "advanced.oxipng.only_png": "oxipng only supports PNG format"
 }

@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QDialog, QPushButton,
 )
 from qfluentwidgets import (
-    FluentIcon as FIF, FlowLayout,
+    FluentIcon as FIF, FlowLayout, SwitchButton,
 )
 from ..core.config import cfg
 from ..i18n.translator import tr
@@ -166,9 +166,18 @@ class ConvertSetupDialog(QDialog):
         fmt_card.body.addWidget(fmt_w)
         right_lay.addWidget(fmt_card)
 
-        # ---- 高级设置（CollapsibleCard，折叠=关闭高级）----
+        # ---- 高级设置（v0.4.3：总开关控制折叠/展开）----
         adv_card = CollapsibleCard(tr("convert.setup.advanced"), "", self, collapsed=True)
         adv_card.body.setSpacing(8)
+
+        # 总开关：置于高级设置卡片内顶部
+        self.advMasterSwitch = SwitchButton()
+        self.advMasterSwitch.setChecked(False)
+        self.advMasterSwitch.setOnText(tr("common.on"))
+        self.advMasterSwitch.setOffText(tr("common.off"))
+        self.advMasterSwitch.checkedChanged.connect(self._on_adv_master)
+        adv_card.body.addWidget(self.advMasterSwitch)
+
         self.advancedPanel = AdvancedPanel(self)
         self.advancedPanel.refresh([self._category])
         adv_card.body.addWidget(self.advancedPanel)
@@ -192,6 +201,15 @@ class ConvertSetupDialog(QDialog):
     def _select_fmt(self, fmt):
         for f, btn in self._fmt_btns.items():
             btn.setChecked(f == fmt)
+        # v0.4.3：格式切换时自动调整推荐后端
+        self.advancedPanel.on_format_change(fmt)
+
+    def _on_adv_master(self, checked: bool):
+        """高级设置总开关：ON=展开+启用，OFF=折叠+不使用。"""
+        if checked:
+            self._adv_card.set_expanded(True)
+        else:
+            self._adv_card.set_expanded(False)
 
     # -- 待处理列表 --
     def _render_staging(self):

@@ -373,5 +373,6 @@
   "upscale.compare.upscaled": "放大",
   "upscale.compare.reset": "重置",
   "advanced.compression.oxipng": "oxipng (內置)",
-  "advanced.compression.imagecodecs": "imagecodecs (內置)"
+  "advanced.compression.imagecodecs": "imagecodecs (內置)",
+  "advanced.oxipng.only_png": "oxipng 僅支持 PNG 格式"
 }
