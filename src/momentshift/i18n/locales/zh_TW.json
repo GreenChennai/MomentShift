@@ -545,16 +545,10 @@
   "quick.files_to_process": "待處理檔案",
   "quick.cancel": "取消",
   "quick.confirm": "開始",
-  "progress.title": "任務進度",
-  "progress.status.pending": "等待中",
-  "progress.status.running": "運行中",
-  "progress.status.done": "已完成",
-  "progress.status.failed": "失敗",
-  "progress.total": "總數",
-  "progress.done": "完成",
-  "progress.failed": "失敗",
-  "settings.progress_window": "顯示任務進度視窗",
-  "settings.progress_window_hint": "在螢幕右下角顯示任務進度視窗",
   "quick.folder_hint": "選擇輸出資料夾（留空則與來源檔案同目錄）",
-  "quick.choose_folder": "選擇輸出資料夾"
+  "quick.choose_folder": "選擇輸出資料夾",
+  "quick.notify.title": "MomentShift 任務完成",
+  "quick.notify.convert_done": "轉換任務已完成",
+  "quick.notify.compress_done": "壓縮任務已完成",
+  "quick.notify.upscale_done": "放大任務已完成"
 }

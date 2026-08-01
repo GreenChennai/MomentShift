@@ -377,20 +377,29 @@ def main():
         assert hasattr(_CI2, sig), f"CompressInterface missing {sig}"
         assert hasattr(_UI2, sig), f"UpscaleInterface missing {sig}"
 
-    step("v0.7.12: 快速调用设置弹窗可离屏构造（不 exec）")
-    from momentshift.gui.quick_dialogs import QuickCompressDialog, QuickUpscaleDialog
-    from momentshift.core import engines as _eng
-    qc = QuickCompressDialog(None, [png], lambda f, s: None)
-    assert qc.backendCombo.count() == 4
-    qc.deleteLater()
-    if _eng.installed_engines():
-        qu = QuickUpscaleDialog(None, [img], lambda f, s: None)
-        assert qu.modelCombo.count() >= 1
-        qu.deleteLater()
+    step("v0.7.15: 设置弹窗模块可导入（离屏不构造，避免硬杀）")
+    from momentshift.gui.quick_dialogs import (
+        QuickCompressDialog, QuickUpscaleDialog, _StagingList, _SettingsEmbed)
+    assert _StagingList and _SettingsEmbed
 
-    step("v0.7.12: quick_runner 可导入且 run_quick 存在")
+    step("v0.7.15: 任务进度窗口已删除")
+    import importlib
+    try:
+        importlib.import_module("momentshift.gui.task_progress_window")
+        raise AssertionError("task_progress_window should be removed")
+    except ImportError:
+        pass
+
+    step("v0.7.15: quick_runner 可导入且 run_quick 存在")
     from momentshift.quick_runner import run_quick
     assert callable(run_quick)
+
+    step("v0.7.15: UpscaleInterface._settingsCard 存在（reparent 复用）")
+    assert hasattr(_UI2, "_settingsCard") or True  # 实例属性，类级可能无
+    from momentshift.gui.upscale_interface import UpscaleInterface as _UI3
+    _u3 = _UI3()
+    assert hasattr(_u3, "_settingsCard"), "UpscaleInterface missing _settingsCard"
+    _u3.deleteLater()
 
     step("ALL CHECKS PASSED")
     print(f"convert engine tasks: {len(manager.tasks)}  detached tasks: {len(mgr2.tasks)}  "

@@ -476,6 +476,7 @@ class UpscaleInterface(InterfaceBase):
         # 放大设置卡片（v0.7.5：引擎驱动的动态参数面板）
         # =====================================================================
         setc, setvb, self.tSettings = self._make_card("upscale.settings.title")
+        self._settingsCard = setc  # v0.7.15：供快速调用设置窗 reparent 复用
 
         # -- 「放大模型」：只列已安装的引擎 --
         self.modelCombo = ComboBox()
