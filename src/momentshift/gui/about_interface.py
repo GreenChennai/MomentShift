@@ -23,7 +23,6 @@ from .theme import (
     success_color, danger_color
 )
 from ..core.ffmpeg import find_ffmpeg
-from ..core import upscaler
 from ..core.qt_compat import Signal, QRunnable, QThreadPool
 
 # 环境状态行 CSS（共用）
@@ -82,34 +81,37 @@ class AboutInterface(InterfaceBase):
         cv.addWidget(self.disclaimerLabel)
         self.vbox.addWidget(card)
 
-        # ---- 运行环境卡片（v0.3.6：上下结构 + 分隔线）----
+        # ---- 运行环境卡片（v0.7.5：FFmpeg 独占一卡）----
         env_card = ThemedCard()
         env_vb = QVBoxLayout(env_card)
         env_vb.setContentsMargins(CARD_MARGIN, 16, CARD_MARGIN, 16)
         env_vb.setSpacing(14)
 
-        env_title = StrongBodyLabel(tr("about.env.title"))
-        env_vb.addWidget(env_title)
+        self.envTitle = StrongBodyLabel(tr("about.env.title"))
+        env_vb.addWidget(self.envTitle)
         env_vb.addSpacing(4)
 
         # === FFmpeg ===
         self._ff_section = self._build_env_section("FFmpeg", "")
         env_vb.addWidget(self._ff_section)
 
-        # 分隔线
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("QFrame{ color: #e8e8e8; }")
-        env_vb.addWidget(sep)
-
-        # === Real-ESRGAN ===
-        self._re_section = self._build_env_section(tr("about.env.upscaler"), "")
-        env_vb.addWidget(self._re_section)
-
         self.vbox.addWidget(env_card)
+
+        # ---- 超分辨率 / 插帧引擎卡片（v0.7.5 新增，与 FFmpeg 分开）----
+        from .engine_card import EnginesCard
+        self.enginesCard = EnginesCard(self, on_changed=self._notify_engines_changed)
+        self.vbox.addWidget(self.enginesCard)
+
         self._refresh_env()
         self.vbox.addStretch(1)
         self.retheme()
+
+    def _notify_engines_changed(self):
+        """引擎安装状态变化 → 通知「放大」界面重建设置面板。"""
+        win = self.window()
+        up = getattr(win, "upscaleInterface", None)
+        if up is not None and hasattr(up, "reload_engines"):
+            up.reload_engines()
 
     def _build_env_section(self, name: str, ok_text: str):
         """构建单条环境（v0.3.6：上下结构，按钮移入内部）。"""
@@ -185,16 +187,9 @@ class AboutInterface(InterfaceBase):
         except: pass
         self._ff_section._btn.clicked.connect(self._download_ffmpeg)
 
-        # Real-ESRGAN
-        ok = bool(upscaler.find_upscaler())
-        n = len(upscaler.available_models()) if ok else 0
-        self._update_section(
-            self._re_section, ok, tr("about.env.upscaler"),
-            tr("upscale.engine.ok", n=n),
-            tr("upscale.engine.missing"), tr("upscale.engine.oneclick"))
-        try: self._re_section._btn.clicked.disconnect()
-        except: pass
-        self._re_section._btn.clicked.connect(self._download_upscaler)
+        # v0.7.5：Real-ESRGAN 已并入下方「超分辨率 / 插帧引擎」卡片
+        if getattr(self, "enginesCard", None) is not None:
+            self.enginesCard.rescan()
 
     def _download_ffmpeg(self):
         from ..core.ffmpeg_download import FfmpegDownloadWorker
@@ -205,16 +200,6 @@ class AboutInterface(InterfaceBase):
 
     def _on_ff_done(self, ok, msg):
         self._ff_section._btn.setEnabled(True); self._ff_section._prog.hide()
-        self._refresh_env()
-
-    def _download_upscaler(self):
-        self._re_section._btn.setEnabled(False); self._re_section._prog.show()
-        w = upscaler.UpscalerDownloadWorker(str(upscaler.realesrgan_dir()))
-        w.signals.finished.connect(self._on_re_done)
-        QThreadPool.globalInstance().start(w)
-
-    def _on_re_done(self, ok, msg):
-        self._re_section._btn.setEnabled(True); self._re_section._prog.hide()
         self._refresh_env()
 
     def retheme(self):
@@ -230,8 +215,10 @@ class AboutInterface(InterfaceBase):
         self.authorLabel.setText(f"{tr('about.author')}: {AUTHOR}")
         self.repoBtn.setText(tr("about.repo"))
         self.updateBtn.setText(tr("about.check_update"))
+        self.envTitle.setText(tr("about.env.title"))
         self._ff_section._btn.setText(tr("ffmpeg.download"))
-        self._re_section._btn.setText(tr("upscale.engine.oneclick"))
+        if getattr(self, "enginesCard", None) is not None:
+            self.enginesCard.retranslateUi()
         self.techLabel.setText(tr("about.tech"))
         self.licenseLabel.setText(tr("about.license"))
         self.disclaimerLabel.setText(tr("about.disclaimer"))

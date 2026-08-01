@@ -219,6 +219,48 @@ def main():
     # ensure() is a safe no-op when not active (no crash, no scroll)
     convert._queue_auto_follow.ensure(None)
 
+    # ---------------------------------------------------------------- v0.7.5
+    step("v0.7.5: 引擎注册表加载（14 个引擎：超分 + 插帧）")
+    from momentshift.core import engines as eng_mod
+    from momentshift.i18n.translator import tr
+    assert len(eng_mod.ENGINES) == 14, len(eng_mod.ENGINES)
+    assert len(eng_mod.ENGINE_BY_ID) == 14, len(eng_mod.ENGINE_BY_ID)
+    sr = [e for e in eng_mod.ENGINES if e.category == "sr"]
+    it = [e for e in eng_mod.ENGINES if e.category == "interp"]
+    assert sr and it, "必须同时有超分与插帧引擎"
+    assert "realesrgan-ncnn-vulkan" in eng_mod.ENGINE_BY_ID
+    assert "rife-ncnn-vulkan" in eng_mod.ENGINE_BY_ID
+
+    step("v0.7.5: EnginesCard 可离屏安全构造并重新检测")
+    from momentshift.gui.engine_card import EnginesCard
+    ec = EnginesCard(None, on_changed=lambda: None)
+    ec.rescan()
+    ec.deleteLater()
+
+    step("v0.7.5: 动态参数面板按 schema 生成控件，无引擎返回空")
+    from momentshift.gui.upscale_interface import EngineParamPanel
+    panel = EngineParamPanel(None)
+    eng = eng_mod.ENGINE_BY_ID["realesrgan-ncnn-vulkan"]
+    panel.build(eng, eng_mod.default_values(eng.eid))
+    assert len(panel._controls) == len(eng.params), (len(panel._controls), len(eng.params))
+    vals = panel.values()
+    assert set(vals.keys()) == {p.key for p in eng.params}, vals
+    panel.build(None)
+    assert panel.values() == {}, "无引擎时必须返回空参数"
+    panel.deleteLater()
+
+    step("v0.7.5: 无引擎回退（放大界面隐藏参数、禁用下拉）")
+    installed = eng_mod.installed_engines()
+    if not installed:
+        assert not upscale.modelCombo.isEnabled(), "无引擎时应禁用下拉"
+        assert upscale.modelCombo.itemText(0) == tr("upscale.engine.none")
+    else:
+        assert upscale.modelCombo.isEnabled()
+
+    step("v0.7.5: RTX 驱动级引擎的 CLI 守卫（无命令行接口）")
+    cmd, err = eng_mod.build_command("rtx-super-resolution", "a.png", "b.png", {})
+    assert not cmd and err, (cmd, err)
+
     step("ALL CHECKS PASSED")
     print(f"convert engine tasks: {len(manager.tasks)}  detached tasks: {len(mgr2.tasks)}  "
           f"same-format: {len(same)}", flush=True)

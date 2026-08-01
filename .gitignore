@@ -29,7 +29,24 @@ dist_assets/
 
 # ---- Bundled external tools (downloaded in-app, not committed) ----
 tools/*.exe
+
+# ---- Upscale / interpolation engines (v0.7.5) ----
+# Users drop each engine into tools/<engine-id>/ manually; never commit them.
 tools/realesrgan/
+tools/realesrgan-ncnn-vulkan/
+tools/waifu2x-ncnn-vulkan/
+tools/waifu2x-caffe/
+tools/waifu2x-converter/
+tools/srmd-ncnn-vulkan/
+tools/srmd-cuda/
+tools/realsr-ncnn-vulkan/
+tools/realcugan-ncnn-vulkan/
+tools/anime4kcpp/
+tools/rtx-super-resolution/
+tools/rife-ncnn-vulkan/
+tools/cain-ncnn-vulkan/
+tools/dain-ncnn-vulkan/
+tools/ifrnet-ncnn-vulkan/
 
 # ---- Editors / OS ----
 .idea/

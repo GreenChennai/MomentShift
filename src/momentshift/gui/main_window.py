@@ -79,6 +79,24 @@ class MainWindow(FluentWindow):
             self.addSubInterface(iface, icon, tr(title_key))
         iface.retranslateUi()
 
+    def goto_about(self):
+        """跳转到「关于」页（v0.7.5：放大界面的「检测环境」按钮）。
+
+        关于页是懒加载的，若还没建好就先立刻补建，避免按钮点了没反应。
+        """
+        if self.aboutInterface is None:
+            for spec in self._lazy:
+                if spec[0] == "about":
+                    self._build_lazy(*spec)
+                    break
+        iface = self.aboutInterface
+        if iface is None:
+            return
+        if hasattr(iface, "enginesCard") and iface.enginesCard is not None:
+            iface.enginesCard.rescan()
+        self.switchTo(iface)
+        self.navigationInterface.setCurrentItem(iface.objectName())
+
     def _all_interfaces(self):
         out = []
         for attr in ("convertInterface", "compressInterface", "upscaleInterface",

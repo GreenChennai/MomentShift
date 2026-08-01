@@ -1,7 +1,12 @@
-"""放大界面 —— 批量 AI 超分辨率放大（v0.2.9 重写）。
+"""放大界面 —— 批量 AI 超分辨率放大 / 视频插帧。
 
-自管任务队列（QRunnable 线程池模型），使用 Real-ESRGAN 引擎。
-v0.2.9 改动：使用 InterfaceBase 共享组件构建器，精简代码；媒体直传队列（无暂存）。
+v0.7.5 重构：不再硬编码 Real-ESRGAN，改为由 :mod:`momentshift.core.engines`
+的引擎注册表驱动 ——
+- 「放大模型」下拉只列出**已安装**的引擎（``tools/<engine-id>/`` 下检测到可执行文件）
+- 一个引擎都没有时：下拉禁用并显示「无模型 / 算法可用，请下载」，其余设置项
+  全部隐藏，只留一个「检测环境」按钮跳转到关于页
+- 有引擎时：按该引擎的参数 schema **动态生成**设置行（模型 / 降噪 / 倍率 /
+  分块 / GPU / TTA / 插帧倍率 …），不同引擎参数完全不同
 """
 
 from __future__ import annotations
@@ -11,7 +16,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QFileDialog, QScrollArea,
-    QLabel, QMessageBox, QProgressBar,
+    QLabel, QMessageBox, QProgressBar, QDoubleSpinBox, QSpinBox,
 )
 from PyQt6.QtCore import Qt
 
@@ -21,7 +26,7 @@ from qfluentwidgets import (
 )
 
 from ..core.config import cfg
-from ..core import upscaler
+from ..core import engines as eng_mod
 from qfluentwidgets import qconfig
 from ..core.qt_compat import Signal, QObject, QRunnable, QThreadPool
 from ..i18n.translator import tr
@@ -36,97 +41,133 @@ from .queue_widget import ProgressBar, StatusPill, human_size, ScrollAutoFollow
 from .compare_window import CompareWindow
 
 # 放大模块支持的视频格式
-_VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".flv", ".wmv"}
+_VIDEO_EXTS = set(eng_mod.VIDEO_EXTS)
 # 放大模块总支持格式
-_UPSCALE_EXTS = upscaler.IMAGE_EXTS | upscaler.ANIM_EXTS | _VIDEO_EXTS
+_UPSCALE_EXTS = eng_mod.IMAGE_EXTS | eng_mod.ANIM_EXTS | _VIDEO_EXTS
+
+
+def _opt_label(raw: str) -> str:
+    """解析 schema 里的候选项文案。
+
+    ``@key`` → ``tr(key)``；``Foo (@key)`` → ``Foo (译文)``；其余原样返回。
+    """
+    if not raw:
+        return raw
+    if raw.startswith("@"):
+        return tr(raw[1:])
+    if "(@" in raw and raw.endswith(")"):
+        head, _, tail = raw.partition("(@")
+        return f"{head.strip()} ({tr(tail[:-1])})"
+    return raw
 
 
 # =============================================================================
-# 引擎状态卡片
+# 动态引擎参数面板
 # =============================================================================
-class EngineCard(ThemedCard):
-    """Real-ESRGAN 引擎检测与一键下载。"""
-    engine_ready = Signal()
+class EngineParamPanel(QWidget):
+    """按引擎的参数 schema 动态生成设置行。"""
+
+    changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        vb = QVBoxLayout(self)
-        vb.setContentsMargins(16, 14, 16, 14)
-        vb.setSpacing(10)
+        self.setStyleSheet("background: transparent;")
+        self._vb = QVBoxLayout(self)
+        self._vb.setContentsMargins(0, 0, 0, 0)
+        self._vb.setSpacing(8)
+        self._engine: eng_mod.Engine | None = None
+        self._controls: dict[str, tuple] = {}   # key -> (kind, widget)
+        self._rows: list[QWidget] = []
 
-        self.titleLbl = StrongBodyLabel(tr("upscale.engine.title"))
-        vb.addWidget(self.titleLbl)
+    # -- 构建 --
+    def build(self, engine: eng_mod.Engine | None, values: dict | None = None) -> None:
+        self._clear()
+        self._engine = engine
+        if engine is None:
+            return
+        values = values or {}
+        for p in engine.params:
+            widget = self._make_control(p, values.get(p.key, p.default))
+            if widget is None:
+                continue
+            self._controls[p.key] = (p.kind, widget)
+            row = field_row(tr(p.label_key), widget)
+            self._rows.append(row)
+            self._vb.addWidget(row)
 
-        top = QHBoxLayout()
-        self.dot = QLabel()
-        self.dot.setFixedSize(10, 10)
-        top.addWidget(self.dot)
-        self.statusLbl = BodyLabel()
-        top.addWidget(self.statusLbl, 1)
-        vb.addLayout(top)
+    def _make_control(self, p: eng_mod.Param, current):
+        if p.kind == "choice":
+            combo = ComboBox()
+            mapping = {}
+            idx = 0
+            for i, (val, label) in enumerate(p.choices):
+                text = _opt_label(label)
+                combo.addItem(text)
+                mapping[text] = val
+                if val == current:
+                    idx = i
+            combo.setCurrentIndex(idx)
+            combo._mapping = mapping
+            combo.currentTextChanged.connect(lambda _t: self.changed.emit())
+            return combo
+        if p.kind == "bool":
+            sw = SwitchButton()
+            sw.setChecked(bool(current))
+            sw.setText(" ")
+            sw.checkedChanged.connect(lambda _c, s=sw: (s.setText(" "),
+                                                        self.changed.emit()))
+            return sw
+        if p.kind == "float":
+            spin = QDoubleSpinBox()
+            spin.setRange(float(p.minimum), float(p.maximum))
+            spin.setSingleStep(float(p.step))
+            spin.setDecimals(2)
+            spin.setValue(float(current))
+            spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+            spin.valueChanged.connect(lambda _v: self.changed.emit())
+            return spin
+        if p.kind == "int":
+            spin = QSpinBox()
+            spin.setRange(int(p.minimum), int(p.maximum))
+            spin.setSingleStep(int(p.step) or 1)
+            spin.setValue(int(current))
+            spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+            spin.valueChanged.connect(lambda _v: self.changed.emit())
+            return spin
+        return None
 
-        self.linkBtn = HyperlinkButton(
-            upscaler.ENGINE_PAGE, tr("upscale.engine.open_site"))
-        self.dlBtn = PrimaryPushButton(
-            tr("upscale.engine.oneclick"), icon=FIF.DOWNLOAD)
-        self.dlBtn.clicked.connect(self._download)
-        row = QHBoxLayout()
-        row.addWidget(self.linkBtn)
-        row.addStretch(1)
-        row.addWidget(self.dlBtn)
-        vb.addLayout(row)
+    def _clear(self):
+        for row in self._rows:
+            self._vb.removeWidget(row)
+            row.setParent(None)
+            row.deleteLater()
+        self._rows.clear()
+        self._controls.clear()
 
-        self.prog = QProgressBar()
-        self.prog.setRange(0, 0)
-        self.prog.setFixedHeight(4)
-        self.prog.setStyleSheet(
-            f"QProgressBar{{background:{border_color()}; border:none;"
-            f" border-radius:2px;}} "
-            f"QProgressBar::chunk{{background:{accent_color().name()};"
-            f" border-radius:2px;}}")
-        self.prog.hide()
-        vb.addWidget(self.prog)
+    # -- 取值 --
+    def values(self) -> dict:
+        out: dict = {}
+        if self._engine is None:
+            return out
+        for p in self._engine.params:
+            entry = self._controls.get(p.key)
+            if entry is None:
+                out[p.key] = p.default
+                continue
+            kind, w = entry
+            if kind == "choice":
+                out[p.key] = w._mapping.get(w.currentText(), p.default)
+            elif kind == "bool":
+                out[p.key] = w.isChecked()
+            else:
+                out[p.key] = w.value()
+        return out
 
-        self._refresh()
-
-    def _refresh(self):
-        path = upscaler.find_upscaler()
-        if path:
-            n = len(upscaler.available_models())
-            self.statusLbl.setText(tr("upscale.engine.ok", n=n))
-            self.statusLbl.setStyleSheet(f"color:{success_color().name()};")
-            self.dot.setStyleSheet(
-                f"background:{success_color().name()}; border-radius:5px;")
-            self.linkBtn.hide()
-            self.dlBtn.hide()
-            self.prog.hide()
-        else:
-            self.statusLbl.setText(tr("upscale.engine.missing"))
-            self.statusLbl.setStyleSheet(f"color:{sub_text()};")
-            self.dot.setStyleSheet(
-                f"background:{danger_color().name()}; border-radius:5px;")
-            self.linkBtn.show()
-            self.dlBtn.show()
-
-    def _download(self):
-        self.dlBtn.setEnabled(False)
-        self.prog.show()
-        worker = upscaler.UpscalerDownloadWorker(str(upscaler.realesrgan_dir()))
-        worker.signals.finished.connect(self._on_finished)
-        QThreadPool.globalInstance().start(worker)
-
-    def _on_finished(self, ok: bool, msg: str):
-        self.prog.hide()
-        self.dlBtn.setEnabled(True)
-        self._refresh()
-        if ok:
-            self.engine_ready.emit()
-
-    def retranslateUi(self):
-        self.titleLbl.setText(tr("upscale.engine.title"))
-        self.linkBtn.setText(tr("upscale.engine.open_site"))
-        self.dlBtn.setText(tr("upscale.engine.oneclick"))
-        self._refresh()
+    def retranslateUi(self) -> None:
+        """语言切换后整块重建（候选项文案也需要翻译）。"""
+        if self._engine is not None:
+            current = self.values()
+            self.build(self._engine, current)
 
 
 # =============================================================================
@@ -138,25 +179,23 @@ class _WorkerSignals(QObject):
 
 
 class UpscaleWorker(QRunnable):
-    """单个放大任务，在 QThreadPool 线程中执行。"""
+    """单个放大 / 插帧任务，在 QThreadPool 线程中执行。"""
 
-    def __init__(self, item_id, src, out, model, scale, tile, gpu):
+    def __init__(self, item_id, src, out, engine_id, values):
         super().__init__()
         self.setAutoDelete(True)
         self.item_id = item_id
         self.src = src
         self.out = out
-        self.model = model
-        self.scale = scale
-        self.tile = tile
-        self.gpu = "cpu" if not gpu else "auto"
+        self.engine_id = engine_id
+        self.values = dict(values or {})
         self.signals = _WorkerSignals()
 
     def run(self):
         self.signals.progress.emit(self.item_id, 0)
         try:
-            ok, detail = upscaler.upscale_media(
-                self.src, self.out, self.model, self.scale, self.tile, self.gpu)
+            ok, detail = eng_mod.process_media(
+                self.engine_id, self.src, self.out, self.values)
         except Exception as exc:
             ok, detail = False, str(exc)
         saved = 0
@@ -349,12 +388,9 @@ class UpscaleInterface(InterfaceBase):
         # 重入防护（v0.3.0）：防止模态对话框事件循环触发二次弹框
         self._picking = False
 
-        # 放大参数默认值
-        self._model = "realesrgan-x4plus"
-        self._scale = 4
+        # 放大参数默认值（v0.7.5：引擎由注册表驱动）
+        self._engine_id = ""
         self._fmt = "png"
-        self._tile = 0
-        self._gpu = True
         self._output_mode = cfg.upscaleMode.value
         self._suffix = cfg.upscaleSuffix.value
         self._folder = cfg.upscaleFolder.value or ""
@@ -376,45 +412,53 @@ class UpscaleInterface(InterfaceBase):
         self._inputCard = card
 
         # =====================================================================
-        # 放大设置卡片（全局参数，驱动整队）
+        # 放大设置卡片（v0.7.5：引擎驱动的动态参数面板）
         # =====================================================================
         setc, setvb, self.tSettings = self._make_card("upscale.settings.title")
 
-        # AI 模型选择
+        # -- 「放大模型」：只列已安装的引擎 --
         self.modelCombo = ComboBox()
-        for mid, meta in upscaler.MODELS.items():
-            self.modelCombo.addItem(meta["label"])
-        self._model_map = {meta["label"]: mid for mid, meta in upscaler.MODELS.items()}
-        self.modelCombo.setCurrentText(upscaler.MODELS[self._model]["label"])
-        self.modelCombo.currentTextChanged.connect(
-            lambda t: setattr(self, "_model", self._model_map.get(t, self._model)))
-        setvb.addWidget(field_row(tr("upscale.model"), self.modelCombo))
+        self.modelCombo.currentTextChanged.connect(self._on_engine_change)
+        self.modelRow = field_row(tr("upscale.model"), self.modelCombo)
+        setvb.addWidget(self.modelRow)
 
-        self.scaleCombo = self._make_combo(
-            [("2x", 2), ("3x", 3), ("4x", 4)], self._scale,
-            lambda v: setattr(self, "_scale", v))
-        setvb.addWidget(field_row(tr("upscale.scale"), self.scaleCombo))
+        # -- 引擎缺失时的提示 + 检测环境按钮 --
+        self.noEngineBox = QWidget(self)
+        self.noEngineBox.setStyleSheet("background: transparent;")
+        nb = QVBoxLayout(self.noEngineBox)
+        nb.setContentsMargins(0, 4, 0, 0)
+        nb.setSpacing(10)
+        self.noEngineHint = CaptionLabel(tr("upscale.engine.none_hint"))
+        self.noEngineHint.setWordWrap(True)
+        self.noEngineHint.setStyleSheet(
+            f"color: {muted_text()}; background: transparent;")
+        nb.addWidget(self.noEngineHint)
+        self.detectBtn = primary_btn(tr("upscale.engine.detect"), icon=FIF.SEARCH)
+        self.detectBtn.clicked.connect(self._goto_about)
+        nb.addWidget(self.detectBtn)
+        setvb.addWidget(self.noEngineBox)
+
+        # -- 动态参数面板 --
+        self.paramPanel = EngineParamPanel(self)
+        setvb.addWidget(self.paramPanel)
+
+        # -- 输出相关（引擎缺失时整体隐藏）--
+        self.outputBox = QWidget(self)
+        self.outputBox.setStyleSheet("background: transparent;")
+        ob = QVBoxLayout(self.outputBox)
+        ob.setContentsMargins(0, 0, 0, 0)
+        ob.setSpacing(8)
 
         self.fmtCombo = self._make_combo(
             [(tr("upscale.fmt.png"), "png"), (tr("upscale.fmt.jpg"), "jpg"),
              (tr("upscale.fmt.webp"), "webp")], self._fmt,
             lambda v: setattr(self, "_fmt", v))
-        setvb.addWidget(field_row(tr("upscale.output.fmt"), self.fmtCombo))
+        self.fmtRow = field_row(tr("upscale.output.fmt"), self.fmtCombo)
+        ob.addWidget(self.fmtRow)
 
-        self.tileCombo = self._make_combo(
-            [(tr("upscale.tile.auto"), 0), ("256", 256), ("512", 512)], self._tile,
-            lambda v: setattr(self, "_tile", v))
-        setvb.addWidget(field_row(tr("upscale.tile"), self.tileCombo))
-
-        self.gpuSwitch = SwitchButton(tr("upscale.gpu.auto"))
-        self.gpuSwitch.setChecked(self._gpu)
-        self.gpuSwitch.checkedChanged.connect(self._on_gpu)
-        setvb.addWidget(field_row(tr("upscale.gpu"), self.gpuSwitch))
-
-        # 输出位置
         self.outputSwitch = SwitchButton(tr("convert.output.same"))
         self.outputSwitch.checkedChanged.connect(self._on_output_mode)
-        setvb.addWidget(field_row(tr("upscale.output.mode"), self.outputSwitch))
+        ob.addWidget(field_row(tr("upscale.output.mode"), self.outputSwitch))
         self.suffixEdit = QLineEdit(self._suffix)
         self.suffixEdit.setPlaceholderText(tr("upscale.output.suffix_hint"))
         self.suffixEdit.textChanged.connect(
@@ -422,7 +466,7 @@ class UpscaleInterface(InterfaceBase):
                        setattr(cfg.upscaleSuffix, "value", t),
                        qconfig.save()))
         self.suffixRow = field_row(tr("upscale.output.suffix"), self.suffixEdit)
-        setvb.addWidget(self.suffixRow)
+        ob.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(self._folder)
         self.folderEdit.setReadOnly(True)
         self.browseBtn = icon_btn(FIF.FOLDER)
@@ -431,7 +475,9 @@ class UpscaleInterface(InterfaceBase):
         frow.addWidget(self.folderEdit, 1)
         frow.addWidget(self.browseBtn)
         self.folderRow = field_row(tr("upscale.output.folder"), frow)
-        setvb.addWidget(self.folderRow)
+        ob.addWidget(self.folderRow)
+        setvb.addWidget(self.outputBox)
+
         self._apply_output_mode()
         self.vbox.addWidget(setc)
 
@@ -459,6 +505,8 @@ class UpscaleInterface(InterfaceBase):
         ctrl.addWidget(self.pauseBtn)
         ctrl.addWidget(self.clearBtn)
         qvb.addLayout(ctrl)
+        # 引擎扫描必须放在队列控制按钮之后：_update_controls 依赖 startBtn 等
+        self.reload_engines()
         self.vbox.addWidget(qcard)
 
         # =====================================================================
@@ -512,13 +560,75 @@ class UpscaleInterface(InterfaceBase):
         self._update_controls()
 
     # =========================================================================
-    # 设置交互
+    # 引擎装载与切换（v0.7.5）
     # =========================================================================
 
-    def _on_gpu(self, checked):
-        self._gpu = checked
-        self.gpuSwitch.setText(
-            tr("upscale.gpu.auto") if checked else tr("upscale.gpu.cpu"))
+    def reload_engines(self) -> None:
+        """重新扫描 ``tools/`` 并重建「放大模型」下拉与参数面板。
+
+        无任何引擎时：下拉禁用并显示「无模型 / 算法可用，请下载」，参数面板与
+        输出设置全部隐藏，只保留「检测环境」按钮。
+        """
+        installed = eng_mod.installed_engines()
+        self.modelCombo.blockSignals(True)
+        self.modelCombo.clear()
+        self._engine_map: dict[str, str] = {}
+
+        if not installed:
+            self._engine_id = ""
+            self.modelCombo.addItem(tr("upscale.engine.none"))
+            self.modelCombo.setEnabled(False)
+            self.modelCombo.blockSignals(False)
+            self.paramPanel.build(None)
+            self.paramPanel.setVisible(False)
+            self.outputBox.setVisible(False)
+            self.noEngineBox.setVisible(True)
+            self._update_controls()
+            return
+
+        for e in installed:
+            label = f"{e.name}  ·  {'/'.join(e.algos)}"
+            if e.is_interp:
+                label = f"{label}  [{tr('engine.group.interp')}]"
+            self.modelCombo.addItem(label)
+            self._engine_map[label] = e.eid
+        if self._engine_id not in [e.eid for e in installed]:
+            self._engine_id = installed[0].eid
+        for i, e in enumerate(installed):
+            if e.eid == self._engine_id:
+                self.modelCombo.setCurrentIndex(i)
+                break
+        self.modelCombo.setEnabled(True)
+        self.modelCombo.blockSignals(False)
+
+        self.noEngineBox.setVisible(False)
+        self.paramPanel.setVisible(True)
+        self.outputBox.setVisible(True)
+        self._rebuild_params()
+        self._update_controls()
+
+    def _on_engine_change(self, text: str) -> None:
+        eid = getattr(self, "_engine_map", {}).get(text)
+        if not eid or eid == self._engine_id:
+            return
+        self._engine_id = eid
+        self._rebuild_params()
+        self._update_controls()
+
+    def _rebuild_params(self) -> None:
+        engine = eng_mod.ENGINE_BY_ID.get(self._engine_id)
+        self.paramPanel.build(engine, eng_mod.default_values(self._engine_id))
+        # 插帧引擎不吃静态图片，输出格式行没有意义
+        self.fmtRow.setVisible(not (engine and engine.is_interp))
+
+    def _goto_about(self) -> None:
+        win = self.window()
+        if hasattr(win, "goto_about"):
+            win.goto_about()
+
+    # =========================================================================
+    # 设置交互
+    # =========================================================================
 
     def _on_output_mode(self, checked):
         self._output_mode = "same" if checked else "fixed"
@@ -552,7 +662,12 @@ class UpscaleInterface(InterfaceBase):
 
     def _out_path(self, src: str) -> str:
         p = Path(src)
-        ext = "." + self._fmt
+        src_ext = p.suffix.lower()
+        # v0.7.5：GIF / 视频保持原容器，只有静态图片才套用「输出格式」
+        if src_ext in eng_mod.IMAGE_EXTS:
+            ext = "." + self._fmt
+        else:
+            ext = src_ext or ".mp4"
         if self._output_mode == "same":
             out_dir = p.parent
             stem = p.stem + (self._suffix or "")
@@ -589,7 +704,7 @@ class UpscaleInterface(InterfaceBase):
     # =========================================================================
 
     def _on_start(self):
-        if not upscaler.find_upscaler():
+        if not self._engine_id or not eng_mod.find_engine(self._engine_id):
             QMessageBox.warning(
                 self, tr("common.warning"), tr("upscale.toast.no_engine"))
             return
@@ -601,6 +716,8 @@ class UpscaleInterface(InterfaceBase):
             return
         self._running = True
         self._paused = False
+        # 入队瞬间快照当前参数，运行中改设置不影响已启动的任务
+        self._run_values = self.paramPanel.values()
         self._queue_auto_follow.set_active(True)
         self._launch_next()
 
@@ -615,7 +732,8 @@ class UpscaleInterface(InterfaceBase):
             self.listWidget.set_status(src, "running")
             self._queue_auto_follow.ensure(self.listWidget.items[src])
             worker = UpscaleWorker(
-                src, src, out, self._model, self._scale, self._tile, self._gpu)
+                src, src, out, self._engine_id,
+                getattr(self, "_run_values", None) or self.paramPanel.values())
             worker.signals.progress.connect(self.listWidget.set_progress)
             worker.signals.finished.connect(self._on_finished)
             QThreadPool.globalInstance().start(worker)
@@ -659,7 +777,7 @@ class UpscaleInterface(InterfaceBase):
         self.listWidget.remove_item(item_id)
 
     def _update_controls(self):
-        ready = bool(upscaler.find_upscaler())
+        ready = bool(self._engine_id) and bool(eng_mod.find_engine(self._engine_id))
         self.startBtn.setEnabled(
             ready and bool(self._items)
             and not (self._running and not self._paused))
@@ -686,8 +804,9 @@ class UpscaleInterface(InterfaceBase):
             tr("upscale.drop.title"), tr("upscale.drop.hint"),
             tr("upscale.drop.formats"))
         self.addFolderBtn.setText(tr("upscale.add_folder"))
-        self.gpuSwitch.setText(
-            tr("upscale.gpu.auto") if self._gpu else tr("upscale.gpu.cpu"))
+        self.noEngineHint.setText(tr("upscale.engine.none_hint"))
+        self.detectBtn.setText(tr("upscale.engine.detect"))
+        self.reload_engines()
         self._apply_output_mode()
         self.startBtn.setText(tr("convert.start"))
         self.pauseBtn.setText(tr("convert.pause"))
