@@ -358,8 +358,17 @@ def _compress_oxipng(src: str, dst: str, fmt: str, quality: int, opts: dict) -> 
     args.append(tmp)
 
     try:
-        subprocess.run(args, check=True, creationflags=WIN_SILENT, timeout=180,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        proc = subprocess.run(args, check=False, creationflags=WIN_SILENT, timeout=180,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+            # oxipng 在文件已优化时返回 2，此时临时副本可视为最终结果
+            if proc.returncode == 2 and ("already" in err.lower() or "optimized" in err.lower()):
+                log.info("oxipng: 文件已是最优，跳过重新压缩")
+            else:
+                log.warning("oxipng exit=%d: %s", proc.returncode, err[:200])
+                _rm(tmp)
+                return False
         shutil.move(tmp, dst)
         return True
     except Exception:

@@ -508,6 +508,8 @@
   "upscale.engine.none": "无模型 / 算法可用，请下载",
   "upscale.engine.none_hint": "尚未检测到任何超分辨率或插帧引擎。请前往「关于」页查看全部支持的引擎与算法，下载后放入对应的 tools 文件夹即可启用。",
   "upscale.engine.detect": "检测环境",
+  "upscale.elapsed.pending": "等待中",
+  "upscale.elapsed.prefix": "耗时",
   "engine.download.oneclick": "一键下载引擎与模型",
   "engine.reason.cuda": "需要 NVIDIA CUDA 工具包，暂不支持一键下载，请手动安装后放入 tools/ 目录",
   "engine.reason.driver": "为 NVIDIA 显卡驱动内置功能（Maxine），无需下载，请在驱动 / 控制面板中开启",
@@ -535,5 +537,7 @@
   "engine.help.gpu_on": "启用 GPU 加速（关闭则使用 CPU）",
   "engine.help.uhd": "启用 UHD 超高清模式，提升大分辨率处理质量",
   "engine.help.tta_temporal": "时序 TTA：跨帧联合增强，提升视频稳定性",
-  "engine.help.syncgap": "帧对齐同步间隙参数，影响多帧对齐精度"
+  "engine.help.syncgap": "帧对齐同步间隙参数，影响多帧对齐精度",
+  "engine.expand": "展开",
+  "engine.collapse": "收起"
 }

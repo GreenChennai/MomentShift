@@ -33,7 +33,6 @@ from .theme import (
     success_color, danger_color, border_color,
 )
 
-
 def open_folder(path: str) -> None:
     """在系统文件管理器里打开目录（Windows 用 explorer，跨平台兜底）。"""
     p = Path(path)
@@ -51,7 +50,6 @@ def open_folder(path: str) -> None:
     except OSError:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
 
-
 def algo_badge(text: str, parent=None) -> QLabel:
     """算法名徽标（与 ext_badge 同一视觉语言）。"""
     lbl = QLabel(text, parent)
@@ -60,7 +58,6 @@ def algo_badge(text: str, parent=None) -> QLabel:
         f"color: {accent_color().name()}; font-weight: 700; font-size: 10px;"
         f" background: rgba(35,134,54,0.08); border-radius: 3px; padding: 2px 6px;")
     return lbl
-
 
 class EngineRow(QWidget):
     """单个引擎的检测行。"""
@@ -206,35 +203,38 @@ class EngineRow(QWidget):
             self.reasonLbl.setText(tr(self.engine.download_reason_key))
         self.refresh()
 
-
 class EnginesCard(ThemedCard):
-    """「超分辨率 / 插帧引擎」整卡（关于页专用）。"""
+    """「超分辨率 / 插帧引擎」整卡（关于页专用）。
+
+    v0.7.8 引擎卡布局：增加展开/收起（默认展开）；按钮居中在简介下方；
+    分组标题加大字号。
+    """
 
     def __init__(self, parent=None, on_changed=None):
         super().__init__(parent)
         self._on_changed = on_changed
         self._rows: list[EngineRow] = []
+        self._expanded = True
 
         vb = QVBoxLayout(self)
         vb.setContentsMargins(CARD_MARGIN, 16, CARD_MARGIN, 16)
         vb.setSpacing(10)
 
+        # 标题行（仅标题 + 展开/收起按钮）
         head = QHBoxLayout()
         head.setSpacing(8)
         self.titleLbl = StrongBodyLabel(tr("engine.card.title"))
         head.addWidget(self.titleLbl)
         head.addStretch(1)
-        self.rootBtn = PushButton(tr("engine.open_root"), icon=FIF.FOLDER)
-        self.rootBtn.setFixedHeight(28)
-        self.rootBtn.clicked.connect(self._open_root)
-        head.addWidget(self.rootBtn)
-        self.rescanBtn = PushButton(tr("engine.rescan"), icon=FIF.SYNC)
-        self.rescanBtn.setFixedHeight(28)
-        self.rescanBtn.clicked.connect(self.rescan)
-        head.addWidget(self.rescanBtn)
+        self.toggleBtn = PushButton(
+            tr("engine.collapse") if self._expanded else tr("engine.expand"),
+            icon=FIF.UP if self._expanded else FIF.DOWN)
+        self.toggleBtn.setFixedHeight(28)
+        self.toggleBtn.clicked.connect(self._toggle_expand)
+        head.addWidget(self.toggleBtn)
         vb.addLayout(head)
 
-        # v0.7.7 引擎卡布局4：确保简介文本自动换行
+        # 简介
         self.hintLbl = CaptionLabel(tr("engine.card.hint"))
         self.hintLbl.setWordWrap(True)
         self.hintLbl.setMinimumWidth(0)
@@ -244,35 +244,67 @@ class EnginesCard(ThemedCard):
             f"color: {muted_text()}; background: transparent;")
         vb.addWidget(self.hintLbl)
 
+        # v0.7.8 引擎卡布局2：按钮居中在简介下方
+        btns_center = QHBoxLayout()
+        btns_center.addStretch(1)
+        self.rootBtn = PushButton(tr("engine.open_root"), icon=FIF.FOLDER)
+        self.rootBtn.setFixedHeight(28)
+        self.rootBtn.clicked.connect(self._open_root)
+        btns_center.addWidget(self.rootBtn)
+        btns_center.addSpacing(8)
+        self.rescanBtn = PushButton(tr("engine.rescan"), icon=FIF.SYNC)
+        self.rescanBtn.setFixedHeight(28)
+        self.rescanBtn.clicked.connect(self.rescan)
+        btns_center.addWidget(self.rescanBtn)
+        btns_center.addStretch(1)
+        vb.addLayout(btns_center)
+
         self.summaryLbl = CaptionLabel("")
         self.summaryLbl.setStyleSheet(
             f"color: {accent_color().name()}; background: transparent; font-weight: 600;")
         vb.addWidget(self.summaryLbl)
 
-        # 两个分组：超分 / 插帧
+        # v0.7.8 引擎卡布局1：可展开/收起的引擎列表区域
+        self._body = QWidget()
+        self._body.setStyleSheet("background: transparent;")
+        bv = QVBoxLayout(self._body)
+        bv.setContentsMargins(0, 0, 0, 0)
+        bv.setSpacing(6)
+
         self._group_labels = {}
         for cat, key in (("sr", "engine.group.sr"), ("interp", "engine.group.interp")):
-            vb.addSpacing(4)
-            glbl = CaptionLabel(tr(key))
+            bv.addSpacing(4)
+            # v0.7.8 引擎卡布局3：分组标题加大字号（StrongBodyLabel 代替 CaptionLabel）
+            glbl = StrongBodyLabel(tr(key))
             glbl.setStyleSheet(
                 f"color: {accent_color().name()}; background: transparent;"
-                " font-weight: 700; letter-spacing: 0.4px;")
-            vb.addWidget(glbl)
+                " font-size: 16px;")
+            bv.addWidget(glbl)
             self._group_labels[cat] = (glbl, key)
             for e in eng_mod.ENGINES:
                 if e.category != cat:
                     continue
                 row = EngineRow(e, self)
                 self._rows.append(row)
-                vb.addWidget(row)
+                bv.addWidget(row)
                 sep = QFrame()
                 sep.setFrameShape(QFrame.Shape.HLine)
                 sep.setFixedHeight(1)
                 sep.setStyleSheet(f"QFrame{{ background: {border_color()}; border: none; }}")
-                vb.addWidget(sep)
+                bv.addWidget(sep)
+
+        vb.addWidget(self._body)
 
         eng_mod.ensure_all_dirs()
         self._update_summary()
+
+    def _toggle_expand(self):
+        self._expanded = not self._expanded
+        self._body.setVisible(self._expanded)
+        self.toggleBtn.setText(
+            tr("engine.collapse") if self._expanded else tr("engine.expand"))
+        self.toggleBtn.setIcon(
+            FIF.UP if self._expanded else FIF.DOWN)
 
     # 供 EngineRow 冒泡通知
     def engineChanged(self) -> None:

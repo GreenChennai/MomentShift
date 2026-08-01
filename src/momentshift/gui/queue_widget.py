@@ -537,16 +537,16 @@ def _basename(path: str) -> str:
 # MarqueeName — 文件名显示控件（v0.7.6 修复 1）
 # --------------------------------------------------------------------------
 class MarqueeName(QWidget):
-    """文件名显示：最多显示 ``max_chars`` 个汉字宽；超出则横向滚动轮流显示。
+    """文件名显示：横向滚动轮流显示超长文本。
 
-    用固定宽度的窗口裁剪文字，避免长文件名把队列卡片撑出软件 UI 画面。
-    文字超出窗口宽度时启动定时器向左滚动，滚到末尾留白后回到起点循环。
+    v0.7.6  固定 ``max_chars`` 汉字宽，超出则横向滚动。
+    v0.7.8  改为自适应宽度：由外层布局决定窗口宽，``resizeEvent``
+            实时更新，长文则滚动，短文则静止。
     """
 
-    def __init__(self, parent=None, max_chars: int = 8):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self._text = ""
-        self._max_chars = max_chars
         self._offset = 0
         self._char_w = 1
         self._text_w = 0
@@ -554,31 +554,36 @@ class MarqueeName(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(60)
         self._timer.timeout.connect(self._tick)
+        # 水平方向填充可用空间，竖向固定高度防止纵向撑大
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         try:
             self.setFont(BodyLabel().font())
         except Exception:
             pass
         self._fm = self.fontMetrics()
-        self._measure("")
+        self._char_w = max(1, self._fm.horizontalAdvance("中"))
         self.setFixedHeight(self._fm.height() + 2)
 
     def set_text(self, text: str) -> None:
         self._text = text or ""
-        self._measure(self._text)
-        if self._text_w > self._window_w:
+        self._fm = self.fontMetrics()
+        self._char_w = max(1, self._fm.horizontalAdvance("中"))
+        self._text_w = self._fm.horizontalAdvance(self._text)
+        self._restart_timer()
+        self.update()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._window_w = self.width()
+        self._restart_timer()
+
+    def _restart_timer(self) -> None:
+        if self._text_w > self._window_w > 0:
             if not self._timer.isActive():
                 self._timer.start()
         else:
             self._timer.stop()
             self._offset = 0
-        self.update()
-
-    def _measure(self, text: str) -> None:
-        self._fm = self.fontMetrics()
-        self._char_w = max(1, self._fm.horizontalAdvance("中"))
-        self._window_w = int(self._char_w * self._max_chars) + 8
-        self._text_w = self._fm.horizontalAdvance(text)
-        self.setFixedWidth(self._window_w)
 
     def _tick(self) -> None:
         if self._text_w <= self._window_w:

@@ -508,6 +508,8 @@
   "upscale.engine.none": "No model / algorithm available, please download",
   "upscale.engine.none_hint": "No super-resolution or interpolation engine detected. Open the About page to see every supported engine, then drop it into its tools folder.",
   "upscale.engine.detect": "Check environment",
+  "upscale.elapsed.pending": "Pending",
+  "upscale.elapsed.prefix": "Time",
   "engine.download.oneclick": "One-click download engine & model",
   "engine.reason.cuda": "Requires the NVIDIA CUDA toolkit; one-click download is unsupported. Install manually into the tools/ folder.",
   "engine.reason.driver": "Built into the NVIDIA display driver (Maxine); no download needed — enable it in the driver / control panel.",
@@ -535,5 +537,7 @@
   "engine.help.gpu_on": "Enable GPU acceleration (off uses the CPU).",
   "engine.help.uhd": "Enable UHD mode for better quality on large resolutions.",
   "engine.help.tta_temporal": "Temporal TTA: joint cross-frame enhancement for steadier video.",
-  "engine.help.syncgap": "Frame-alignment sync-gap parameter affecting multi-frame alignment."
+  "engine.help.syncgap": "Frame-alignment sync-gap parameter affecting multi-frame alignment.",
+  "engine.expand": "Expand",
+  "engine.collapse": "Collapse"
 }

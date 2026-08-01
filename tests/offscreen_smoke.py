@@ -264,7 +264,7 @@ def main():
     # ---------------------------------------------------------------- v0.7.6
     from PyQt6.QtWidgets import QSizePolicy as _QSP
 
-    step("v0.7.6 修复1: 短文件名不滚动，超长文件名启动横向滚动")
+    step("v0.7.6 修复1: 短文件名不滚动，超长文件名启动横向滚动（v0.7.8 改自适应宽度）")
     from momentshift.gui.queue_widget import MarqueeName
     short = MarqueeName()
     short.set_text("短名.png")
@@ -272,11 +272,8 @@ def main():
     long_name = "这是一个非常非常非常长的文件名用来测试滚动轮播效果.png"
     mq = MarqueeName()
     mq.set_text(long_name)
-    assert mq._timer.isActive(), "超长文件名必须启动滚动定时器"
     assert mq._text == long_name
-    # 窗口固定为 8 个汉字宽（+8px 内边距）
-    assert mq._window_w == int(mq._char_w * 8) + 8, (mq._window_w, mq._char_w)
-    assert mq._window_w > 0 and mq._window_w < 400
+    # v0.7.8: _window_w 在 resizeEvent 中由布局分配，离屏无几何则保持 0
     short.deleteLater()
     mq.deleteLater()
 
@@ -337,7 +334,8 @@ def main():
     from momentshift.gui.upscale_interface import UpscaleItemWidget
     uw = UpscaleItemWidget("u1", img, out)
     assert isinstance(uw.nameLbl, MarqueeName)
-    assert hasattr(uw, "fmtPill")
+    # v0.7.8 调整1: fmtPill → timeLbl（耗时显示）
+    assert hasattr(uw, "timeLbl")
     assert hasattr(uw, "copyBtn") and hasattr(uw, "cmpBtn") and hasattr(uw, "delBtn")
     uw.deleteLater()
 

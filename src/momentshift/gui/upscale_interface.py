@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QFileDialog, QScrollArea,
     QLabel, QMessageBox, QProgressBar, QDoubleSpinBox, QSpinBox,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 from qfluentwidgets import (
     FluentIcon as FIF, PushButton, PrimaryPushButton, SwitchButton, ComboBox,
@@ -229,13 +229,17 @@ class UpscaleItemWidget(ThemedCard):
         self._src = src
         self._out = out
         self._status = "pending"
+        # v0.7.8 调整1：耗时计时
+        self._start_time = None
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setInterval(1000)
+        self._elapsed_timer.timeout.connect(self._on_elapsed_tick)
 
         vb = QVBoxLayout(self)
         vb.setContentsMargins(14, 12, 14, 12)
         vb.setSpacing(8)
 
         src_ext = Path(src).suffix.upper().lstrip(".")
-        tgt_ext = (Path(out).suffix.upper().lstrip(".") if out else "") or src_ext
         top = QHBoxLayout()
         # v0.7.4 Adj1：后缀矩形徽标（与转换/压缩队列统一风格）
         self.iconLbl = ext_badge(src_ext, self)
@@ -246,8 +250,13 @@ class UpscaleItemWidget(ThemedCard):
         top.addWidget(self.nameLbl, 1)
         # v0.7.7 修复1：用 spacer 吸收多余空间，保证后缀/状态胶囊按文字定宽
         top.addStretch(1)
-        self.fmtPill = FormatPill(f".{src_ext} → .{tgt_ext}")
-        top.addWidget(self.fmtPill)
+        # v0.7.8 调整1：格式胶囊改为任务耗时显示
+        self.timeLbl = QLabel(tr("upscale.elapsed.pending"))
+        self.timeLbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.timeLbl.setStyleSheet(
+            "color:#F5F5F5; background:#3EB68F; border-radius:9px;"
+            " padding:2px 9px; font-weight:600; font-size:11px;")
+        top.addWidget(self.timeLbl)
         self.pill = StatusPill("pending")
         top.addWidget(self.pill)
         vb.addLayout(top)
@@ -284,6 +293,16 @@ class UpscaleItemWidget(ThemedCard):
         self._status = status
         self.pill.set_status(status)
         self.prog.set_error(status == "failed")
+        if status == "running":
+            if self._start_time is None:
+                import time as _time
+                self._start_time = _time.monotonic()
+            self._elapsed_timer.start()
+            self.detailLbl.setText(tr("upscale.status.upscaling"))
+        else:
+            self._elapsed_timer.stop()
+            if status in ("done", "failed"):
+                self._update_elapsed_text()  # 定格最终耗时
         if status == "done":
             # v0.7.7 修复2+3：用 format_size_compare 显示绿/红百分比；进度条满格
             self.set_progress(100)
@@ -292,10 +311,17 @@ class UpscaleItemWidget(ThemedCard):
             self.detailLbl.setText(format_size_compare(src_size, dst_size))
         elif status == "failed":
             self.detailLbl.setText((detail or tr("convert.status.failed"))[:80])
-        elif status == "running":
-            self.detailLbl.setText(tr("upscale.status.upscaling"))
-        else:
+        elif status not in ("running",):
             self.detailLbl.setText("")
+
+    def _on_elapsed_tick(self):
+        self._update_elapsed_text()
+
+    def _update_elapsed_text(self):
+        import time as _time
+        secs = int(_time.monotonic() - (self._start_time or 0))
+        m, s = divmod(max(0, secs), 60)
+        self.timeLbl.setText(f"{tr('upscale.elapsed.prefix')} {m}:{s:02d}")
 
     def retranslate(self):
         self.pill.set_status(self._status)
@@ -444,6 +470,7 @@ class UpscaleInterface(InterfaceBase):
 
         # -- 「放大模型」：只列已安装的引擎 --
         self.modelCombo = ComboBox()
+        self.modelCombo.setMaximumWidth(260)   # v0.7.8 修复2：防长名称撑出 UI
         self.modelCombo.currentTextChanged.connect(self._on_engine_change)
         self.modelRow = field_row(tr("upscale.model"), self.modelCombo)
         setvb.addWidget(self.modelRow)
