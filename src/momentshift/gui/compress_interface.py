@@ -327,7 +327,16 @@ class CompressInterface(InterfaceBase):
 
     自管任务队列（QRunnable + QThreadPool），支持 auto/oxipng/jpegoptim/pillow
     多种压缩后端，以及无损/有损两种模式。
+
+    v0.7.12：新增公开信号供快速调用进度窗使用。
     """
+
+    # (item_id, 文件名)
+    taskAdded = Signal(str, str)
+    # (item_id, pct)
+    taskProgress = Signal(str, int)
+    # (item_id, "done"/"failed")
+    taskFinished = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__("Compress", tr("nav.compress"), tr("compress.subtitle"), parent)
@@ -845,6 +854,7 @@ class CompressInterface(InterfaceBase):
             return
         self._items[src] = {"src": src, "status": "pending", "saved": 0}
         self.listWidget.add_item(src, src, self._program, self._target)
+        self.taskAdded.emit(src, Path(src).name)
 
     # =========================================================================
     # 输出路径计算
@@ -899,6 +909,8 @@ class CompressInterface(InterfaceBase):
                 src, src, out, self._target, self._current_mode(),
                 self._current_quality(), self._program, opts=self._current_opts())
             worker.signals.progress.connect(self.listWidget.set_progress)
+            worker.signals.progress.connect(
+                lambda p, _i=src: self.taskProgress.emit(_i, p))
             worker.signals.finished.connect(self._on_finished)
             QThreadPool.globalInstance().start(worker)
 
@@ -908,6 +920,7 @@ class CompressInterface(InterfaceBase):
         self._items[item_id]["status"] = status
         self._items[item_id]["saved"] = saved
         self.listWidget.set_status(item_id, status, saved, detail, backend)
+        self.taskFinished.emit(item_id, status)
         if self._running and not self._paused:
             self._launch_next()
         if not self._pending and not self._active:

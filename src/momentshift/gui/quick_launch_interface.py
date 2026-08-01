@@ -138,6 +138,12 @@ class QuickLaunchInterface(InterfaceBase):
         self.g_tasks.addSettingCard(self.convertCard)
         self.g_tasks.addSettingCard(self.compressCard)
         self.g_tasks.addSettingCard(self.upscaleCard)
+        # v0.7.12：任务进度窗口显示开关（不影响注册表，仅控制运行时）
+        self.progressCard = SwitchSettingCard(
+            FIF.INFO, tr("settings.progress_window"), tr("settings.progress_window_hint"),
+            cfg.quickLaunchProgressWindow,
+        )
+        self.g_tasks.addSettingCard(self.progressCard)
         self.vbox.addWidget(self.g_tasks)
 
         # =====================================================================

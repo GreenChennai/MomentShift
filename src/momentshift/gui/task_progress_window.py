@@ -33,8 +33,12 @@ class _TaskRow(QWidget):
         self._status = "pending"
         self.setStyleSheet("background: transparent;")
 
-        hb = QHBoxLayout(self)
-        hb.setContentsMargins(0, 2, 0, 2)
+        vb = QVBoxLayout(self)
+        vb.setContentsMargins(0, 0, 0, 2)
+        vb.setSpacing(2)
+
+        hb = QHBoxLayout()
+        hb.setContentsMargins(0, 0, 0, 0)
         hb.setSpacing(6)
 
         self.nameLbl = CaptionLabel(Path(name).name)
@@ -49,8 +53,23 @@ class _TaskRow(QWidget):
         self.pctLbl.setStyleSheet(f"color: {muted_text()}; font-size: 10px; min-width: 28px;")
         hb.addWidget(self.pctLbl)
 
+        vb.addLayout(hb)
+
+        # v0.7.12：每行迷你进度条
+        self.prog = QProgressBar()
+        self.prog.setRange(0, 100)
+        self.prog.setValue(0)
+        self.prog.setFixedHeight(3)
+        self.prog.setTextVisible(False)
+        self.prog.setStyleSheet(
+            "QProgressBar{border:none;background:#ececec;border-radius:1px;}"
+            f"QProgressBar::chunk{{background:{accent_color().name()};"
+            "border-radius:1px;}")
+        vb.addWidget(self.prog)
+
     def set_progress(self, pct: int):
         self.pctLbl.setText(f"{pct}%")
+        self.prog.setValue(max(0, min(100, pct)))
 
     def set_status(self, status: str):
         self._status = status
@@ -66,8 +85,18 @@ class _TaskRow(QWidget):
         self.statusLbl.setStyleSheet(f"color: {c}; font-size: 10px; font-weight: 600;")
         if status == "done":
             self.pctLbl.setText("100%")
+            self.prog.setValue(100)
+            self.prog.setStyleSheet(
+                "QProgressBar{border:none;background:#ececec;border-radius:1px;}"
+                f"QProgressBar::chunk{{background:{success_color().name()};"
+                "border-radius:1px;}")
             self.pctLbl.setStyleSheet(
                 f"color: {success_color().name()}; font-size: 10px; font-weight: 600;")
+        elif status == "failed":
+            self.prog.setStyleSheet(
+                "QProgressBar{border:none;background:#ececec;border-radius:1px;}"
+                f"QProgressBar::chunk{{background:{danger_color().name()};"
+                "border-radius:1px;}")
 
 
 # --------------------------------------------------------------------------

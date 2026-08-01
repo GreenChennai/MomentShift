@@ -425,7 +425,16 @@ class UpscaleInterface(InterfaceBase):
 
     自管任务队列（QRunnable + QThreadPool），使用 Real-ESRGAN 引擎。
     媒体文件直传队列（无暂存步骤），全局设置驱动整队参数。
+
+    v0.7.12：新增公开信号供快速调用进度窗使用。
     """
+
+    # (item_id, 文件名)
+    taskAdded = Signal(str, str)
+    # (item_id, pct)
+    taskProgress = Signal(str, int)
+    # (item_id, "done"/"failed")
+    taskFinished = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__("Upscale", tr("nav.upscale"), tr("upscale.tagline"), parent)
@@ -608,6 +617,7 @@ class UpscaleInterface(InterfaceBase):
                 self._items[p] = {"src": p, "out": self._out_path(p),
                                   "status": "pending", "saved": 0}
                 self.listWidget.add_item(p, p, self._items[p]["out"])
+                self.taskAdded.emit(p, Path(p).name)
         self._update_controls()
 
     # =========================================================================
@@ -789,6 +799,8 @@ class UpscaleInterface(InterfaceBase):
                 src, src, out, self._engine_id,
                 getattr(self, "_run_values", None) or self.paramPanel.values())
             worker.signals.progress.connect(self.listWidget.set_progress)
+            worker.signals.progress.connect(
+                lambda p, _i=src: self.taskProgress.emit(_i, p))
             worker.signals.finished.connect(self._on_finished)
             QThreadPool.globalInstance().start(worker)
 
@@ -798,6 +810,7 @@ class UpscaleInterface(InterfaceBase):
         self._items[item_id]["status"] = status
         self._items[item_id]["saved"] = saved
         self.listWidget.set_status(item_id, status, saved, detail)
+        self.taskFinished.emit(item_id, status)
         if self._running and not self._paused:
             self._launch_next()
         if not self._pending and not self._active:

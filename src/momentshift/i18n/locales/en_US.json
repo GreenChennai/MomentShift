@@ -554,5 +554,7 @@
   "progress.done": "Done",
   "progress.failed": "Failed",
   "settings.progress_window": "Show task progress window",
-  "settings.progress_window_hint": "Show task progress window at bottom-right of screen"
+  "settings.progress_window_hint": "Show task progress window at bottom-right of screen",
+  "quick.folder_hint": "Choose output folder (empty = same as source)",
+  "quick.choose_folder": "Choose output folder"
 }

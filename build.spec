@@ -73,7 +73,8 @@ hiddenimports = [
     "momentshift.gui.quick_launch_interface",
     "momentshift.core.quick_launch",
     "momentshift.gui.task_progress_window",
-    "momentshift.gui.quick_setup_dialog",
+    "momentshift.gui.quick_dialogs",
+    "momentshift.quick_runner",
     "momentshift.i18n",
     "momentshift.i18n.translator",
 ]

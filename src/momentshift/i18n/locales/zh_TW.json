@@ -554,5 +554,7 @@
   "progress.done": "完成",
   "progress.failed": "失敗",
   "settings.progress_window": "顯示任務進度視窗",
-  "settings.progress_window_hint": "在螢幕右下角顯示任務進度視窗"
+  "settings.progress_window_hint": "在螢幕右下角顯示任務進度視窗",
+  "quick.folder_hint": "選擇輸出資料夾（留空則與來源檔案同目錄）",
+  "quick.choose_folder": "選擇輸出資料夾"
 }

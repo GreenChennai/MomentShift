@@ -369,6 +369,29 @@ def main():
     assert dopts["image"]["compress"]["strip"] == "none", dopts["image"]["compress"]["strip"]
     assert dopts["image"]["compress"]["jo_strip"] == "none", dopts["image"]["compress"]["jo_strip"]
 
+    # ---------------------------------------------------------------- v0.7.12
+    step("v0.7.12: 压缩/放大队列暴露 taskAdded/taskProgress/taskFinished 信号")
+    from momentshift.gui.compress_interface import CompressInterface as _CI2
+    from momentshift.gui.upscale_interface import UpscaleInterface as _UI2
+    for sig in ("taskAdded", "taskProgress", "taskFinished"):
+        assert hasattr(_CI2, sig), f"CompressInterface missing {sig}"
+        assert hasattr(_UI2, sig), f"UpscaleInterface missing {sig}"
+
+    step("v0.7.12: 快速调用设置弹窗可离屏构造（不 exec）")
+    from momentshift.gui.quick_dialogs import QuickCompressDialog, QuickUpscaleDialog
+    from momentshift.core import engines as _eng
+    qc = QuickCompressDialog(None, [png], lambda f, s: None)
+    assert qc.backendCombo.count() == 4
+    qc.deleteLater()
+    if _eng.installed_engines():
+        qu = QuickUpscaleDialog(None, [img], lambda f, s: None)
+        assert qu.modelCombo.count() >= 1
+        qu.deleteLater()
+
+    step("v0.7.12: quick_runner 可导入且 run_quick 存在")
+    from momentshift.quick_runner import run_quick
+    assert callable(run_quick)
+
     step("ALL CHECKS PASSED")
     print(f"convert engine tasks: {len(manager.tasks)}  detached tasks: {len(mgr2.tasks)}  "
           f"same-format: {len(same)}", flush=True)
