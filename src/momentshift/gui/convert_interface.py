@@ -33,7 +33,7 @@ from .theme import (
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
-from .queue_widget import QueueListWidget
+from .queue_widget import QueueListWidget, ScrollAutoFollow
 from .convert_setup_dialog import ConvertSetupDialog
 from .theme import success_color, danger_color
 
@@ -128,6 +128,9 @@ class ConvertInterface(InterfaceBase):
         self.queueScroll = self._make_scroll(280)
         self.queueScroll.setWidget(self.queueList)
         qvb.addWidget(self.queueScroll)
+        # v0.7.4 Adj2：队列自动跟随当前处理任务
+        self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
+        self.manager.task_started.connect(self._follow_running)
 
         # 队列控制按钮
         ctrl = QHBoxLayout()
@@ -284,7 +287,14 @@ class ConvertInterface(InterfaceBase):
 
     def _on_state_changed(self):
         """manager 状态变更 → 更新按钮。"""
+        self._queue_auto_follow.set_active(self.manager.is_running)
         self._update_controls()
+
+    def _follow_running(self, task_id: str):
+        """v0.7.4 Adj2：将队列滚动到正在转换的任务。"""
+        w = self.queueList.items.get(task_id)
+        if w:
+            self._queue_auto_follow.ensure(w)
 
     def _update_controls(self):
         """根据 manager 状态刷新各按钮的启用/文案。"""
@@ -316,6 +326,7 @@ class ConvertInterface(InterfaceBase):
             )
             if ans != QMessageBox.StandardButton.Yes:
                 return
+        self._queue_auto_follow.set_active(True)
         self.manager.start()
         self._update_controls()
 

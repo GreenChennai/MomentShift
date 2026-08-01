@@ -28,11 +28,11 @@ from ..i18n.translator import tr
 from .theme import (
     ThemedCard, CollapsibleCard, field_row, primary_btn, ghost_btn, icon_btn,
     muted_text, sub_text, CARD_MARGIN, scrollbar_qss,
-    success_color, danger_color, accent_color, border_color,
+    success_color, danger_color, accent_color, border_color, ext_badge,
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
-from .queue_widget import ProgressBar, StatusPill, human_size
+from .queue_widget import ProgressBar, StatusPill, human_size, ScrollAutoFollow
 from .compare_window import CompareWindow
 
 # 放大模块支持的视频格式
@@ -184,6 +184,9 @@ class UpscaleItemWidget(ThemedCard):
         vb.setSpacing(8)
 
         top = QHBoxLayout()
+        # v0.7.4 Adj1：后缀矩形徽标（放大队列原先无类别图标，现统一风格）
+        self.iconLbl = ext_badge(Path(src).suffix.upper().lstrip("."), self)
+        top.addWidget(self.iconLbl)
         self.nameLbl = QLabel(Path(src).name)
         self.nameLbl.setObjectName("queueName")
         top.addWidget(self.nameLbl, 1)
@@ -443,6 +446,8 @@ class UpscaleInterface(InterfaceBase):
         self.queueScroll = self._make_scroll(280)
         self.queueScroll.setWidget(self.listWidget)
         qvb.addWidget(self.queueScroll)
+        # v0.7.4 Adj2：队列自动跟随当前处理任务
+        self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
         self.startBtn.clicked.connect(self._on_start)
@@ -596,6 +601,7 @@ class UpscaleInterface(InterfaceBase):
             return
         self._running = True
         self._paused = False
+        self._queue_auto_follow.set_active(True)
         self._launch_next()
 
     def _launch_next(self):
@@ -607,6 +613,7 @@ class UpscaleInterface(InterfaceBase):
             self._items[src]["out"] = out
             self._items[src]["status"] = "running"
             self.listWidget.set_status(src, "running")
+            self._queue_auto_follow.ensure(self.listWidget.items[src])
             worker = UpscaleWorker(
                 src, src, out, self._model, self._scale, self._tile, self._gpu)
             worker.signals.progress.connect(self.listWidget.set_progress)
@@ -623,6 +630,7 @@ class UpscaleInterface(InterfaceBase):
             self._launch_next()
         if not self._pending and not self._active:
             self._running = False
+            self._queue_auto_follow.set_active(False)
         self._update_controls()
 
     def _on_pause(self):

@@ -32,13 +32,14 @@ from ..i18n.translator import tr
 log = get_logger("compress")
 from .theme import (
     ThemedCard, CollapsibleCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
-    muted_text, sub_text, accent_color, CARD_MARGIN, scrollbar_qss,
+    muted_text, sub_text, accent_color, CARD_MARGIN, scrollbar_qss, ext_badge,
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
 from .help_bubble import attach_help
 from .queue_widget import (
     ProgressBar, StatusPill, FormatPill, human_size, format_size_compare,
+    ScrollAutoFollow,
 )
 
 
@@ -131,8 +132,8 @@ class CompressItemWidget(ThemedCard):
         vb.setSpacing(8)
 
         top = QHBoxLayout()
-        self.iconLbl = QLabel()
-        self.iconLbl.setPixmap(FIF.PHOTO.icon(accent_color()).pixmap(20, 20))
+        # v0.7.4 Adj1：后缀矩形徽标取代固定图片图标
+        self.iconLbl = ext_badge(Path(src).suffix.upper().lstrip("."), self)
         top.addWidget(self.iconLbl)
         self.nameLbl = BodyLabel(Path(src).name)
         self.nameLbl.setObjectName("queueName")
@@ -464,6 +465,8 @@ class CompressInterface(InterfaceBase):
         self.queueScroll = self._make_scroll(280)
         self.queueScroll.setWidget(self.listWidget)
         qvb.addWidget(self.queueScroll)
+        # v0.7.4 Adj2：队列自动跟随当前处理任务
+        self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("compress.start"), icon=FIF.PLAY)
         self.startBtn.clicked.connect(self._on_start)
@@ -875,6 +878,7 @@ class CompressInterface(InterfaceBase):
             return
         self._running = True
         self._paused = False
+        self._queue_auto_follow.set_active(True)
         self._launch_next()
 
     def _launch_next(self):
@@ -885,6 +889,7 @@ class CompressInterface(InterfaceBase):
             out = self._out_path(src)
             self._items[src]["status"] = "running"
             self.listWidget.set_status(src, "running")
+            self._queue_auto_follow.ensure(self.listWidget.items[src])
             worker = CompressWorker(
                 src, src, out, self._target, self._current_mode(),
                 self._current_quality(), self._program, opts=self._current_opts())
@@ -902,6 +907,7 @@ class CompressInterface(InterfaceBase):
             self._launch_next()
         if not self._pending and not self._active:
             self._running = False
+            self._queue_auto_follow.set_active(False)
         self._update_controls()
 
     def _on_pause(self):

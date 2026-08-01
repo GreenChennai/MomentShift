@@ -15,8 +15,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtGui import QColor, QPainter, QBrush, QPen
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QHBoxLayout
+from PyQt6.QtCore import Qt, QObject, QTimer, QEvent
+from PyQt6.QtWidgets import QLabel, QVBoxLayout, QHBoxLayout, QScrollArea
 
 from qfluentwidgets import FluentIcon as FIF, CaptionLabel, BodyLabel
 
@@ -24,7 +24,7 @@ from ..core.qt_compat import QWidget, Signal, QApplication
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, icon_btn, muted_text, accent_color, sub_text,
-    success_color, danger_color, border_color,
+    success_color, danger_color, border_color, ext_badge,
 )
 
 
@@ -67,12 +67,6 @@ def format_size_compare(before: int, after: int) -> str:
     return (f"{human_size(before)} → {human_size(after)} "
             f"<font color=\"{color}\">({pct})</font>")
 
-
-_CATEGORY_ICON = {
-    "image": FIF.PHOTO,
-    "video": FIF.VIDEO,
-    "audio": FIF.MUSIC,
-}
 
 # Status pill colours. The pill background is the status colour (vivid, theme
 # independent); the text is the inverse (near-white) so it reads clearly on any
@@ -189,16 +183,15 @@ class QueueItemWidget(ThemedCard):
         vb.setContentsMargins(14, 12, 14, 12)
         vb.setSpacing(8)
 
+        # v0.7.4 Adj1：左侧徽标显示文件后缀（矩形 + 居中文字），取代类别图标
+        src_ext = Path(self._task.input_path).suffix.upper().lstrip(".")
         top = QHBoxLayout()
-        icon = _CATEGORY_ICON.get(self._task.category, FIF.DOCUMENT)
-        self.iconLbl = QLabel()
-        self.iconLbl.setPixmap(icon.icon(accent_color()).pixmap(20, 20))
+        self.iconLbl = ext_badge(src_ext, self)
         self.nameLbl = BodyLabel(_basename(self._task.input_path))
         self.nameLbl.setObjectName("queueName")
         top.addWidget(self.iconLbl)
         top.addWidget(self.nameLbl, 1)
         # v0.7.2 Feat5：格式指示胶囊 .SRC → .TGT（如 .JPG → .PNG）
-        src_ext = Path(self._task.input_path).suffix.upper().lstrip(".")
         tgt = (self._task.target_format or "").upper()
         self.fmtPill = FormatPill(f".{src_ext} → .{tgt}")
         top.addWidget(self.fmtPill)
@@ -461,6 +454,70 @@ class QueueListWidget(QWidget):
         self.statTotal.setText(tr("convert.queue.total", n=counts.get("total", 0)))
         self.statRun.setText(tr("convert.queue.running", n=counts.get("running", 0)))
         self.statErr.setText(tr("convert.queue.failed", n=counts.get("failed", 0)))
+
+
+# --------------------------------------------------------------------------
+# ScrollAutoFollow — 队列滚动自动跟随当前任务（v0.7.4 Adj2）
+# --------------------------------------------------------------------------
+class ScrollAutoFollow(QObject):
+    """队列滚动自动跟随当前正在处理的任务。
+
+    - ``set_active(True)`` 进入跟随模式（任务进行中）；``set_active(False)`` 退出。
+    - 任务开始处理时调用 ``ensure(item_widget)`` 将条目滚入可视区域。
+    - 用户手动拖动/滚轮/键盘操作滚动条时暂停跟随，停止操作后 3s 自动恢复。
+
+    暂停判定通过事件过滤器捕获视口滚轮/键盘事件，以及滚动条滑块的
+    ``sliderPressed``/``sliderMoved``（仅拖动时触发，程序化 ``ensureWidgetVisible``
+    走 ``setValue`` 不会触发，故不会自我死锁）。
+    """
+
+    RESUME_DELAY_MS = 3000
+
+    def __init__(self, scroll_area: QScrollArea, parent=None):
+        super().__init__(parent or scroll_area)
+        self._scroll = scroll_area
+        self._active = False
+        self._user_paused = False
+        self._resume_timer = QTimer(self)
+        self._resume_timer.setSingleShot(True)
+        self._resume_timer.timeout.connect(self._on_resume)
+
+        sb = scroll_area.verticalScrollBar()
+        sb.sliderPressed.connect(self._on_user_scroll)
+        sb.sliderMoved.connect(self._on_user_scroll)
+
+        scroll_area.installEventFilter(self)
+        scroll_area.viewport().installEventFilter(self)
+
+    def set_active(self, active: bool):
+        """进入/退出跟随模式。"""
+        self._active = bool(active)
+        self._resume_timer.stop()
+        if active:
+            # 新任务开始即重置用户暂停状态，重新跟随
+            self._user_paused = False
+
+    def ensure(self, widget: QWidget):
+        """把 widget 滚入可视区域（仅在跟随模式且用户未手动接管时）。"""
+        if not self._active or self._user_paused or widget is None:
+            return
+        self._scroll.ensureWidgetVisible(widget, 10, 10)
+
+    def _on_user_scroll(self, *_):
+        if not self._active or self._user_paused:
+            return
+        self._user_paused = True
+        self._resume_timer.start(self.RESUME_DELAY_MS)
+
+    def _on_resume(self):
+        self._user_paused = False
+
+    def eventFilter(self, obj, event):
+        if self._active and not self._user_paused:
+            t = event.type()
+            if t == QEvent.Type.Wheel or t == QEvent.Type.KeyPress:
+                self._on_user_scroll()
+        return super().eventFilter(obj, event)
 
 
 def _basename(path: str) -> str:

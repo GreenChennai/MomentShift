@@ -211,11 +211,13 @@ class ConvertSetupDialog(QDialog):
         self.advancedPanel.on_format_change(fmt)
 
     def _on_adv_master(self, checked: bool):
-        """高级设置总开关：ON=展开+启用，OFF=折叠+不使用。"""
-        if checked:
-            self._adv_card._apply_expanded()
-        else:
-            self._adv_card._apply_collapsed()
+        """高级设置总开关：ON=展开+启用，OFF=折叠+不使用。
+
+        v0.7.4 修复：必须通过 setCollapsed 切换，否则 _collapsed 标志不会被
+        更新，v0.7.3 的 _on_anim_finished 会在展开动画结束后把它重新收起，
+        表现为「展开→立刻收起」的闪烁（本版本反馈的回归 Bug）。
+        """
+        self._adv_card.setCollapsed(checked)
 
     # -- 待处理列表 --
     def _render_staging(self):

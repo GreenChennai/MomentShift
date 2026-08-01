@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from PyQt6.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame, QSizePolicy
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame, QSizePolicy, QLabel
 
 from qfluentwidgets import (
     CardWidget,
@@ -291,6 +291,9 @@ class CollapsibleCard(ThemedCard):
             self._body.setMaximumHeight(16777215)
 
     def _apply_collapsed(self):
+        # v0.7.4 Bug：必须同步 _collapsed 标志，否则 _on_anim_finished 在展开
+        # 动画结束后会读到残留的 True 而把卡片重新收起（"展开→收起"闪烁）。
+        self._collapsed = True
         h = self._body.height()
         if h > 0:
             self._content_height = h
@@ -298,6 +301,7 @@ class CollapsibleCard(ThemedCard):
         self._toggleBtn.setIcon(self._toggle_icon())
 
     def _apply_expanded(self):
+        self._collapsed = False
         self._body.setVisible(True)
         self._anim_target(16777215)
         self._toggleBtn.setIcon(self._toggle_icon())
@@ -393,6 +397,25 @@ def ghost_btn(text: str, icon=None, parent=None) -> TransparentPushButton:
 def icon_btn(icon, parent=None) -> TransparentToolButton:
     """图标按钮。v0.7.3 调整2：全局取消鼠标悬停提示，不再接受 tooltip 参数。"""
     return TransparentToolButton(icon, parent)
+
+
+def ext_badge(ext: str, parent=None) -> QLabel:
+    """文件后缀矩形徽标（v0.7.4 Adj1）。
+
+    用于转换/压缩/放大三个队列的任务卡片左侧，取代原先按文件类别绘制的
+    视频/音频/图片图标。样式与「转换设置」弹窗「待处理文件」完全一致：
+    品牌绿淡底 + 圆角矩形 + 居中后缀文字。
+    """
+    ext = (ext or "").upper().lstrip(".")
+    if not ext:
+        ext = "?"
+    lbl = QLabel(ext, parent)
+    lbl.setFixedWidth(42)
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lbl.setStyleSheet(
+        f"color: {accent_color().name()}; font-weight: 700; font-size: 11px;"
+        f" background: rgba(35,134,54,0.08); border-radius: 3px; padding: 1px 4px;")
+    return lbl
 
 def scrollbar_qss() -> str:
     handle = "rgba(140, 140, 140, 0.6)"

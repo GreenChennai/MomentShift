@@ -173,6 +173,52 @@ def main():
     from momentshift.gui.queue_widget import FormatPill
     assert "#3eb68f" in FormatPill(".A → .B").styleSheet().lower()
 
+    # ---------------------------------------------------------------- v0.7.4
+    step("v0.7.4 Bug: CollapsibleCard._apply_expanded/_apply_collapsed flip _collapsed")
+    from momentshift.gui.theme import CollapsibleCard
+    card = CollapsibleCard("t", "", None, collapsed=True)
+    assert card.isCollapsed(), "constructed collapsed"
+    card._apply_expanded()
+    assert card.isCollapsed() is False, "_apply_expanded must set _collapsed=False"
+    card._apply_collapsed()
+    assert card.isCollapsed() is True, "_apply_collapsed must set _collapsed=True"
+    card.deleteLater()
+
+    step("v0.7.4 Bug: setCollapsed flips flag (the adv-switch path)")
+    card2 = CollapsibleCard("t2", "", None, collapsed=True)
+    card2.setCollapsed(True)   # no-op when equal
+    assert card2.isCollapsed()
+    card2.setCollapsed(False)
+    assert card2.isCollapsed() is False
+    card2.deleteLater()
+
+    step("v0.7.4 Adj1: ext_badge renders the suffix text in a brand-tinted rect")
+    from momentshift.gui.theme import ext_badge
+    b = ext_badge("png")
+    assert b.text() == "PNG", b.text()
+    assert "rgba(35,134,54,0.08)" in b.styleSheet()
+    b.deleteLater()
+
+    step("v0.7.4 Adj1: queue/compress rows use suffix badge (not a pixmap icon)")
+    from momentshift.gui.queue_widget import QueueItemWidget
+    tw = QueueItemWidget(
+        Task(id="t2", input_path=png, output_path=os.path.join(out, "photo.jpg"),
+             target_format="jpg", category="image", use_gpu=False)
+    )
+    assert tw.iconLbl.text() == "PNG", f"expected badge text PNG, got {tw.iconLbl.text()!r}"
+    tw.deleteLater()
+    row2 = compress.listWidget.items[cimg]
+    assert row2.iconLbl.text() == "PNG", f"compress badge text, got {row2.iconLbl.text()!r}"
+
+    step("v0.7.4 Adj2: each interface wires ScrollAutoFollow to its queue scroll")
+    from momentshift.gui.queue_widget import ScrollAutoFollow
+    for iface in (convert, compress, upscale):
+        af = getattr(iface, "_queue_auto_follow", None)
+        assert isinstance(af, ScrollAutoFollow), type(iface).__name__
+        assert af._scroll is iface.queueScroll, type(iface).__name__
+    # ensure() is a safe no-op when not active (no crash, no scroll)
+    convert._queue_auto_follow.ensure(None)
+
     step("ALL CHECKS PASSED")
     print(f"convert engine tasks: {len(manager.tasks)}  detached tasks: {len(mgr2.tasks)}  "
           f"same-format: {len(same)}", flush=True)
