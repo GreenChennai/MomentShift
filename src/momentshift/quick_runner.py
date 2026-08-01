@@ -40,6 +40,9 @@ def _setup_app() -> QApplication:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(VERSION)
+    # v0.7.14：窗口关闭不退出事件循环，否则设置弹窗 accept 后进程直接退出，
+    # 后台 worker（ffmpeg/压缩/放大）被连带终止 → WorkerSignals has been deleted
+    app.setQuitOnLastWindowClosed(False)
 
     # 字体（与主窗口一致）—— v0.7.13：resources 与 quick_runner 同目录
     _res = Path(__file__).resolve().parent / "resources"

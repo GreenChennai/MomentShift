@@ -160,6 +160,9 @@ class ConversionManager(QObject):
         super().__init__()
         self.tasks: list[Task] = []
         self._events: dict[str, threading.Event] = {}
+        # v0.7.14：持有运行中的 worker，防止 Python GC 删除 signals 导致
+        # "WorkerSignals has been deleted"（QRunnable 局部变量经典坑）
+        self._workers: dict[str, ConversionWorker] = {}
         self._pool = QThreadPool.globalInstance()
         self._compress_pool = QThreadPool()  # v0.6.7：独立压缩线程池
         self._compress_pool.setMaxThreadCount(3)
@@ -474,6 +477,7 @@ class ConversionManager(QObject):
         worker.signals.finished.connect(self._on_finished)
         worker.signals.compress_started.connect(self.compress_started)
         worker.signals.compress_finished.connect(self.compress_finished)
+        self._workers[task.id] = worker  # v0.7.14：持有引用防 GC
         self._pool.start(worker)
 
     def _on_started(self, task_id: str) -> None:
@@ -493,6 +497,7 @@ class ConversionManager(QObject):
         （UI 由 ``compress_started`` 切换成黄色「压缩中」）。这样状态序列
         才是 等待中 → 已完成 → 压缩中 → 压缩完成。
         """
+        self._workers.pop(task_id, None)  # v0.7.14：释放 worker 引用
         task = self.get_task(task_id)
         need_compress = bool(task and ok and task.compress_enabled)
 

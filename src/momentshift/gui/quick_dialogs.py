@@ -142,15 +142,15 @@ class QuickCompressDialog(QDialog):
         cb.setSpacing(8)
 
         self.backendCombo = ComboBox()
-        self.backendCombo.addItem(tr("advanced.compression.auto"), "auto")
-        self.backendCombo.addItem(tr("advanced.compression.oxipng"), "oxipng")
-        self.backendCombo.addItem(tr("advanced.compression.jpegoptim"), "jpegoptim")
-        self.backendCombo.addItem(tr("advanced.compression.pillow"), "pillow")
+        self.backendCombo.addItem(tr("advanced.compression.auto"), None, "auto")
+        self.backendCombo.addItem(tr("advanced.compression.oxipng"), None, "oxipng")
+        self.backendCombo.addItem(tr("advanced.compression.jpegoptim"), None, "jpegoptim")
+        self.backendCombo.addItem(tr("advanced.compression.pillow"), None, "pillow")
         cb.addWidget(field_row(tr("compress.backend"), self.backendCombo))
 
         self.modeCombo = ComboBox()
-        self.modeCombo.addItem(tr("compress.mode.lossless"), "lossless")
-        self.modeCombo.addItem(tr("compress.mode.lossy"), "lossy")
+        self.modeCombo.addItem(tr("compress.mode.lossless"), None, "lossless")
+        self.modeCombo.addItem(tr("compress.mode.lossy"), None, "lossy")
         if cfg.compressMode.value == "lossy":
             self.modeCombo.setCurrentIndex(1)
         cb.addWidget(field_row(tr("compress.mode"), self.modeCombo))
@@ -255,9 +255,9 @@ class QuickUpscaleDialog(QDialog):
         cb.addWidget(field_row(tr("upscale.model"), self.modelCombo))
 
         self.fmtCombo = ComboBox()
-        self.fmtCombo.addItem("PNG", "png")
-        self.fmtCombo.addItem("JPG", "jpg")
-        self.fmtCombo.addItem("WEBP", "webp")
+        self.fmtCombo.addItem("PNG", None, "png")
+        self.fmtCombo.addItem("JPG", None, "jpg")
+        self.fmtCombo.addItem("WEBP", None, "webp")
         cb.addWidget(field_row(tr("upscale.output.fmt"), self.fmtCombo))
         rv.addWidget(self.cfgCard)
 

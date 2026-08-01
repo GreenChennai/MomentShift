@@ -442,6 +442,8 @@ class UpscaleInterface(InterfaceBase):
         self._items: dict[str, dict] = {}
         self._active: set[str] = set()
         self._pending: list[str] = []
+        # v0.7.14：持有 worker 引用，防止 GC 删除 signals
+        self._workers: dict[str, UpscaleWorker] = {}
         self._running = False
         self._paused = False
         # 重入防护（v0.3.0）：防止模态对话框事件循环触发二次弹框
@@ -800,11 +802,13 @@ class UpscaleInterface(InterfaceBase):
                 getattr(self, "_run_values", None) or self.paramPanel.values())
             worker.signals.progress.connect(self.listWidget.set_progress)
             worker.signals.progress.connect(
-                lambda p, _i=src: self.taskProgress.emit(_i, p))
+                lambda iid, p: self.taskProgress.emit(iid, p))
             worker.signals.finished.connect(self._on_finished)
+            self._workers[src] = worker  # v0.7.14：持有引用防 GC
             QThreadPool.globalInstance().start(worker)
 
     def _on_finished(self, item_id, ok, saved, detail):
+        self._workers.pop(item_id, None)  # v0.7.14：释放 worker 引用
         self._active.discard(item_id)
         status = "done" if ok else "failed"
         self._items[item_id]["status"] = status
