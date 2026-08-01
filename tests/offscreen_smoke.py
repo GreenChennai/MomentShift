@@ -126,6 +126,53 @@ def main():
     compress._on_files([cimg])
     assert len(compress._items) == 1, compress._items
 
+    # ---------------------------------------------------------------- v0.7.3
+    step("v0.7.3 Bug1: pickers resolve a real dialog parent (never None)")
+    for iface in (convert, compress, upscale):
+        assert iface._dialog_parent() is not None, type(iface).__name__
+
+    step("v0.7.3 Bug1: DropArea defers the drop to the next event loop turn")
+    import inspect
+    from momentshift.gui.drop_area import DropArea
+    drop_src = inspect.getsource(DropArea.dropEvent)
+    assert "singleShot" in drop_src, "dropEvent must not emit synchronously"
+
+    step("v0.7.3 Bug2: CollapsibleCard(collapsed=True) collapses without anim")
+    from momentshift.gui.theme import CollapsibleCard
+    card = CollapsibleCard("t", "", None, collapsed=True)
+    assert card._anim is None, "no animation may run at construction time"
+    assert card._body.maximumHeight() == 0, card._body.maximumHeight()
+    assert card.isCollapsed()
+    card.deleteLater()
+
+    step("v0.7.3 Bug3: backend sections carry headers, released height cap")
+    for grp in (compress.oxipngGroup, compress.joGroup, compress.pilGroup):
+        assert hasattr(grp, "_header"), "backend group needs a section header"
+    compress._on_program("auto")
+    assert compress.oxipngGroup.isVisibleTo(compress._backend_container)
+    assert compress.oxipngGroup._header.isVisibleTo(compress.oxipngGroup)
+    compress._on_program("pillow")
+    assert not compress.pilGroup._header.isVisibleTo(compress.pilGroup)
+    compress._on_program("auto")
+
+    step("v0.7.3 Bug4: compress row mirrors convert row, full bar when done")
+    row = compress.listWidget.items[cimg]
+    assert hasattr(row, "fmtPill") and hasattr(row, "iconLbl")
+    assert row.fmtPill.text().startswith(".PNG"), row.fmtPill.text()
+    row.set_progress(37)
+    row.set_status("done", saved=1234)
+    assert row.prog._value == 100, row.prog._value
+
+    step("v0.7.3 Adj1: no widget exposes a hover tooltip")
+    from PyQt6.QtWidgets import QWidget as _QW
+    for iface in (convert, compress, upscale, setting, about):
+        tipped = [w for w in iface.findChildren(_QW) if w.toolTip()]
+        assert not tipped, f"{type(iface).__name__}: {[type(w).__name__ for w in tipped]}"
+
+    step("v0.7.3 Adj2: FormatPill uses the #3EB68F brand background")
+    from momentshift.gui.queue_widget import FormatPill
+    assert "#3eb68f" in FormatPill(".A → .B").styleSheet().lower()
+
     step("ALL CHECKS PASSED")
     print(f"convert engine tasks: {len(manager.tasks)}  detached tasks: {len(mgr2.tasks)}  "
           f"same-format: {len(same)}", flush=True)

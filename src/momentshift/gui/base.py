@@ -127,6 +127,31 @@ class InterfaceBase(ScrollArea):
                 break
         combo.blockSignals(False)
 
+    # -------------------------------------------------------------------
+    # 文件对话框（v0.7.3 Bug1：资源管理器卡死 / 无法添加文件）
+    # -------------------------------------------------------------------
+    def _dialog_parent(self):
+        """原生文件对话框必须挂到应用主窗口上。
+
+        若传 None，Windows 会把「当前前台窗口」当作 owner —— 用户往往刚从
+        资源管理器点过来，于是那个 Explorer 窗口被 EnableWindow(FALSE) 禁用；
+        对话框关闭时 Qt 只恢复自己的窗口，Explorer 便永久失去交互。
+        同理 Qt 自绘对话框无 parent 时会弹到主窗口背后，表现为「点了没反应」。
+        """
+        return self.window()
+
+    def _ask_open_files(self, title: str, exts, label: str = "Media") -> list:
+        """弹出原生多选文件对话框，返回路径列表（取消则为空）。"""
+        flt = f"{label} (" + " ".join(f"*{e}" for e in sorted(exts)) + ")"
+        files, _ = QFileDialog.getOpenFileNames(
+            self._dialog_parent(), title, "", flt)
+        return files or []
+
+    def _ask_directory(self, title: str, start: str = "") -> str:
+        """弹出原生目录选择对话框，返回路径（取消则为空串）。"""
+        return QFileDialog.getExistingDirectory(
+            self._dialog_parent(), title, start or "") or ""
+
     def _expand_paths(self, paths, valid_exts):
         out = []
         for p in paths:

@@ -255,15 +255,9 @@ def main():
     _qfont.setStyleHint(QFont.StyleHint.SansSerif)
     app.setFont(_qfont)
     # 全局样式表强制字体 — 覆盖 qfluentwidgets 等库的内部字体设置
-    # v0.7.2 F4：显式定义 QToolTip（原生提示）配色，避免悬停图标按钮时
-    # 出现「黑色色块、无文字」的问题。
+    # v0.7.3 调整2：软件已取消全部鼠标悬停提示，原 QToolTip 配色规则一并移除。
     app.setStyleSheet(
         "* { font-family: 'HarmonyOS Sans SC', 'FiraCode', 'Microsoft YaHei', sans-serif; }"
-        "QToolTip {"
-        "  background-color: #ffffff; color: #212121;"
-        "  border: 1px solid #d0d0d0; border-radius: 6px;"
-        "  padding: 5px 9px; font-size: 12px;"
-        "}"
     )
 
     # v0.3.2: 固定浅色主题，移除深色主题

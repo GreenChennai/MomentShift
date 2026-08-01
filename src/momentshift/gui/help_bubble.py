@@ -85,7 +85,6 @@ def attach_help(field_row_widget, help_key: str, parent=None):
     """
     btn = TransparentToolButton(FIF.HELP.icon(color=QColor("#888888")), parent)
     btn.setFixedSize(20, 20)
-    btn.setToolTip(tr("advanced.help"))
 
     def _show():
         dlg = HelpDialog(tr(help_key), parent)

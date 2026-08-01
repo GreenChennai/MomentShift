@@ -186,7 +186,6 @@ class UpscaleItemWidget(ThemedCard):
         top = QHBoxLayout()
         self.nameLbl = QLabel(Path(src).name)
         self.nameLbl.setObjectName("queueName")
-        self.nameLbl.setToolTip(src)
         top.addWidget(self.nameLbl, 1)
         self.pill = StatusPill("pending")
         top.addWidget(self.pill)
@@ -199,10 +198,10 @@ class UpscaleItemWidget(ThemedCard):
         self.detailLbl = CaptionLabel()
         self.detailLbl.setStyleSheet(f"color: {muted_text()};")
         bottom.addWidget(self.detailLbl, 1)
-        self.cmpBtn = icon_btn(FIF.SEARCH, tr("upscale.action.compare"))
+        self.cmpBtn = icon_btn(FIF.SEARCH)
         self.cmpBtn.clicked.connect(lambda: self.compareRequested.emit(self._id))
         bottom.addWidget(self.cmpBtn)
-        self.delBtn = icon_btn(FIF.DELETE, tr("convert.action.remove"))
+        self.delBtn = icon_btn(FIF.DELETE)
         self.delBtn.clicked.connect(lambda: self.removeRequested.emit(self._id))
         bottom.addWidget(self.delBtn)
         vb.addLayout(bottom)
@@ -232,8 +231,6 @@ class UpscaleItemWidget(ThemedCard):
 
     def retranslate(self):
         self.pill.set_status(self._status)
-        self.cmpBtn.setToolTip(tr("upscale.action.compare"))
-        self.delBtn.setToolTip(tr("convert.action.remove"))
         self.set_status(self._status)
 
 
@@ -425,7 +422,7 @@ class UpscaleInterface(InterfaceBase):
         setvb.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(self._folder)
         self.folderEdit.setReadOnly(True)
-        self.browseBtn = icon_btn(FIF.FOLDER, tr("convert.output.browse"))
+        self.browseBtn = icon_btn(FIF.FOLDER)
         self.browseBtn.clicked.connect(self._pick_output)
         frow = QHBoxLayout()
         frow.addWidget(self.folderEdit, 1)
@@ -481,11 +478,7 @@ class UpscaleInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            flt = "Media (" + " ".join(f"*{e}" for e in sorted(_UPSCALE_EXTS)) + ")"
-            files, _ = QFileDialog.getOpenFileNames(
-                None, tr("upscale.btn.add"), "", flt, "",
-                QFileDialog.DontUseNativeDialog,
-            )
+            files = self._ask_open_files(tr("upscale.btn.add"), _UPSCALE_EXTS)
             if files:
                 self._add_to_queue(self._expand_paths(files, _UPSCALE_EXTS))
         finally:
@@ -497,10 +490,7 @@ class UpscaleInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            d = QFileDialog.getExistingDirectory(
-                None, tr("upscale.add_folder"), "",
-                QFileDialog.DontUseNativeDialog,
-                )
+            d = self._ask_directory(tr("upscale.add_folder"))
             if d:
                 self._add_to_queue(self._expand_paths([d], _UPSCALE_EXTS))
         finally:
@@ -545,10 +535,8 @@ class UpscaleInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            d = QFileDialog.getExistingDirectory(
-                None, tr("convert.output.browse"), self._folder or "",
-                QFileDialog.DontUseNativeDialog,
-                )
+            d = self._ask_directory(tr("convert.output.browse"),
+                                    self._folder or "")
             if d:
                 self._folder = d
                 cfg.upscaleFolder.value = d

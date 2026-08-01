@@ -138,7 +138,7 @@ class MainWindow(FluentWindow):
     def _init_tray(self):
         self.tray = QSystemTrayIcon(self)
         self.tray.setIcon(self.windowIcon())
-        self.tray.setToolTip(tr("tray.title"))
+        # v0.7.3 调整2：全局取消鼠标悬停提示，托盘图标同样不再设置 ToolTip
         menu = QMenu(self)
         show_action = QAction(tr("tray.show"), self)
         quit_action = QAction(tr("tray.quit"), self)

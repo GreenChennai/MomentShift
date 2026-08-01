@@ -156,13 +156,17 @@ class StatusPill(QLabel):
 
 
 class FormatPill(QLabel):
-    """格式指示胶囊（v0.7.2 Feat5）：显示「.SRC → .TGT」。中性浅灰样式。"""
+    """格式指示胶囊（v0.7.2 Feat5）：显示「.SRC → .TGT」。
+
+    v0.7.3 调整2：底色由中性浅灰 #ECEFF1 改为品牌绿 #3EB68F，
+    文字随之改为近白，保证对比度可读。
+    """
 
     def __init__(self, text: str = "", parent=None):
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet(
-            "color:#424242; background:#eceff1; border-radius:9px;"
+            "color:#F5F5F5; background:#3EB68F; border-radius:9px;"
             " padding:2px 9px; font-weight:600; font-size:11px;"
         )
         self.setText(text)
@@ -191,7 +195,6 @@ class QueueItemWidget(ThemedCard):
         self.iconLbl.setPixmap(icon.icon(accent_color()).pixmap(20, 20))
         self.nameLbl = BodyLabel(_basename(self._task.input_path))
         self.nameLbl.setObjectName("queueName")
-        self.nameLbl.setToolTip(self._task.input_path)
         top.addWidget(self.iconLbl)
         top.addWidget(self.nameLbl, 1)
         # v0.7.2 Feat5：格式指示胶囊 .SRC → .TGT（如 .JPG → .PNG）
@@ -212,11 +215,11 @@ class QueueItemWidget(ThemedCard):
         self.detailLbl.setWordWrap(True)
         self.detailLbl.setStyleSheet("color: #000000; background: transparent;")
 
-        self.retryBtn = icon_btn(FIF.SYNC, tr("convert.action.retry"), self)
+        self.retryBtn = icon_btn(FIF.SYNC, self)
         self.retryBtn.clicked.connect(lambda: self.retryRequested.emit(self._task.id))
-        self.copyBtn = icon_btn(FIF.COPY, tr("convert.action.copy"), self)
+        self.copyBtn = icon_btn(FIF.COPY, self)
         self.copyBtn.clicked.connect(self._copy_path)
-        self.delBtn = icon_btn(FIF.DELETE, tr("convert.action.remove"), self)
+        self.delBtn = icon_btn(FIF.DELETE, self)
         self.delBtn.clicked.connect(lambda: self.removeRequested.emit(self._task.id))
 
         # v0.7.2 Feat6：大小对比文本与操作按钮同行右对齐，按钮水平对齐文本行
@@ -313,9 +316,6 @@ class QueueItemWidget(ThemedCard):
 
     def retranslate(self):
         self.pill.set_status(self._task.status)
-        self.retryBtn.setToolTip(tr("convert.action.retry"))
-        self.copyBtn.setToolTip(tr("convert.action.copy"))
-        self.delBtn.setToolTip(tr("convert.action.remove"))
         self.set_status(self._task.status, self._task.error)
 
     def _copy_path(self):

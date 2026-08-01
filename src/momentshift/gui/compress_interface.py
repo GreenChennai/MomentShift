@@ -11,13 +11,13 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QFileDialog, QScrollArea,
-    QSlider, QLabel, QMessageBox, QSpinBox,
+    QSlider, QLabel, QMessageBox, QSpinBox, QFrame,
 )
 from PyQt6.QtCore import Qt
 
 from qfluentwidgets import (
     FluentIcon as FIF, PushButton, PrimaryPushButton, SwitchButton, ComboBox,
-    CaptionLabel, StrongBodyLabel,
+    CaptionLabel, StrongBodyLabel, BodyLabel,
 )
 
 from ..core.config import cfg
@@ -32,12 +32,14 @@ from ..i18n.translator import tr
 log = get_logger("compress")
 from .theme import (
     ThemedCard, CollapsibleCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
-    muted_text, sub_text, CARD_MARGIN, scrollbar_qss,
+    muted_text, sub_text, accent_color, CARD_MARGIN, scrollbar_qss,
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
 from .help_bubble import attach_help
-from .queue_widget import ProgressBar, StatusPill, human_size
+from .queue_widget import (
+    ProgressBar, StatusPill, FormatPill, human_size, format_size_compare,
+)
 
 
 # =============================================================================
@@ -105,26 +107,38 @@ BACKEND_NAMES = {"oxipng": "oxipng", "jpegoptim": "jpegoptim", "pillow": "Pillow
 
 
 class CompressItemWidget(ThemedCard):
-    """压缩队列中的单个任务卡片。"""
+    """压缩队列中的单个任务卡片。
+
+    v0.7.3 Bug4 重构：结构与「转换队列」的 QueueItemWidget 对齐 ——
+    类别图标 + 文件名 + 格式胶囊 + 状态胶囊 / 进度条 / 大小对比行 + 操作按钮。
+    功能不变，仅统一视觉；同时修复完成时进度条停在旧值不满格的问题。
+    """
     removeRequested = Signal(str)
 
-    def __init__(self, item_id: str, src: str, selected: str = "auto", parent=None):
+    def __init__(self, item_id: str, src: str, selected: str = "auto",
+                 target: str = "same", parent=None):
         super().__init__(parent)
         self._id = item_id
         self._src = src
         self._saved = 0
         self._status = "pending"
         self._selected = selected  # 用户选择的压缩程序（用于判断是否"自动切换"）
+        self._target = target
+        self._src_size = self._read_src_size()
 
         vb = QVBoxLayout(self)
         vb.setContentsMargins(14, 12, 14, 12)
         vb.setSpacing(8)
 
         top = QHBoxLayout()
-        self.nameLbl = QLabel(Path(src).name)
+        self.iconLbl = QLabel()
+        self.iconLbl.setPixmap(FIF.PHOTO.icon(accent_color()).pixmap(20, 20))
+        top.addWidget(self.iconLbl)
+        self.nameLbl = BodyLabel(Path(src).name)
         self.nameLbl.setObjectName("queueName")
-        self.nameLbl.setToolTip(src)
         top.addWidget(self.nameLbl, 1)
+        self.fmtPill = FormatPill(self._format_text())
+        top.addWidget(self.fmtPill)
         self.pill = StatusPill("pending")
         top.addWidget(self.pill)
         vb.addLayout(top)
@@ -132,11 +146,14 @@ class CompressItemWidget(ThemedCard):
         self.prog = ProgressBar()
         vb.addWidget(self.prog)
 
+        # 大小对比行（黑字 + 百分比绿/红），与操作按钮同行右对齐
         bottom = QHBoxLayout()
         self.detailLbl = CaptionLabel()
-        self.detailLbl.setStyleSheet(f"color: {muted_text()};")
+        self.detailLbl.setObjectName("queueStatus")
+        self.detailLbl.setWordWrap(True)
+        self.detailLbl.setStyleSheet("color: #000000; background: transparent;")
         bottom.addWidget(self.detailLbl, 1)
-        self.delBtn = icon_btn(FIF.DELETE, tr("compress.action.remove"))
+        self.delBtn = icon_btn(FIF.DELETE)
         self.delBtn.clicked.connect(lambda: self.removeRequested.emit(self._id))
         bottom.addWidget(self.delBtn)
         vb.addLayout(bottom)
@@ -144,6 +161,25 @@ class CompressItemWidget(ThemedCard):
         self.set_status("pending")
         self.set_progress(0)
 
+    # -- 辅助 -----------------------------------------------------------
+    def _read_src_size(self) -> int:
+        try:
+            p = Path(self._src)
+            return p.stat().st_size if p.exists() else 0
+        except OSError:
+            return 0
+
+    def _format_text(self) -> str:
+        """格式胶囊文案：``.PNG → .JPG``；目标为「与源相同」时两端一致。"""
+        src_ext = Path(self._src).suffix.upper().lstrip(".")
+        tgt = src_ext if self._target in ("", "same") else self._target.upper()
+        return f".{src_ext} → .{tgt}"
+
+    def set_target(self, target: str):
+        self._target = target
+        self.fmtPill.setText(self._format_text())
+
+    # -- 状态 -----------------------------------------------------------
     def set_progress(self, pct: int):
         self.prog.set_value(pct)
 
@@ -151,6 +187,7 @@ class CompressItemWidget(ThemedCard):
                    backend: str = ""):
         self._status = status
         if status == "done":
+            self._saved = saved
             # v0.7.1：若实际使用的后端与所选不同（自动切换），提示具体程序名
             if (backend and self._selected in ("oxipng", "jpegoptim", "pillow")
                     and backend != self._selected):
@@ -159,10 +196,13 @@ class CompressItemWidget(ThemedCard):
                     "done_sw", text=f"{name} {tr('compress.done.by')}")
             else:
                 self.pill.set_status("done")
-            src_size = Path(self._src).stat().st_size if Path(self._src).exists() else 0
-            if saved:
+            # v0.7.3 Bug4：完成时进度条必须走满，否则停在最后一次回调的旧值
+            self.prog.set_error(False)
+            self.prog.set_value(100)
+            before = self._src_size or self._read_src_size()
+            if saved and before:
                 self.detailLbl.setText(
-                    f"{human_size(src_size)} → {human_size(src_size - saved)}")
+                    format_size_compare(before, before - saved))
             else:
                 self.detailLbl.setText(tr("compress.done"))
         else:
@@ -170,12 +210,14 @@ class CompressItemWidget(ThemedCard):
             self.prog.set_error(status == "failed")
             if status == "failed":
                 self.detailLbl.setText((detail or tr("compress.failed"))[:60])
+            elif status == "running":
+                self.detailLbl.setText("")
             else:
+                self.prog.set_value(0)
                 self.detailLbl.setText("")
 
     def retranslate(self):
         self.pill.set_status(self._status)
-        self.delBtn.setToolTip(tr("compress.action.remove"))
 
 
 class CompressListWidget(QWidget):
@@ -225,15 +267,21 @@ class CompressListWidget(QWidget):
         self.statDone.setText(tr("compress.queue.stats.done", n=done))
         self.statErr.setText(tr("compress.queue.stats.error", n=failed))
 
-    def add_item(self, item_id: str, src: str, selected: str = "auto"):
+    def add_item(self, item_id: str, src: str, selected: str = "auto",
+                 target: str = "same"):
         if item_id in self.items:
             return
-        w = CompressItemWidget(item_id, src, selected)
+        w = CompressItemWidget(item_id, src, selected, target)
         w.removeRequested.connect(self.removeRequested)
         self.items[item_id] = w
         self.listLayout.insertWidget(self.listLayout.count() - 1, w)
         self._refresh_empty()
         self._update_stats()
+
+    def set_target(self, target: str):
+        """目标格式变更后同步刷新所有未开始任务的格式胶囊。"""
+        for w in self.items.values():
+            w.set_target(target)
 
     def set_progress(self, item_id: str, pct: int):
         w = self.items.get(item_id)
@@ -328,6 +376,7 @@ class CompressInterface(InterfaceBase):
         # =====================================================================
         scard, svb, self.tSettings = self._make_card(
             "compress.settings.title", collapsed=True)
+        self._settingsCard = scard
 
         # 压缩后端选择（v0.7.0：auto / oxipng / jpegoptim / pillow）
         self.programCombo = self._make_combo(
@@ -355,23 +404,23 @@ class CompressInterface(InterfaceBase):
         self.targetCombo = self._make_combo(
             [(tr("compress.target.same"), "same"), ("PNG", "png"), ("JPG", "jpg"),
              ("WebP", "webp"), ("BMP", "bmp"), ("TIFF", "tiff")],
-            self._target, lambda v: setattr(self, "_target", v))
+            self._target, self._on_target)
         fq.addWidget(field_row(tr("compress.target"), self.targetCombo))
         svb.addWidget(self.paramsGroup)
 
         # 各后端专用参数组（v0.7.0：三后端独立面板）
-        # v0.7.2 F1：auto 模式下三个组直接堆进 svb 会挤在一起，
-        # 这里统一收进 _backend_container（纵向间距 16），三后端同显时留出呼吸感。
+        # v0.7.3 Bug3：auto 模式三组同显时，除了容器间距，还要有分区小标题，
+        # 否则十几行参数视觉上连成一片，分不清哪几行属于哪个后端。
         self._backend_container = QWidget()
         self._backend_container.setStyleSheet("background: transparent;")
         _bcont_ly = QVBoxLayout(self._backend_container)
         _bcont_ly.setContentsMargins(0, 0, 0, 0)
-        _bcont_ly.setSpacing(16)
-        self.oxipngGroup = self._build_oxipng()
+        _bcont_ly.setSpacing(20)
+        self.oxipngGroup = self._backend_section("oxipng", self._build_oxipng())
         _bcont_ly.addWidget(self.oxipngGroup)
-        self.joGroup = self._build_jpegoptim()
+        self.joGroup = self._backend_section("jpegoptim", self._build_jpegoptim())
         _bcont_ly.addWidget(self.joGroup)
-        self.pilGroup = self._build_pillow()
+        self.pilGroup = self._backend_section("pillow", self._build_pillow())
         _bcont_ly.addWidget(self.pilGroup)
         svb.addWidget(self._backend_container)
 
@@ -388,7 +437,7 @@ class CompressInterface(InterfaceBase):
         svb.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(self._folder)
         self.folderEdit.setReadOnly(True)
-        self.browseBtn = icon_btn(FIF.FOLDER, tr("compress.output.browse"))
+        self.browseBtn = icon_btn(FIF.FOLDER)
         self.browseBtn.clicked.connect(self._pick_output)
         frow = QHBoxLayout()
         frow.addWidget(self.folderEdit, 1)
@@ -437,6 +486,27 @@ class CompressInterface(InterfaceBase):
     # =========================================================================
     # 后端专用参数面板
     # =========================================================================
+
+    def _backend_section(self, key: str, inner: QWidget) -> QWidget:
+        """给后端参数组包一层带小标题的分区（标题仅 auto 模式显示）。"""
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 0, 0, 0)
+        ly.setSpacing(10)
+        hdr = StrongBodyLabel(tr(f"advanced.compression.{key}"))
+        hdr.setStyleSheet(
+            f"color: {sub_text()}; background: transparent;")
+        ly.addWidget(hdr)
+        rule = QFrame()
+        rule.setFrameShape(QFrame.Shape.HLine)
+        rule.setFixedHeight(1)
+        rule.setStyleSheet("background: #E0E0E0; border: none;")
+        ly.addWidget(rule)
+        ly.addWidget(inner)
+        w._header = hdr
+        w._rule = rule
+        return w
 
     def _build_oxipng(self):
         grp = self._tool_opts["oxipng"]
@@ -616,17 +686,22 @@ class CompressInterface(InterfaceBase):
 
     def _on_program(self, p):
         self._program = p
-        # 容器始终可见；auto 显示全部三个组（纵向留白），指定程序只留对应组
+        auto = p == "auto"
+        # 容器始终可见；auto 显示全部三个组（带分区标题），指定程序只留对应组
         self._backend_container.setVisible(True)
-        self.oxipngGroup.setVisible(p == "oxipng")
-        self.joGroup.setVisible(p == "jpegoptim")
-        self.pilGroup.setVisible(p == "pillow")
-        if p == "auto":
-            self.oxipngGroup.setVisible(True)
-            self.joGroup.setVisible(True)
-            self.pilGroup.setVisible(True)
-        self._route_hint.setVisible(p == "auto")
+        for key, grp_w in (("oxipng", self.oxipngGroup),
+                           ("jpegoptim", self.joGroup),
+                           ("pillow", self.pilGroup)):
+            grp_w.setVisible(auto or p == key)
+            grp_w._header.setVisible(auto)
+            grp_w._rule.setVisible(auto)
+        self._route_hint.setVisible(auto)
         self._refresh_tool_status()
+        # v0.7.3 Bug3：可见控件数量变了，解除折叠卡片残留的 maximumHeight 上限，
+        # 否则新出现的条目会被压扁成一团。
+        card = getattr(self, "_settingsCard", None)
+        if card is not None:
+            card.refresh_content_height()
 
     def _refresh_tool_status(self):
         if self._program in ("pillow", "auto"):
@@ -693,10 +768,8 @@ class CompressInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            d = QFileDialog.getExistingDirectory(
-                None, tr("compress.output.browse"), self._folder or "",
-                QFileDialog.DontUseNativeDialog,
-                )
+            d = self._ask_directory(tr("compress.output.browse"),
+                                    self._folder or "")
             if d:
                 self._folder = d
                 cfg.compressFolder.value = d
@@ -736,11 +809,8 @@ class CompressInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            flt = "Images (" + " ".join(f"*{e}" for e in sorted(IMAGE_EXTS)) + ")"
-            files, _ = QFileDialog.getOpenFileNames(
-                None, tr("compress.add.files"), "", flt, "",
-                QFileDialog.DontUseNativeDialog,
-            )
+            files = self._ask_open_files(
+                tr("compress.add.files"), IMAGE_EXTS, "Images")
             if files:
                 self._on_files(files)
         finally:
@@ -752,20 +822,21 @@ class CompressInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            d = QFileDialog.getExistingDirectory(
-                None, tr("compress.add.folder"), "",
-                QFileDialog.DontUseNativeDialog,
-                )
+            d = self._ask_directory(tr("compress.add.folder"))
             if d:
                 self._on_files([d])
         finally:
             self._picking = False
 
+    def _on_target(self, v: str):
+        self._target = v
+        self.listWidget.set_target(v)
+
     def _add_item(self, src):
         if src in self._items:
             return
         self._items[src] = {"src": src, "status": "pending", "saved": 0}
-        self.listWidget.add_item(src, src, self._program)
+        self.listWidget.add_item(src, src, self._program, self._target)
 
     # =========================================================================
     # 输出路径计算
@@ -896,6 +967,11 @@ class CompressInterface(InterfaceBase):
             ("PNG", "png"), ("JPG", "jpg"),
             ("WebP", "webp"), ("BMP", "bmp"), ("TIFF", "tiff"),
         ])
+        # v0.7.3 Bug3：后端分区小标题同步语言
+        for key, grp_w in (("oxipng", self.oxipngGroup),
+                           ("jpegoptim", self.joGroup),
+                           ("pillow", self.pilGroup)):
+            grp_w._header.setText(tr(f"advanced.compression.{key}"))
         self._apply_output_mode()
         self._restyle_switches()
         self.listWidget.retranslate()

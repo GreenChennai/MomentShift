@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from PyQt6.QtGui import QColor, QPixmap, QPainter, QPen, QRegion
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl, QTimer
 from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton
 from qfluentwidgets import FluentIcon as FIF, StrongBodyLabel, CaptionLabel
 
@@ -203,11 +203,18 @@ class DropArea(ThemedCard):
             event.ignore()
 
     def dropEvent(self, event: QDropEvent):
+        """接收拖入的文件。
+
+        v0.7.3 Bug1：dropEvent 由 ``IDropTarget::Drop`` 同步调用，而资源管理器
+        的 ``DoDragDrop`` 会阻塞等待它返回。若在此直接 emit，下游立刻弹出模态
+        对话框（转换设置 / 文件选择器），Drop 永不返回 → 源 Explorer 窗口彻底
+        卡死。因此这里只接受事件并把处理推迟到下一轮事件循环。
+        """
         self._hover = False
         self._apply_style()
         paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
         if paths:
             event.acceptProposedAction()
-            self.filesDropped.emit(paths)
+            QTimer.singleShot(0, lambda p=paths: self.filesDropped.emit(p))
         else:
             event.ignore()

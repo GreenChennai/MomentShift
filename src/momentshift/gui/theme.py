@@ -213,7 +213,6 @@ class CollapsibleCard(ThemedCard):
         self._toggleBtn.setIconSize(QSize(self._ICON_W, self._ICON_H))
         self._toggleBtn.setFixedSize(30, 30)
         self._toggleBtn.clicked.connect(self.toggle)
-        self._toggleBtn.setToolTip("")
         hb.addWidget(self._toggleBtn)
 
         self._outer.addWidget(self._bar)
@@ -239,13 +238,29 @@ class CollapsibleCard(ThemedCard):
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
 
         if collapsed:
-            self._apply_collapsed()
+            self._collapse_instant()
+
+    def _collapse_instant(self):
+        """初始化时的即时折叠（v0.7.3 Bug2）。
+
+        走 ``_apply_collapsed`` 会启动一段 250ms 的 maximumHeight 动画，
+        起点是控件默认的 16777215 —— 于是卡片首次显示时会先整个铺开再收拢，
+        表现为「展开 → 收起」的闪烁。构造期直接置位，不跑动画。
+        """
+        self._body.setMaximumHeight(0)
+        self._body.setVisible(False)
+        self._toggleBtn.setIcon(self._toggle_icon())
 
     def _toggle_icon(self) -> QIcon:
         path = ICON_EXPAND if self._collapsed else ICON_COLLAPSE
         return QIcon(path) if os.path.exists(path) else QIcon()
 
     def _anim_target(self, target_h: int):
+        if self._anim is not None:
+            # 中途停掉上一段动画，避免它的 finished 回调污染新状态
+            self._anim.stop()
+            self._anim.deleteLater()
+            self._anim = None
         cur = self._body.maximumHeight()
         real_target = target_h
         if target_h <= 0:
@@ -264,17 +279,22 @@ class CollapsibleCard(ThemedCard):
         self._anim.setStartValue(cur)
         self._anim.setEndValue(real_target)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.finished.connect(self._on_anim_finished)
         self._anim.start()
+
+    def _on_anim_finished(self):
+        """按结束时的实际状态收尾，避免快速连点造成状态错位。"""
+        if self._collapsed:
+            self._body.setVisible(False)
+        else:
+            # 解除高度上限，内容后续变化（如切换格式）不会被裁剪
+            self._body.setMaximumHeight(16777215)
 
     def _apply_collapsed(self):
         h = self._body.height()
         if h > 0:
             self._content_height = h
         self._anim_target(0)
-        if self._anim is not None:
-            self._anim.finished.connect(lambda: self._body.setVisible(False))
-        else:
-            self._body.setVisible(False)
         self._toggleBtn.setIcon(self._toggle_icon())
 
     def _apply_expanded(self):
@@ -305,6 +325,17 @@ class CollapsibleCard(ThemedCard):
 
     def isCollapsed(self) -> bool:
         return self._collapsed
+
+    def refresh_content_height(self):
+        """内容动态变化后调用，展开态下解除 maximumHeight 上限。
+
+        v0.7.3 Bug3：展开动画结束时 maximumHeight 停在当时的内容高度；
+        之后若再显示更多控件（例如压缩后端切到「自动选择」，三组参数同时出现），
+        布局会被这个陈旧上限压扁 —— 表现为所有条目挤成一团。
+        """
+        self._content_height = 0
+        if not self._collapsed:
+            self._body.setMaximumHeight(16777215)
 
 # =========================================================================
 # 共享 UI 构建器
@@ -359,11 +390,9 @@ def ghost_btn(text: str, icon=None, parent=None) -> TransparentPushButton:
         return TransparentPushButton(text, icon=icon, parent=parent)
     return TransparentPushButton(text, parent=parent)
 
-def icon_btn(icon, tooltip: str = "", parent=None) -> TransparentToolButton:
-    btn = TransparentToolButton(icon, parent)
-    if tooltip:
-        btn.setToolTip(tooltip)
-    return btn
+def icon_btn(icon, parent=None) -> TransparentToolButton:
+    """图标按钮。v0.7.3 调整2：全局取消鼠标悬停提示，不再接受 tooltip 参数。"""
+    return TransparentToolButton(icon, parent)
 
 def scrollbar_qss() -> str:
     handle = "rgba(140, 140, 140, 0.6)"
@@ -429,32 +458,8 @@ def _patch_switch_button_label_background():
     SwitchButton.setTextColor = _set_text_color
 
 
-def _patch_tooltip_style():
-    """v0.7.2 F4：确保 qfluentwidgets 的 ``ToolTip`` 也是浅底深字，且文字可见。
-
-    本项目图标按钮未安装 ``ToolTipFilter``（走原生 QToolTip，已由 __main__ 的
-    全局 QSS 修复），但为稳妥起见，这里也对 qfluentwidgets 自带 ``ToolTip``
-    做同样的配色覆盖，避免任何路径下出现「黑块无文字」。
-    """
-    try:
-        from qfluentwidgets.components.widgets.tool_tip import ToolTip
-    except Exception:
-        return
-    _orig = ToolTip._ToolTip__setQss
-    _OVERRIDE = (
-        "ToolTip > QFrame#container {"
-        " background-color: #ffffff; border: 1px solid #d0d0d0;"
-        " border-radius: 8px;"
-        "}"
-        "ToolTip QLabel#contentLabel {"
-        " color: #212121; background-color: transparent;"
-        "}"
-    )
-    def _set_qss(self):
-        _orig(self)
-        self.setStyleSheet((self.styleSheet() or "") + _OVERRIDE)
-    ToolTip._ToolTip__setQss = _set_qss
+# v0.7.3 调整2：软件已全局取消鼠标悬停提示，原先用于修正 ToolTip 配色的
+# _patch_tooltip_style() 补丁随之移除（没有提示就不存在「黑块」问题）。
 
 _patch_fluent_label_background()
 _patch_switch_button_label_background()
-_patch_tooltip_style()

@@ -247,9 +247,9 @@ class ConvertSetupDialog(QDialog):
                 f"color: {acc}; font-weight: 700; font-size: 11px;"
                 f" background: rgba(35,134,54,0.08); border-radius: 3px; padding: 1px 4px;")
             name = QLabel(Path(p).name)
-            name.setStyleSheet("color: #333;"); name.setToolTip(p)
+            name.setStyleSheet("color: #333;")
             hb.addWidget(ext_lbl); hb.addWidget(name, 1)
-            rm = icon_btn(FIF.DELETE, tr("convert.action.remove"))
+            rm = icon_btn(FIF.DELETE)
             rm.setFixedSize(26, 26)
             rm.clicked.connect(lambda _, path=p: self._remove(path))
             hb.addWidget(rm)

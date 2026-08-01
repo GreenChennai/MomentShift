@@ -108,7 +108,6 @@ class ConvertInterface(InterfaceBase):
         self.folderEdit = QLineEdit(cfg.outputFolder.value)
         self.folderEdit.setReadOnly(True)
         self.browseBtn = TransparentToolButton(FIF.FOLDER, self)
-        self.browseBtn.setToolTip(tr("convert.output.browse"))
         self.browseBtn.setFixedSize(36, 36)
         self.browseBtn.clicked.connect(self._pick_output)
         frow = QHBoxLayout()
@@ -196,11 +195,7 @@ class ConvertInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            flt = "Media (" + " ".join(f"*{e}" for e in sorted(_CONVERT_EXTS)) + ")"
-            files, _ = QFileDialog.getOpenFileNames(
-                None, tr("convert.add.files"), "", flt, "",
-                QFileDialog.DontUseNativeDialog,
-            )
+            files = self._ask_open_files(tr("convert.add.files"), _CONVERT_EXTS)
             if files:
                 self._open_setup(files)
         finally:
@@ -212,10 +207,7 @@ class ConvertInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            d = QFileDialog.getExistingDirectory(
-                None, tr("convert.add.folder"), "",
-                QFileDialog.DontUseNativeDialog,
-                )
+            d = self._ask_directory(tr("convert.add.folder"))
             if d:
                 self._open_setup([d])
         finally:
@@ -246,10 +238,8 @@ class ConvertInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            d = QFileDialog.getExistingDirectory(
-                None, tr("convert.output.browse"), cfg.outputFolder.value or "",
-                QFileDialog.DontUseNativeDialog,
-                )
+            d = self._ask_directory(tr("convert.output.browse"),
+                                    cfg.outputFolder.value or "")
             if d:
                 cfg.outputFolder.value = d
                 qconfig.save()
