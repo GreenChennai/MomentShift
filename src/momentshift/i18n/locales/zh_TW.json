@@ -539,5 +539,20 @@
   "engine.help.tta_temporal": "時序 TTA：跨幀聯合增強，提升影片穩定性",
   "engine.help.syncgap": "幀對齊同步間隙參數，影響多幀對齊精度",
   "engine.expand": "展開",
-  "engine.collapse": "收起"
+  "engine.collapse": "收起",
+  "quick.compress.title": "創建圖片壓縮任務",
+  "quick.upscale.title": "創建圖片放大任務",
+  "quick.files_to_process": "待處理檔案",
+  "quick.cancel": "取消",
+  "quick.confirm": "開始",
+  "progress.title": "任務進度",
+  "progress.status.pending": "等待中",
+  "progress.status.running": "運行中",
+  "progress.status.done": "已完成",
+  "progress.status.failed": "失敗",
+  "progress.total": "總數",
+  "progress.done": "完成",
+  "progress.failed": "失敗",
+  "settings.progress_window": "顯示任務進度視窗",
+  "settings.progress_window_hint": "在螢幕右下角顯示任務進度視窗"
 }

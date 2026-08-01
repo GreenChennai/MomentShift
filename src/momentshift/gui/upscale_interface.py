@@ -248,8 +248,6 @@ class UpscaleItemWidget(ThemedCard):
         self.nameLbl.set_text(Path(src).name)
         self.nameLbl.setObjectName("queueName")
         top.addWidget(self.nameLbl, 1)
-        # v0.7.7 修复1：用 spacer 吸收多余空间，保证后缀/状态胶囊按文字定宽
-        top.addStretch(1)
         # v0.7.8 调整1：格式胶囊改为任务耗时显示
         self.timeLbl = QLabel(tr("upscale.elapsed.pending"))
         self.timeLbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -470,7 +468,7 @@ class UpscaleInterface(InterfaceBase):
 
         # -- 「放大模型」：只列已安装的引擎 --
         self.modelCombo = ComboBox()
-        self.modelCombo.setMaximumWidth(260)   # v0.7.8 修复2：防长名称撑出 UI
+        # v0.7.9 修复5：不设固定最大宽度，让 field_row 决定（对齐下方设置条目）
         self.modelCombo.currentTextChanged.connect(self._on_engine_change)
         self.modelRow = field_row(tr("upscale.model"), self.modelCombo)
         setvb.addWidget(self.modelRow)

@@ -349,7 +349,7 @@ def _compress_oxipng(src: str, dst: str, fmt: str, quality: int, opts: dict) -> 
         args.append(f"--strip={strip_val}")
     filt = opts.get("filter")
     if filt is not None and 0 <= int(filt) <= 5:
-        args.append(f"--filter={int(filt)}")
+        args.append(f"--filters={int(filt)}")
     zc = opts.get("zc")
     if zc is not None and 1 <= int(zc) <= 9:
         args.extend(["--zc", str(int(zc))])

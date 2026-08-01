@@ -196,8 +196,6 @@ class QueueItemWidget(ThemedCard):
         self.nameLbl.setObjectName("queueName")
         top.addWidget(self.iconLbl)
         top.addWidget(self.nameLbl, 1)
-        # v0.7.7 修复1：用 spacer 吸收多余空间，保证后缀/状态胶囊按文字定宽
-        top.addStretch(1)
         # v0.7.2 Feat5：格式指示胶囊 .SRC → .TGT（如 .JPG → .PNG）
         tgt = (self._task.target_format or "").upper()
         self.fmtPill = FormatPill(f".{src_ext} → .{tgt}")

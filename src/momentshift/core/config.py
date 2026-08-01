@@ -115,6 +115,7 @@ class Config(QConfig):
     quickLaunchConvert = ConfigItem("QuickLaunch", "Convert", False)
     quickLaunchCompress = ConfigItem("QuickLaunch", "Compress", False)
     quickLaunchUpscale = ConfigItem("QuickLaunch", "Upscale", False)
+    quickLaunchProgressWindow = ConfigItem("QuickLaunch", "ProgressWindow", True)
 
 
 cfg = Config()

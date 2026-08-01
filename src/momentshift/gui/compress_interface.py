@@ -139,8 +139,6 @@ class CompressItemWidget(ThemedCard):
         self.nameLbl.set_text(Path(src).name)
         self.nameLbl.setObjectName("queueName")
         top.addWidget(self.nameLbl, 1)
-        # v0.7.7 修复1：用 spacer 吸收多余空间，保证后缀/状态胶囊按文字定宽
-        top.addStretch(1)
         self.fmtPill = FormatPill(self._format_text())
         top.addWidget(self.fmtPill)
         self.pill = StatusPill("pending")
@@ -192,21 +190,22 @@ class CompressItemWidget(ThemedCard):
         self._status = status
         if status == "done":
             self._saved = saved
-            # v0.7.1：若实际使用的后端与所选不同（自动切换），提示具体程序名
+            # v0.7.9 修复4：tr('compress.done.by') 含 {backend} 占位符，必须 .format() 替换
             if (backend and self._selected in ("oxipng", "jpegoptim", "pillow")
                     and backend != self._selected):
                 name = BACKEND_NAMES.get(backend, backend)
                 self.pill.set_status(
-                    "done_sw", text=f"{name} {tr('compress.done.by')}")
+                    "done_sw", text=tr('compress.done.by').format(backend=name))
             else:
                 self.pill.set_status("done")
             # v0.7.3 Bug4：完成时进度条必须走满，否则停在最后一次回调的旧值
             self.prog.set_error(False)
             self.prog.set_value(100)
             before = self._src_size or self._read_src_size()
-            if saved and before:
-                self.detailLbl.setText(
-                    format_size_compare(before, before - saved))
+            if before:
+                # v0.7.9 修复3：无论 saved 是否为零，都显示大小对比
+                after = before - saved if saved else before
+                self.detailLbl.setText(format_size_compare(before, after))
             else:
                 self.detailLbl.setText(tr("compress.done"))
         else:

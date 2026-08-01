@@ -539,5 +539,20 @@
   "engine.help.tta_temporal": "Temporal TTA: joint cross-frame enhancement for steadier video.",
   "engine.help.syncgap": "Frame-alignment sync-gap parameter affecting multi-frame alignment.",
   "engine.expand": "Expand",
-  "engine.collapse": "Collapse"
+  "engine.collapse": "Collapse",
+  "quick.compress.title": "Create Image Compression Task",
+  "quick.upscale.title": "Create Image Upscale Task",
+  "quick.files_to_process": "Files to process",
+  "quick.cancel": "Cancel",
+  "quick.confirm": "Start",
+  "progress.title": "Task Progress",
+  "progress.status.pending": "Pending",
+  "progress.status.running": "Running",
+  "progress.status.done": "Done",
+  "progress.status.failed": "Failed",
+  "progress.total": "Total",
+  "progress.done": "Done",
+  "progress.failed": "Failed",
+  "settings.progress_window": "Show task progress window",
+  "settings.progress_window_hint": "Show task progress window at bottom-right of screen"
 }
