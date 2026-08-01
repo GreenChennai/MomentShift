@@ -18,6 +18,7 @@ from qfluentwidgets import (
 )
 from ..core.config import cfg
 from ..i18n.translator import tr, translator, LocaleKey
+from ..core.logger import get_logger
 from qfluentwidgets import ConfigItem, qconfig
 from .theme import WINDOW_BG
 
@@ -47,6 +48,7 @@ class MainWindow(FluentWindow):
         self._connect_config()
         self._force_quit = False
         self._init_tray()
+        self._init_quick_ipc()   # v0.7.16：接收快速调用 IPC 请求
         QTimer.singleShot(0, self._bootstrap)
 
     def _connect_config(self):
@@ -168,6 +170,53 @@ class MainWindow(FluentWindow):
         # 双击托盘图标 → 显示主窗口 (v0.2.7 #3 + v0.3.2 确认)
         self.tray.activated.connect(self._tray_activated)
         self.tray.show()
+
+    # =========================================================================
+    # 快速调用 IPC（v0.7.16）：已运行实例接收右键快速调用请求
+    # =========================================================================
+    _QUICK_IPC_NAME = "MomentShift_QuickIPC_v0716"
+
+    def _init_quick_ipc(self):
+        from PyQt6.QtNetwork import QLocalServer
+        import json
+        self._ipc_server = QLocalServer(self)
+        self._ipc_server.removeServer(self._QUICK_IPC_NAME)
+        if self._ipc_server.listen(self._QUICK_IPC_NAME):
+            self._ipc_server.newConnection.connect(self._on_ipc_connection)
+            get_logger("app").info("quick IPC server listening on %s",
+                                   self._QUICK_IPC_NAME)
+        else:
+            get_logger("app").warning("quick IPC server failed to listen")
+
+    def _on_ipc_connection(self):
+        conn = self._ipc_server.nextPendingConnection()
+        if conn is None:
+            return
+        conn.readyRead.connect(lambda c=conn: self._on_ipc_data(c))
+
+    def _on_ipc_data(self, conn):
+        import json
+        try:
+            raw = bytes(conn.readAll()).decode("utf-8", errors="replace")
+            req = json.loads(raw)
+            task = req.get("task", "")
+            files = req.get("files", [])
+            get_logger("quick").info(
+                "IPC request: task=%s files=%d", task, len(files))
+            if task and files:
+                from ..quick_runner import handle_ipc_request
+                self.show()
+                self.raise_()
+                self.activateWindow()
+                handle_ipc_request(task, files, self, self.manager)
+        except Exception:
+            get_logger("app").exception("IPC quick request failed")
+        finally:
+            try:
+                conn.disconnectFromServer()
+                conn.deleteLater()
+            except Exception:
+                pass
 
     def _tray_show(self):
         self.show()

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import sys
+import json
 from pathlib import Path
 
 from PyQt6.QtCore import QTimer, QCoreApplication, Qt
@@ -77,11 +78,79 @@ def _fatal(msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+_QUICK_IPC_NAME = "MomentShift_QuickIPC_v0716"
+
+
+def _try_forward_to_running(task: str, files: list[str]) -> bool:
+    """若已有 MomentShift 实例在运行，通过 QLocalServer 转发请求并退出。
+
+    返回 True 表示已转发（本进程应直接退出）。
+    """
+    from PyQt6.QtNetwork import QLocalSocket
+    sock = QLocalSocket()
+    sock.connectToServer(_QUICK_IPC_NAME)
+    if not sock.waitForConnected(400):
+        return False
+    try:
+        payload = json.dumps({"task": task, "files": files}).encode("utf-8")
+        sock.write(payload)
+        sock.flush()
+        sock.waitForBytesWritten(600)
+        log.info("quick: forwarded %s (%d files) to running instance",
+                 task, len(files))
+        return True
+    except Exception:
+        log.exception("quick: forward failed")
+        return False
+    finally:
+        try:
+            sock.disconnectFromServer()
+        except Exception:
+            pass
+
+
+def handle_ipc_request(task: str, files: list[str], window, manager) -> None:
+    """已运行实例收到 IPC 快速调用请求：在当前主窗口弹设置窗并注入队列。"""
+    log.info("handle IPC: task=%s files=%d", task, len(files))
+    try:
+        if task == "convert":
+            _run_convert(files, window, manager)
+        elif task == "compress":
+            _run_compress(files, window)
+        elif task == "upscale":
+            _run_upscale(files, window)
+        else:
+            log.error("quick: unknown task %s", task)
+    except Exception:
+        import traceback
+        log.critical("quick IPC dispatch failed:\n%s", traceback.format_exc())
+        try:
+            QMessageBox.critical(None, APP_NAME, "快速调用失败，详见日志。")
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 def run_quick(task: str, files: list[str]) -> int:
-    """快速调用入口。启动主窗口并把任务注入对应队列。"""
+    """快速调用入口。
+
+    v0.7.16：遵守单实例 —— 已有实例则 IPC 转发后退出；
+    无实例才启动主窗口并把任务注入对应队列。
+    """
     log.info("Quick launch: task=%s files=%d first=%s", task, len(files),
              files[0] if files else "")
     app = _setup_app()
+
+    # 已有实例运行 → 转发请求并退出（不创建第二个主窗口/托盘）
+    if _try_forward_to_running(task, files):
+        return 0
+
+    # 无 IPC 转发（无实例或实例为旧版本）→ 获取单实例锁，防止后续重复启动
+    lock = _acquire_instance_lock()
+    if lock is None:
+        _fatal("MomentShift 已在运行，请从系统托盘唤起。")
+        return 1
+    _KEEP_ALIVE.append(lock)   # 持有锁，防止 GC 释放
 
     from .core.queue import ConversionManager
     from .gui.main_window import MainWindow
@@ -123,6 +192,21 @@ def run_quick(task: str, files: list[str]) -> int:
     return 0
 
 
+def _acquire_instance_lock():
+    """与主窗口共用同一把单实例锁（QSharedMemory）。
+
+    --quick 分支绕过了 __main__ 的单实例检查，这里补上，
+    保证快速调用启动的主窗口同样只允许一个实例。
+    """
+    from PyQt6.QtCore import QSharedMemory
+    sm = QSharedMemory("MomentShift_SingleInstance_v031")
+    if sm.attach():
+        return None      # 已有实例
+    if sm.create(1):
+        return sm
+    return None
+
+
 # ---------------------------------------------------------------------------
 def _run_convert(files, window, manager):
     """右键 → 转换：弹「转换设置」→ 注入主窗口转换队列 → 自动开始。"""
@@ -157,11 +241,20 @@ def _run_convert(files, window, manager):
     dlg = ConvertSetupDialog(None, manager, paths, {}, lambda: gpu, cat)
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
-    # 任务全部完成后系统通知
-    done = {"n": len(paths), "count": 0}
+    # v0.7.16：任务全部完成后系统通知（按实际入队数计数，允许 staging 删文件）
+    added = {"n": 0}
+    done = {"count": 0}
+    notified = {"ok": False}
+
+    def _on_task_added(t):
+        added["n"] += 1
+    manager.task_added.connect(_on_task_added)
+
     def _on_task_finished(tid, ok, saved, detail):
         done["count"] += 1
-        if done["count"] >= done["n"]:
+        if (not notified["ok"] and added["n"] > 0
+                and done["count"] >= added["n"]):
+            notified["ok"] = True
             _notify(window, tr("quick.notify.title"),
                     tr("quick.notify.convert_done"))
     manager.task_finished.connect(_on_task_finished)
@@ -169,8 +262,7 @@ def _run_convert(files, window, manager):
     def _on_dialog_finished(r: int):
         if r == 1:
             manager.start()   # 主窗口转换队列自动开始
-        else:
-            _fatal("已取消。")
+        # v0.7.16：取消不弹任何提示框，主窗口保留
     dlg.finished.connect(_on_dialog_finished)
     _KEEP_ALIVE.append(dlg)
     dlg.show()
@@ -211,8 +303,7 @@ def _run_compress(files, window):
 
     dlg = QuickCompressDialog(None, valid_files, _confirm)
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-    dlg.finished.connect(
-        lambda r: _fatal("已取消。") if r == 0 else None)
+    dlg.finished.connect(lambda r: None)   # v0.7.16：取消不弹提示框
     _KEEP_ALIVE.append(dlg)
     dlg.show()
 
@@ -260,7 +351,6 @@ def _run_upscale(files, window):
 
     dlg = QuickUpscaleDialog(None, valid_files, _confirm)
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-    dlg.finished.connect(
-        lambda r: _fatal("已取消。") if r == 0 else None)
+    dlg.finished.connect(lambda r: None)   # v0.7.16：取消不弹提示框
     _KEEP_ALIVE.append(dlg)
     dlg.show()

@@ -69,6 +69,7 @@ hiddenimports = [
     "momentshift.gui.setting_interface",
     "momentshift.gui.about_interface",
     "momentshift.gui.main_window",
+    "PyQt6.QtNetwork",   # v0.7.16：QLocalServer/QLocalSocket 单实例 IPC
     "momentshift.gui.theme",
     "momentshift.gui.quick_launch_interface",
     "momentshift.core.quick_launch",
