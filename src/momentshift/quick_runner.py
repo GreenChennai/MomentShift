@@ -56,7 +56,11 @@ def _setup_app() -> QApplication:
 
 
 def _notify(window, title: str, body: str) -> None:
-    """系统托盘通知任务完成。"""
+    """系统提示 + 提示音通知任务完成（v0.7.17：增加系统提示音）。"""
+    try:
+        QApplication.beep()   # 系统默认提示音
+    except Exception:
+        pass
     try:
         tray = getattr(window, "tray", None)
         if tray is None:
@@ -159,21 +163,25 @@ def run_quick(task: str, files: list[str]) -> int:
     window = MainWindow(manager)
     window.show()
 
-    # 确保目标大模块界面已构建（压缩/放大为懒加载）
-    target = {"compress": "compress", "upscale": "upscale"}.get(task)
-    if target:
-        for spec in window._lazy:
-            if spec[0] == target:
-                window._build_lazy(*spec)
-                break
-
     def _dispatch():
+        # v0.7.17：等待主窗口懒加载（压缩/放大）完成后再派发，避免提前
+        # addSubInterface 破坏导航模块顺序
         try:
             if task == "convert":
                 _run_convert(files, window, manager)
             elif task == "compress":
+                if window.compressInterface is None:
+                    for spec in window._lazy:
+                        if spec[0] == "compress":
+                            window._build_lazy(*spec)
+                            break
                 _run_compress(files, window)
             elif task == "upscale":
+                if window.upscaleInterface is None:
+                    for spec in window._lazy:
+                        if spec[0] == "upscale":
+                            window._build_lazy(*spec)
+                            break
                 _run_upscale(files, window)
             else:
                 log.error("quick: unknown task %s", task)
@@ -186,7 +194,8 @@ def run_quick(task: str, files: list[str]) -> int:
             except Exception:
                 pass
 
-    QTimer.singleShot(80, _dispatch)
+    # v0.7.17：300ms 确保主窗口懒加载（compress/upscale）全部完成，模块顺序不乱
+    QTimer.singleShot(300, _dispatch)
     app.exec()
     log.info("quick: %s done", task)
     return 0

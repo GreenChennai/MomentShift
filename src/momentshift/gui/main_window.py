@@ -205,9 +205,7 @@ class MainWindow(FluentWindow):
                 "IPC request: task=%s files=%d", task, len(files))
             if task and files:
                 from ..quick_runner import handle_ipc_request
-                self.show()
-                self.raise_()
-                self.activateWindow()
+                # v0.7.17：不弹前台、不抢焦点 —— 后台静默处理任务
                 handle_ipc_request(task, files, self, self.manager)
         except Exception:
             get_logger("app").exception("IPC quick request failed")
