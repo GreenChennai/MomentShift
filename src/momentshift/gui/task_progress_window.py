@@ -1,7 +1,8 @@
-"""任务进度窗口（v0.7.10 重设计）。
+"""任务进度窗口（v0.7.13 对齐队列卡片风格）。
 
 右下角悬浮卡片式窗口：统计栏 + 系统占用 + 任务列表（可折叠）。
-匹配 MomentShift 整体卡片风格，支持展开/折叠动画、自动关闭。
+任务行复用三大模块队列卡片的 StatusPill / ext_badge / 迷你进度条，
+数据链路走 taskAdded / taskProgress / taskFinished 信号。
 """
 from __future__ import annotations
 
@@ -19,13 +20,14 @@ from qfluentwidgets import FluentIcon as FIF, CaptionLabel, StrongBodyLabel
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, accent_color, muted_text, success_color, danger_color,
-    border_color, surface, CARD_MARGIN, text_strong,
+    border_color, surface, CARD_MARGIN, text_strong, ext_badge,
 )
+from .queue_widget import StatusPill, MarqueeName
 
 
 # --------------------------------------------------------------------------
 class _TaskRow(QWidget):
-    """单任务行。"""
+    """单任务行（v0.7.13 对齐队列卡片：后缀徽标 + 滚动名 + 状态胶囊）。"""
 
     def __init__(self, name: str, parent=None):
         super().__init__(parent)
@@ -41,21 +43,23 @@ class _TaskRow(QWidget):
         hb.setContentsMargins(0, 0, 0, 0)
         hb.setSpacing(6)
 
-        self.nameLbl = CaptionLabel(Path(name).name)
-        self.nameLbl.setStyleSheet(f"color: {text_strong()}; font-size: 11px;")
+        # 后缀徽标（与三大模块队列卡片一致）
+        src_ext = Path(name).suffix.upper().lstrip(".")
+        self.iconLbl = ext_badge(src_ext, self)
+        hb.addWidget(self.iconLbl)
+
+        # 滚动文件名（与队列卡片一致）
+        self.nameLbl = MarqueeName(self)
+        self.nameLbl.set_text(Path(name).name)
         hb.addWidget(self.nameLbl, 1)
 
-        self.statusLbl = CaptionLabel("")
-        self.statusLbl.setStyleSheet(f"color: {muted_text()}; font-size: 10px;")
-        hb.addWidget(self.statusLbl)
-
-        self.pctLbl = CaptionLabel("")
-        self.pctLbl.setStyleSheet(f"color: {muted_text()}; font-size: 10px; min-width: 28px;")
-        hb.addWidget(self.pctLbl)
+        # 状态胶囊（与队列卡片一致）
+        self.statusPill = StatusPill("pending", self)
+        hb.addWidget(self.statusPill)
 
         vb.addLayout(hb)
 
-        # v0.7.12：每行迷你进度条
+        # 迷你进度条
         self.prog = QProgressBar()
         self.prog.setRange(0, 100)
         self.prog.setValue(0)
@@ -68,30 +72,17 @@ class _TaskRow(QWidget):
         vb.addWidget(self.prog)
 
     def set_progress(self, pct: int):
-        self.pctLbl.setText(f"{pct}%")
         self.prog.setValue(max(0, min(100, pct)))
 
     def set_status(self, status: str):
         self._status = status
-        colors = {
-            "running": accent_color().name(),
-            "done": success_color().name(),
-            "failed": danger_color().name(),
-            "pending": muted_text(),
-        }
-        c = colors.get(status, muted_text())
-        label = tr(f"progress.status.{status}")
-        self.statusLbl.setText(label)
-        self.statusLbl.setStyleSheet(f"color: {c}; font-size: 10px; font-weight: 600;")
+        self.statusPill.set_status(status)
         if status == "done":
-            self.pctLbl.setText("100%")
             self.prog.setValue(100)
             self.prog.setStyleSheet(
                 "QProgressBar{border:none;background:#ececec;border-radius:1px;}"
                 f"QProgressBar::chunk{{background:{success_color().name()};"
                 "border-radius:1px;}")
-            self.pctLbl.setStyleSheet(
-                f"color: {success_color().name()}; font-size: 10px; font-weight: 600;")
         elif status == "failed":
             self.prog.setStyleSheet(
                 "QProgressBar{border:none;background:#ececec;border-radius:1px;}"
