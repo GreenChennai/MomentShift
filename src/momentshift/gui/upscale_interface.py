@@ -638,10 +638,14 @@ class UpscaleInterface(InterfaceBase):
             return
 
         for e in installed:
-            label = f"{e.name}  ·  {'/'.join(e.algos)}"
+            full_label = f"{e.name}  ·  {'/'.join(e.algos)}"
             if e.is_interp:
-                label = f"{label}  [{tr('engine.group.interp')}]"
+                full_label = f"{full_label}  [{tr('engine.group.interp')}]"
+            # v0.7.10：超出 32 字截断 + ...；全文经 tooltip 可见
+            label = full_label if len(full_label) <= 32 else full_label[:31] + "…"
             self.modelCombo.addItem(label)
+            self.modelCombo.setItemData(
+                self.modelCombo.count() - 1, full_label, Qt.ItemDataRole.ToolTipRole)
             self._engine_map[label] = e.eid
         if self._engine_id not in [e.eid for e in installed]:
             self._engine_id = installed[0].eid

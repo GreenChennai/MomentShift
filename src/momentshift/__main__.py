@@ -7,6 +7,7 @@ import sys
 import threading
 import traceback
 import os
+from pathlib import Path
 
 from momentshift.core.logger import init_logging, get_logger
 from PyQt6.QtGui import QColor
@@ -259,10 +260,10 @@ def _quick_compress(files, progress, result):
 
 def _quick_upscale(files, progress, result):
     """快速调用 — 放大：弹设置窗口 → 直接调用 engine → 进度窗口。"""
-    from momentshift.core.presets import IMAGE_EXTS, ANIM_EXTS
     from momentshift.core import engines as eng_mod
+    from momentshift.core.presets import IMAGE_EXTS
 
-    upscale_exts = IMAGE_EXTS | ANIM_EXTS
+    upscale_exts = IMAGE_EXTS | eng_mod.ANIM_EXTS
     valid_files = [f for f in files if Path(f).suffix.lower() in upscale_exts]
     if not valid_files:
         log.warning("quick: no valid files for upscale")
