@@ -80,17 +80,21 @@ class EngineRow(QWidget):
         self.dot = QLabel()
         self.dot.setFixedSize(8, 8)
         top.addWidget(self.dot)
+        # v0.7.7 引擎卡布局3：名称与徽标放在子布局中，徽标紧贴名称左对齐
+        from .queue_widget import StatusPill as _SP
+        name_row = QHBoxLayout()
+        name_row.setSpacing(6)
         self.nameLbl = StrongBodyLabel(engine.name)
-        # v0.7.6 修复2：长引擎名允许换行并收缩，避免把卡片撑出 UI 画面
         self.nameLbl.setWordWrap(True)
         self.nameLbl.setSizePolicy(QSizePolicy.Policy.Expanding,
                                    QSizePolicy.Policy.Preferred)
-        top.addWidget(self.nameLbl, 1)
+        name_row.addWidget(self.nameLbl, 1)
         for algo in engine.algos:
-            top.addWidget(algo_badge(algo, self))
-        top.addStretch(1)
-        self.statusLbl = CaptionLabel("")
-        top.addWidget(self.statusLbl)
+            name_row.addWidget(algo_badge(algo, self))
+        top.addLayout(name_row, 1)
+        # v0.7.7 引擎卡布局2：状态胶囊（对齐转换中 FFmpeg 检测）
+        self.statusPill = _SP("pending")
+        top.addWidget(self.statusPill)
         vb.addLayout(top)
 
         # 第二行：说明（v0.7.6 修复2：限宽自动换行，字体随 #515151 提亮）
@@ -103,26 +107,16 @@ class EngineRow(QWidget):
             f"color: {muted_text()}; background: transparent;")
         vb.addWidget(self.descLbl)
 
-        # 第三行：路径提示 + 按钮
+        # 第三行：按钮（v0.7.7 引擎卡布局1：左对齐，移到路径提示上方）
         btns = QHBoxLayout()
         btns.setSpacing(8)
-        self.pathLbl = CaptionLabel(f"tools/{engine.eid}")
-        self.pathLbl.setStyleSheet(
-            f"color: {muted_text()}; background: transparent; font-size: 11px;")
-        btns.addWidget(self.pathLbl)
-        btns.addStretch(1)
-
         self.linkBtn = HyperlinkButton(engine.homepage, tr("engine.goto_download"))
         btns.addWidget(self.linkBtn)
-
         self.folderBtn = PushButton(tr("engine.open_folder"), icon=FIF.FOLDER)
         self.folderBtn.setFixedHeight(28)
         self.folderBtn.clicked.connect(
             lambda: open_folder(str(eng_mod.engine_dir(self.engine.eid))))
         btns.addWidget(self.folderBtn)
-
-        # v0.7.6 功能2：可一键下载的引擎给「一键下载引擎与模型」按钮；
-        # 不能一键下载的（如依赖 CUDA / 显卡驱动内置）展示原因说明。
         self.dlBtn = None
         self.reasonLbl = None
         if engine.downloadable:
@@ -136,7 +130,18 @@ class EngineRow(QWidget):
             self.reasonLbl.setStyleSheet(
                 f"color: {muted_text()}; background: transparent; font-size: 11px;")
             btns.addWidget(self.reasonLbl)
+        btns.addStretch(1)
         vb.addLayout(btns)
+
+        # === 第四行：路径提示（v0.7.7 引擎卡布局1：移到按钮下方）===
+        path_row = QHBoxLayout()
+        path_row.setSpacing(8)
+        self.pathLbl = CaptionLabel(f"tools/{engine.eid}")
+        self.pathLbl.setStyleSheet(
+            f"color: {muted_text()}; background: transparent; font-size: 11px;")
+        path_row.addWidget(self.pathLbl)
+        path_row.addStretch(1)
+        vb.addLayout(path_row)
 
         self.prog = QProgressBar()
         self.prog.setRange(0, 0)
@@ -179,18 +184,16 @@ class EngineRow(QWidget):
         exe = eng_mod.find_engine(self.engine.eid)
         if exe:
             color = success_color().name()
-            self.statusLbl.setText(tr("engine.status.ready"))
+            self.statusPill.set_status("done", text=tr("engine.status.ready"))
             self.pathLbl.setText(str(Path(exe).parent))
         elif not self.engine.cli:
             color = "#c7920a"
-            self.statusLbl.setText(tr("engine.status.driver"))
+            self.statusPill.set_status("compressing", text=tr("engine.status.driver"))
             self.pathLbl.setText(f"tools/{self.engine.eid}")
         else:
             color = danger_color().name()
-            self.statusLbl.setText(tr("engine.status.missing"))
+            self.statusPill.set_status("failed", text=tr("engine.status.missing"))
             self.pathLbl.setText(f"tools/{self.engine.eid}")
-        self.statusLbl.setStyleSheet(
-            f"color:{color}; background: transparent; font-size:12px;")
         self.dot.setStyleSheet(f"background:{color}; border-radius:4px;")
 
     def retranslateUi(self) -> None:
@@ -231,8 +234,12 @@ class EnginesCard(ThemedCard):
         head.addWidget(self.rescanBtn)
         vb.addLayout(head)
 
+        # v0.7.7 引擎卡布局4：确保简介文本自动换行
         self.hintLbl = CaptionLabel(tr("engine.card.hint"))
         self.hintLbl.setWordWrap(True)
+        self.hintLbl.setMinimumWidth(0)
+        self.hintLbl.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                   QSizePolicy.Policy.Preferred)
         self.hintLbl.setStyleSheet(
             f"color: {muted_text()}; background: transparent;")
         vb.addWidget(self.hintLbl)

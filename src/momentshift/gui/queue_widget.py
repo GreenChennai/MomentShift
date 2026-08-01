@@ -16,7 +16,7 @@ from pathlib import Path
 
 from PyQt6.QtGui import QColor, QPainter, QBrush, QPen
 from PyQt6.QtCore import Qt, QObject, QTimer, QEvent
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QHBoxLayout, QScrollArea
+from PyQt6.QtWidgets import QLabel, QVBoxLayout, QHBoxLayout, QScrollArea, QSizePolicy
 
 from qfluentwidgets import FluentIcon as FIF, CaptionLabel, BodyLabel
 
@@ -135,6 +135,8 @@ class StatusPill(QLabel):
     def __init__(self, status: str = "pending", parent=None):
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # v0.7.7 修复1：胶囊严格按内部文字定宽，绝不随 UI 宽度拉伸
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.set_status(status)
 
     def set_status(self, status: str, text: str = None):
@@ -159,6 +161,8 @@ class FormatPill(QLabel):
     def __init__(self, text: str = "", parent=None):
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # v0.7.7 修复1：胶囊严格按内部文字定宽，绝不随 UI 宽度拉伸
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setStyleSheet(
             "color:#F5F5F5; background:#3EB68F; border-radius:9px;"
             " padding:2px 9px; font-weight:600; font-size:11px;"
@@ -192,6 +196,8 @@ class QueueItemWidget(ThemedCard):
         self.nameLbl.setObjectName("queueName")
         top.addWidget(self.iconLbl)
         top.addWidget(self.nameLbl, 1)
+        # v0.7.7 修复1：用 spacer 吸收多余空间，保证后缀/状态胶囊按文字定宽
+        top.addStretch(1)
         # v0.7.2 Feat5：格式指示胶囊 .SRC → .TGT（如 .JPG → .PNG）
         tgt = (self._task.target_format or "").upper()
         self.fmtPill = FormatPill(f".{src_ext} → .{tgt}")

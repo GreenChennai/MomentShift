@@ -94,7 +94,7 @@ class ConvertInterface(InterfaceBase):
         # =====================================================================
         ocard, ovb, self.tOutput = self._make_card("convert.output.title", collapsed=True)
         # 输出模式切换开关
-        self.outputSwitch = SwitchButton(tr("convert.output.same"))
+        self.outputSwitch = SwitchButton()
         self.outputSwitch.checkedChanged.connect(self._on_output_mode)
         ovb.addWidget(field_row(tr("convert.output.mode"), self.outputSwitch))
         # 文件名后缀

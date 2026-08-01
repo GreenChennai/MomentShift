@@ -19,12 +19,14 @@ v0.7.5 重构：把「放大」模块从只支持 Real-ESRGAN 扩展为一个**�
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional, Sequence, Tuple
 
 from .config import tools_dir
 from .logger import get_logger
@@ -676,8 +678,21 @@ def build_command(eid: str, src: str, dst: str, values: dict) -> Tuple[list, str
     return cmd, ""
 
 
-def _run(cmd: list, timeout: int = 3600) -> Tuple[bool, str]:
+# 进度解析：引擎常在 stdout/stderr 打印百分比或 "当前/总数"
+_PROG_PCT = re.compile(r"(\d{1,3})\s*%")
+_PROG_FRAC = re.compile(r"(\d+)\s*/\s*(\d+)")
+
+
+def _run(cmd: list, timeout: int = 3600,
+         progress_cb: Optional[Callable[[int], None]] = None) -> Tuple[bool, str]:
+    """执行引擎子进程。
+
+    v0.7.7 修复3：当传入 ``progress_cb`` 时改为流式读取输出并解析进度，
+    让队列进度条能跟随任务推进；不传则保持原 blocking 行为（兼容 upscaler）。
+    """
     log.info("engine cmd: %s", " ".join(str(c) for c in cmd))
+    if progress_cb is not None:
+        return _run_stream(cmd, timeout, progress_cb)
     try:
         proc = subprocess.run(
             [str(c) for c in cmd],
@@ -695,10 +710,62 @@ def _run(cmd: list, timeout: int = 3600) -> Tuple[bool, str]:
     return True, ""
 
 
+def _run_stream(cmd: list, timeout: int,
+                progress_cb: Callable[[int], None]) -> Tuple[bool, str]:
+    """流式版 _run：边跑边解析进度，进度条不再卡在 0。"""
+    try:
+        proc = subprocess.Popen(
+            [str(c) for c in cmd],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=WIN_SILENT,
+        )
+    except OSError as exc:
+        return False, f"启动失败: {exc}"
+    buf: list[str] = []
+    last = -1
+    start = time.monotonic()
+    try:
+        for line in proc.stdout:                       # 逐行读取，自动处理 EOF
+            if time.monotonic() - start > timeout:
+                proc.kill()
+                proc.wait()
+                return False, f"处理超时（超过 {timeout} 秒）"
+            buf.append(line)
+            pct = _parse_progress(line)
+            if pct is not None and 0 <= pct <= 99 and pct != last:
+                last = pct
+                progress_cb(pct)
+    except Exception as exc:                          # 读取异常视为失败
+        proc.kill()
+        proc.wait()
+        return False, f"启动失败: {exc}"
+    rc = proc.wait()
+    out = "".join(buf)
+    if rc != 0:
+        err = out.strip().splitlines()
+        err = err[-3:] if err else ["未知错误"]
+        return False, " · ".join(err)[:400]
+    return True, ""
+
+
+def _parse_progress(line: str) -> Optional[int]:
+    m = _PROG_PCT.search(line)
+    if m:
+        return max(0, min(99, int(m.group(1))))
+    fr = _PROG_FRAC.search(line)
+    if fr:
+        cur, tot = int(fr.group(1)), int(fr.group(2))
+        if tot:
+            return max(0, min(99, int(cur / tot * 100)))
+    return None
+
+
 # ==========================================================================
 # 执行管线
 # ==========================================================================
-def run_image(eid: str, src: str, dst: str, values: dict) -> Tuple[bool, str]:
+def run_image(eid: str, src: str, dst: str, values: dict,
+               progress_cb: Optional[Callable[[int], None]] = None) -> Tuple[bool, str]:
     """单张图片（或整个图片目录）走一次引擎调用。"""
     cmd, err = build_command(eid, src, dst, values)
     if err:
@@ -708,7 +775,9 @@ def run_image(eid: str, src: str, dst: str, values: dict) -> Tuple[bool, str]:
     eng = ENGINE_BY_ID[eid]
     if ext in ("jpg", "jpeg", "png", "webp") and eng.eid.endswith("ncnn-vulkan"):
         cmd += ["-f", "jpg" if ext == "jpeg" else ext]
-    return _run(cmd)
+    if progress_cb is not None:
+        progress_cb(3)              # 起步进度，避免进度条一直停在 0
+    return _run(cmd, progress_cb=progress_cb)
 
 
 def _probe_fps(ffmpeg: str, src: str) -> float:
@@ -749,7 +818,8 @@ def _recombine(ffmpeg: str, frames_out: Path, src: str, dst: str,
                  dst], timeout=1800)
 
 
-def run_frames(eid: str, src: str, dst: str, values: dict) -> Tuple[bool, str]:
+def run_frames(eid: str, src: str, dst: str, values: dict,
+               progress_cb: Optional[Callable[[int], None]] = None) -> Tuple[bool, str]:
     """GIF / 视频：抽帧 → 引擎整目录处理 → 重新合成。
 
     超分引擎保持原帧率；插帧引擎按倍率提高目标帧数与输出帧率。
@@ -771,6 +841,8 @@ def run_frames(eid: str, src: str, dst: str, values: dict) -> Tuple[bool, str]:
     frames_in.mkdir(parents=True, exist_ok=True)
     frames_out.mkdir(parents=True, exist_ok=True)
     try:
+        if progress_cb is not None:
+            progress_cb(2)
         ok, msg = _run([ffmpeg, "-y", "-i", src, str(frames_in / "%06d.png")],
                        timeout=1800)
         if not ok:
@@ -794,7 +866,9 @@ def run_frames(eid: str, src: str, dst: str, values: dict) -> Tuple[bool, str]:
             cmd += [eng.interp_count_flag, str(target)]
             fps = fps * mult
 
-        ok, msg = _run(cmd, timeout=7200)
+        if progress_cb is not None:
+            progress_cb(10)             # 抽帧完成，进入引擎处理阶段
+        ok, msg = _run(cmd, timeout=7200, progress_cb=progress_cb)
         if not ok:
             return False, ("插帧失败: " if eng.is_interp else "放大失败: ") + msg
 
@@ -806,6 +880,8 @@ def run_frames(eid: str, src: str, dst: str, values: dict) -> Tuple[bool, str]:
             if target_path != f:
                 os.replace(f, target_path)
 
+        if progress_cb is not None:
+            progress_cb(92)             # 帧处理完成，进入合成阶段
         ok, msg = _recombine(ffmpeg, frames_out, src, dst, fps)
         if not ok:
             return False, f"合成失败: {msg}"
@@ -814,8 +890,12 @@ def run_frames(eid: str, src: str, dst: str, values: dict) -> Tuple[bool, str]:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def process_media(eid: str, src: str, dst: str, values: dict) -> Tuple[bool, str]:
-    """统一入口：按输入类型分派到图片或帧管线。"""
+def process_media(eid: str, src: str, dst: str, values: dict,
+                  progress_cb: Optional[Callable[[int], None]] = None) -> Tuple[bool, str]:
+    """统一入口：按输入类型分派到图片或帧管线。
+
+    v0.7.7 修复3：支持 ``progress_cb`` 流式进度，让队列进度条跟随推进。
+    """
     eng = ENGINE_BY_ID.get(eid)
     if eng is None:
         return False, f"未知引擎: {eid}"
@@ -823,7 +903,7 @@ def process_media(eid: str, src: str, dst: str, values: dict) -> Tuple[bool, str
     if ext in IMAGE_EXTS:
         if eng.is_interp:
             return False, "插帧引擎只能处理视频 / GIF，不能处理静态图片"
-        return run_image(eid, src, dst, values)
+        return run_image(eid, src, dst, values, progress_cb=progress_cb)
     if ext in ANIM_EXTS or ext in VIDEO_EXTS:
-        return run_frames(eid, src, dst, values)
+        return run_frames(eid, src, dst, values, progress_cb=progress_cb)
     return False, f"不支持的输入格式: {ext}"

@@ -139,6 +139,8 @@ class CompressItemWidget(ThemedCard):
         self.nameLbl.set_text(Path(src).name)
         self.nameLbl.setObjectName("queueName")
         top.addWidget(self.nameLbl, 1)
+        # v0.7.7 修复1：用 spacer 吸收多余空间，保证后缀/状态胶囊按文字定宽
+        top.addStretch(1)
         self.fmtPill = FormatPill(self._format_text())
         top.addWidget(self.fmtPill)
         self.pill = StatusPill("pending")
@@ -341,11 +343,12 @@ class CompressInterface(InterfaceBase):
         self._picking = False
 
         # 压缩参数默认值（v0.7.0：oxipng / jpegoptim / pillow 三后端）
+        # v0.7.7 调整1：元数据默认保留（strip=none, jo_strip=none）
         self._program = "auto"
         self._tool_opts = {
-            "oxipng": {"level": 3, "interlace": True, "strip": "all",
+            "oxipng": {"level": 3, "interlace": True, "strip": "none",
                        "filter": 0, "zc": 6, "alpha": False},
-            "jpegoptim": {"jo_mode": "lossless", "jo_max": 85, "jo_strip": "all",
+            "jpegoptim": {"jo_mode": "lossless", "jo_max": 85, "jo_strip": "none",
                           "jo_progressive": "auto", "jo_threshold": 0,
                           "jo_preserve": True, "jo_retry": False},
             "pillow": {"pil_quality": 95, "pil_optimize": True,
@@ -427,7 +430,7 @@ class CompressInterface(InterfaceBase):
         svb.addWidget(self._backend_container)
 
         # 输出位置
-        self.outputSwitch = SwitchButton(tr("compress.output.same"))
+        self.outputSwitch = SwitchButton()
         self.outputSwitch.checkedChanged.connect(self._on_output_mode)
         svb.addWidget(field_row(tr("compress.output.mode"), self.outputSwitch))
         self.suffixEdit = QLineEdit(self._suffix)
@@ -530,14 +533,16 @@ class CompressInterface(InterfaceBase):
         row.addWidget(lvl, 1)
         fr = field_row(tr("advanced.level"), row)
         ly.addWidget(fr); attach_help(fr, "advanced.help.level")
-        inter = SwitchButton(tr("advanced.interlace"))
+        inter = SwitchButton()
         inter.setChecked(bool(grp["interlace"]))
         inter.checkedChanged.connect(lambda b: grp.__setitem__("interlace", b))
         self._switches.append(inter)
         fr = field_row(tr("advanced.interlace"), inter)
         ly.addWidget(fr); attach_help(fr, "advanced.help.interlace")
         strip = self._make_combo(
-            [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
+            [(tr("advanced.strip.none"), "none"),
+             (tr("advanced.strip.safe"), "safe"),
+             (tr("advanced.strip.all"), "all")],
             grp["strip"], lambda v: grp.__setitem__("strip", v))
         fr = field_row(tr("advanced.strip"), strip)
         ly.addWidget(fr); attach_help(fr, "advanced.help.strip")
@@ -559,7 +564,7 @@ class CompressInterface(InterfaceBase):
         zc_row.addWidget(zc, 1)
         fr = field_row(tr("advanced.zc"), zc_row)
         ly.addWidget(fr); attach_help(fr, "advanced.help.zc")
-        alpha = SwitchButton(tr("advanced.alpha"))
+        alpha = SwitchButton()
         alpha.setChecked(bool(grp["alpha"]))
         alpha.checkedChanged.connect(lambda b: grp.__setitem__("alpha", b))
         self._switches.append(alpha)
@@ -622,13 +627,13 @@ class CompressInterface(InterfaceBase):
         jo_thr.valueChanged.connect(lambda v: grp.__setitem__("jo_threshold", v))
         fr = field_row(tr("advanced.jo.threshold"), jo_thr)
         ly.addWidget(fr); attach_help(fr, "advanced.help.jo.threshold")
-        jo_pres = SwitchButton(tr("advanced.jo.preserve"))
+        jo_pres = SwitchButton()
         jo_pres.setChecked(bool(grp["jo_preserve"]))
         jo_pres.checkedChanged.connect(lambda b: grp.__setitem__("jo_preserve", b))
         self._switches.append(jo_pres)
         fr = field_row(tr("advanced.jo.preserve"), jo_pres)
         ly.addWidget(fr); attach_help(fr, "advanced.help.jo.preserve")
-        jo_retry = SwitchButton(tr("advanced.jo.retry"))
+        jo_retry = SwitchButton()
         jo_retry.setChecked(bool(grp["jo_retry"]))
         jo_retry.checkedChanged.connect(lambda b: grp.__setitem__("jo_retry", b))
         self._switches.append(jo_retry)
@@ -665,13 +670,13 @@ class CompressInterface(InterfaceBase):
         pq_row.addWidget(pq_spin)
         fr = field_row(tr("advanced.pil.quality"), pq_row)
         ly.addWidget(fr); attach_help(fr, "advanced.help.pil.quality")
-        pil_opt = SwitchButton(tr("advanced.pil.optimize"))
+        pil_opt = SwitchButton()
         pil_opt.setChecked(bool(grp["pil_optimize"]))
         pil_opt.checkedChanged.connect(lambda b: grp.__setitem__("pil_optimize", b))
         self._switches.append(pil_opt)
         fr = field_row(tr("advanced.pil.optimize"), pil_opt)
         ly.addWidget(fr); attach_help(fr, "advanced.help.pil.optimize")
-        pil_prog = SwitchButton(tr("advanced.pil.progressive"))
+        pil_prog = SwitchButton()
         pil_prog.setChecked(bool(grp["pil_progressive"]))
         pil_prog.checkedChanged.connect(
             lambda b: grp.__setitem__("pil_progressive", b))

@@ -341,6 +341,36 @@ def main():
     assert hasattr(uw, "copyBtn") and hasattr(uw, "cmpBtn") and hasattr(uw, "delBtn")
     uw.deleteLater()
 
+    # ---------------------------------------------------------------- v0.7.7
+    from PyQt6.QtWidgets import QSizePolicy as _QSP
+
+    step("v0.7.7 修复1: FormatPill / StatusPill 严格按文字定宽（Fixed size policy）")
+    from momentshift.gui.queue_widget import FormatPill, StatusPill
+    assert (FormatPill().sizePolicy().horizontalPolicy() == _QSP.Policy.Fixed)
+    assert (StatusPill().sizePolicy().horizontalPolicy() == _QSP.Policy.Fixed)
+
+    step("v0.7.7 修复3: engines.process_media 支持 progress_cb 参数")
+    import inspect as _inspect
+    sig = _inspect.signature(eng_mod.process_media)
+    assert "progress_cb" in sig.parameters
+
+    step("v0.7.7 引擎卡布局2: EngineRow 使用 StatusPill 胶囊替代文字状态")
+    from momentshift.gui.engine_card import EngineRow as _EngineRow
+    er2 = _EngineRow(eng_mod.ENGINE_BY_ID["realesrgan-ncnn-vulkan"])
+    assert hasattr(er2, "statusPill") and not hasattr(er2, "statusLbl")
+    assert isinstance(er2.statusPill, StatusPill)
+    er2.deleteLater()
+
+    step("v0.7.7 引擎卡布局4: EnginesCard.hintLbl 自动换行")
+    assert ec.hintLbl.wordWrap()
+    assert ec.hintLbl.sizePolicy().horizontalPolicy() == _QSP.Policy.Expanding
+
+    step("v0.7.7 调整1: 元数据默认不删除（advanced.py strip=none, jo_strip=none）")
+    from momentshift.core.advanced import default_options
+    dopts = default_options()
+    assert dopts["image"]["compress"]["strip"] == "none", dopts["image"]["compress"]["strip"]
+    assert dopts["image"]["compress"]["jo_strip"] == "none", dopts["image"]["compress"]["jo_strip"]
+
     step("ALL CHECKS PASSED")
     print(f"convert engine tasks: {len(manager.tasks)}  detached tasks: {len(mgr2.tasks)}  "
           f"same-format: {len(same)}", flush=True)

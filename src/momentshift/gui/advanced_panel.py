@@ -217,15 +217,18 @@ class AdvancedPanel(QWidget):
         fr = field_row(tr("advanced.level"), row)
         self._add_help(fr, "advanced.help.level"); oxi_l.addWidget(fr)
 
-        inter = SwitchButton(tr("advanced.interlace"))
+        inter = SwitchButton()
         inter.setChecked(bool(comp.get("interlace", False)))
         inter.checkedChanged.connect(lambda b: comp.__setitem__("interlace", b))
         fr = field_row(tr("advanced.interlace"), inter)
         self._add_help(fr, "advanced.help.interlace"); oxi_l.addWidget(fr)
 
+        # v0.7.7 调整1：增加「全部保留」选项，默认不删除元数据
         strip = _combo(
-            [(tr("advanced.strip.safe"), "safe"), (tr("advanced.strip.all"), "all")],
-            comp.get("strip", "safe"), lambda v: comp.__setitem__("strip", v))
+            [(tr("advanced.strip.none"), "none"),
+             (tr("advanced.strip.safe"), "safe"),
+             (tr("advanced.strip.all"), "all")],
+            comp.get("strip", "none"), lambda v: comp.__setitem__("strip", v))
         fr = field_row(tr("advanced.strip"), strip)
         self._add_help(fr, "advanced.help.strip"); oxi_l.addWidget(fr)
 
@@ -247,7 +250,7 @@ class AdvancedPanel(QWidget):
         fr = field_row(tr("advanced.zc"), zc_row)
         self._add_help(fr, "advanced.help.zc"); oxi_l.addWidget(fr)
 
-        alpha = SwitchButton(tr("advanced.alpha"))
+        alpha = SwitchButton()
         alpha.setChecked(bool(comp.get("alpha", False)))
         alpha.checkedChanged.connect(lambda b: comp.__setitem__("alpha", b))
         fr = field_row(tr("advanced.alpha"), alpha)
@@ -313,13 +316,13 @@ class AdvancedPanel(QWidget):
         fr = field_row(tr("advanced.jo.threshold"), jo_thr)
         self._add_help(fr, "advanced.help.jo.threshold"); jo_l.addWidget(fr)
 
-        jo_pres = SwitchButton(tr("advanced.jo.preserve"))
+        jo_pres = SwitchButton()
         jo_pres.setChecked(bool(comp.get("jo_preserve", True)))
         jo_pres.checkedChanged.connect(lambda b: comp.__setitem__("jo_preserve", b))
         fr = field_row(tr("advanced.jo.preserve"), jo_pres)
         self._add_help(fr, "advanced.help.jo.preserve"); jo_l.addWidget(fr)
 
-        jo_retry = SwitchButton(tr("advanced.jo.retry"))
+        jo_retry = SwitchButton()
         jo_retry.setChecked(bool(comp.get("jo_retry", False)))
         jo_retry.checkedChanged.connect(lambda b: comp.__setitem__("jo_retry", b))
         fr = field_row(tr("advanced.jo.retry"), jo_retry)
@@ -343,13 +346,13 @@ class AdvancedPanel(QWidget):
         fr = field_row(tr("advanced.pil.quality"), pq_row)
         self._add_help(fr, "advanced.help.pil.quality"); pil_l.addWidget(fr)
 
-        pil_opt = SwitchButton(tr("advanced.pil.optimize"))
+        pil_opt = SwitchButton()
         pil_opt.setChecked(bool(comp.get("pil_optimize", True)))
         pil_opt.checkedChanged.connect(lambda b: comp.__setitem__("pil_optimize", b))
         fr = field_row(tr("advanced.pil.optimize"), pil_opt)
         self._add_help(fr, "advanced.help.pil.optimize"); pil_l.addWidget(fr)
 
-        pil_prog = SwitchButton(tr("advanced.pil.progressive"))
+        pil_prog = SwitchButton()
         pil_prog.setChecked(bool(comp.get("pil_progressive", True)))
         pil_prog.checkedChanged.connect(lambda b: comp.__setitem__("pil_progressive", b))
         fr = field_row(tr("advanced.pil.progressive"), pil_prog)
@@ -415,7 +418,7 @@ class AdvancedPanel(QWidget):
             lambda v: adv.__setitem__("codec", v),
         )
         self.vbox.addWidget(field_row(tr("advanced.codec"), codec, label_width=80))
-        merge = SwitchButton(tr("advanced.merge"))
+        merge = SwitchButton()
         merge.setChecked(bool(adv.get("merge", False)))
         merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
         self.vbox.addWidget(field_row(tr("advanced.merge"), merge, label_width=80))
@@ -439,7 +442,7 @@ class AdvancedPanel(QWidget):
             lambda v: adv.__setitem__("channels", v),
         )
         self.vbox.addWidget(field_row(tr("advanced.channels"), ch, label_width=80))
-        merge = SwitchButton(tr("advanced.merge"))
+        merge = SwitchButton()
         merge.setChecked(bool(adv.get("merge", False)))
         merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
         self.vbox.addWidget(field_row(tr("advanced.merge"), merge, label_width=80))

@@ -38,7 +38,7 @@ from .theme import (
 from .base import InterfaceBase
 from .drop_area import DropArea
 from .help_bubble import attach_help
-from .queue_widget import ProgressBar, StatusPill, human_size, ScrollAutoFollow, MarqueeName, FormatPill
+from .queue_widget import ProgressBar, StatusPill, human_size, format_size_compare, ScrollAutoFollow, MarqueeName, FormatPill
 from .compare_window import CompareWindow
 
 # 放大模块支持的视频格式
@@ -195,12 +195,16 @@ class UpscaleWorker(QRunnable):
         self.signals = _WorkerSignals()
 
     def run(self):
+        # v0.7.7 修复3：流式进度回调，进度条不再卡在 0
+        cb = lambda p: self.signals.progress.emit(self.item_id, p)
         self.signals.progress.emit(self.item_id, 0)
         try:
             ok, detail = eng_mod.process_media(
-                self.engine_id, self.src, self.out, self.values)
+                self.engine_id, self.src, self.out, self.values, progress_cb=cb)
         except Exception as exc:
             ok, detail = False, str(exc)
+        if ok:
+            self.signals.progress.emit(self.item_id, 100)
         saved = 0
         try:
             if ok and Path(self.out).exists():
@@ -240,6 +244,8 @@ class UpscaleItemWidget(ThemedCard):
         self.nameLbl.set_text(Path(src).name)
         self.nameLbl.setObjectName("queueName")
         top.addWidget(self.nameLbl, 1)
+        # v0.7.7 修复1：用 spacer 吸收多余空间，保证后缀/状态胶囊按文字定宽
+        top.addStretch(1)
         self.fmtPill = FormatPill(f".{src_ext} → .{tgt_ext}")
         top.addWidget(self.fmtPill)
         self.pill = StatusPill("pending")
@@ -279,11 +285,11 @@ class UpscaleItemWidget(ThemedCard):
         self.pill.set_status(status)
         self.prog.set_error(status == "failed")
         if status == "done":
+            # v0.7.7 修复2+3：用 format_size_compare 显示绿/红百分比；进度条满格
+            self.set_progress(100)
             src_size = Path(self._src).stat().st_size if Path(self._src).exists() else 0
             dst_size = src_size - saved
-            pct = f"{(dst_size - src_size) / src_size * 100:+.0f}%" if src_size else ""
-            self.detailLbl.setText(tr("upscale.result.saved",
-                before=human_size(src_size), after=human_size(dst_size), pct=pct))
+            self.detailLbl.setText(format_size_compare(src_size, dst_size))
         elif status == "failed":
             self.detailLbl.setText((detail or tr("convert.status.failed"))[:80])
         elif status == "running":
@@ -476,7 +482,7 @@ class UpscaleInterface(InterfaceBase):
         self.fmtRow = field_row(tr("upscale.output.fmt"), self.fmtCombo)
         ob.addWidget(self.fmtRow)
 
-        self.outputSwitch = SwitchButton(tr("convert.output.same"))
+        self.outputSwitch = SwitchButton()
         self.outputSwitch.checkedChanged.connect(self._on_output_mode)
         ob.addWidget(field_row(tr("upscale.output.mode"), self.outputSwitch))
         self.suffixEdit = QLineEdit(self._suffix)

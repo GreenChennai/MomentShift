@@ -45,10 +45,11 @@ def default_options() -> dict:
                 "backend": "auto",
                 "quality": 95,
                 # oxipng（v0.7.1「自动选择」默认：最优参数/无损/中等速度/优化全开）
-                "level": 3, "interlace": True, "strip": "all",
+                # v0.7.7 调整1：元数据默认保留（strip=none, jo_strip=none）
+                "level": 3, "interlace": True, "strip": "none",
                 "filter": 0, "zc": 6, "alpha": False,
                 # jpegoptim
-                "jo_mode": "lossless", "jo_max": 85, "jo_strip": "all",
+                "jo_mode": "lossless", "jo_max": 85, "jo_strip": "none",
                 "jo_progressive": "auto", "jo_threshold": 0,
                 "jo_preserve": True, "jo_retry": False,
                 # pillow
