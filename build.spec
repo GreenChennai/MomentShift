@@ -48,6 +48,7 @@ hiddenimports = [
     "momentshift.core.logger",
     "momentshift.core.compressor",
     "momentshift.core.engines",
+    "momentshift.core.engine_download",
     "momentshift.core.upscaler",
     "momentshift.core.tools_download",
     "PIL",

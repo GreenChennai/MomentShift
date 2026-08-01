@@ -37,7 +37,8 @@ from .theme import (
 )
 from .base import InterfaceBase
 from .drop_area import DropArea
-from .queue_widget import ProgressBar, StatusPill, human_size, ScrollAutoFollow
+from .help_bubble import attach_help
+from .queue_widget import ProgressBar, StatusPill, human_size, ScrollAutoFollow, MarqueeName, FormatPill
 from .compare_window import CompareWindow
 
 # 放大模块支持的视频格式
@@ -94,6 +95,8 @@ class EngineParamPanel(QWidget):
             row = field_row(tr(p.label_key), widget)
             self._rows.append(row)
             self._vb.addWidget(row)
+            # v0.7.6 功能1：各参数附帮助说明（对齐压缩设置）
+            attach_help(row, f"engine.help.{p.key}")
 
     def _make_control(self, p: eng_mod.Param, current):
         if p.kind == "choice":
@@ -208,27 +211,37 @@ class UpscaleWorker(QRunnable):
 
 
 class UpscaleItemWidget(ThemedCard):
-    """放大队列中的单个任务卡片。"""
+    """放大队列中的单个任务卡片。
+
+    v0.7.6 翻新：对齐「转换队列」视觉 —— 后缀徽标 + 8 字滚动文件名 +
+    格式胶囊(.SRC → .TGT) + 状态胶囊 / 进度条 / 大小对比行 + 复制/对比/删除。
+    """
     removeRequested = Signal(str)
     compareRequested = Signal(str)
 
-    def __init__(self, item_id: str, src: str, parent=None):
+    def __init__(self, item_id: str, src: str, out: str = "", parent=None):
         super().__init__(parent)
         self._id = item_id
         self._src = src
+        self._out = out
         self._status = "pending"
 
         vb = QVBoxLayout(self)
         vb.setContentsMargins(14, 12, 14, 12)
         vb.setSpacing(8)
 
+        src_ext = Path(src).suffix.upper().lstrip(".")
+        tgt_ext = (Path(out).suffix.upper().lstrip(".") if out else "") or src_ext
         top = QHBoxLayout()
-        # v0.7.4 Adj1：后缀矩形徽标（放大队列原先无类别图标，现统一风格）
-        self.iconLbl = ext_badge(Path(src).suffix.upper().lstrip("."), self)
+        # v0.7.4 Adj1：后缀矩形徽标（与转换/压缩队列统一风格）
+        self.iconLbl = ext_badge(src_ext, self)
         top.addWidget(self.iconLbl)
-        self.nameLbl = QLabel(Path(src).name)
+        self.nameLbl = MarqueeName(self)
+        self.nameLbl.set_text(Path(src).name)
         self.nameLbl.setObjectName("queueName")
         top.addWidget(self.nameLbl, 1)
+        self.fmtPill = FormatPill(f".{src_ext} → .{tgt_ext}")
+        top.addWidget(self.fmtPill)
         self.pill = StatusPill("pending")
         top.addWidget(self.pill)
         vb.addLayout(top)
@@ -238,8 +251,11 @@ class UpscaleItemWidget(ThemedCard):
 
         bottom = QHBoxLayout()
         self.detailLbl = CaptionLabel()
-        self.detailLbl.setStyleSheet(f"color: {muted_text()};")
+        self.detailLbl.setStyleSheet("color: #000000; background: transparent;")
         bottom.addWidget(self.detailLbl, 1)
+        self.copyBtn = icon_btn(FIF.COPY)
+        self.copyBtn.clicked.connect(self._copy_path)
+        bottom.addWidget(self.copyBtn)
         self.cmpBtn = icon_btn(FIF.SEARCH)
         self.cmpBtn.clicked.connect(lambda: self.compareRequested.emit(self._id))
         bottom.addWidget(self.cmpBtn)
@@ -250,6 +266,10 @@ class UpscaleItemWidget(ThemedCard):
 
         self.set_status("pending")
         self.set_progress(0)
+
+    def _copy_path(self):
+        folder = str(Path(self._out or self._src).parent)
+        QApplication.clipboard().setText(folder)
 
     def set_progress(self, pct: int):
         self.prog.set_value(pct)
@@ -324,10 +344,10 @@ class UpscaleListWidget(QWidget):
         self.statDone.setText(tr("upscale.queue.stats.done", n=done))
         self.statErr.setText(tr("upscale.queue.stats.error", n=failed))
 
-    def add_item(self, item_id: str, src: str):
+    def add_item(self, item_id: str, src: str, out: str = ""):
         if item_id in self.items:
             return
-        w = UpscaleItemWidget(item_id, src)
+        w = UpscaleItemWidget(item_id, src, out)
         w.removeRequested.connect(self.removeRequested)
         w.compareRequested.connect(self.compareRequested)
         self.items[item_id] = w
@@ -556,7 +576,7 @@ class UpscaleInterface(InterfaceBase):
             if p not in self._items:
                 self._items[p] = {"src": p, "out": self._out_path(p),
                                   "status": "pending", "saved": 0}
-                self.listWidget.add_item(p, p)
+                self.listWidget.add_item(p, p, self._items[p]["out"])
         self._update_controls()
 
     # =========================================================================

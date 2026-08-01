@@ -261,6 +261,86 @@ def main():
     cmd, err = eng_mod.build_command("rtx-super-resolution", "a.png", "b.png", {})
     assert not cmd and err, (cmd, err)
 
+    # ---------------------------------------------------------------- v0.7.6
+    from PyQt6.QtWidgets import QSizePolicy as _QSP
+
+    step("v0.7.6 修复1: 短文件名不滚动，超长文件名启动横向滚动")
+    from momentshift.gui.queue_widget import MarqueeName
+    short = MarqueeName()
+    short.set_text("短名.png")
+    assert not short._timer.isActive(), "短文件名不应滚动"
+    long_name = "这是一个非常非常非常长的文件名用来测试滚动轮播效果.png"
+    mq = MarqueeName()
+    mq.set_text(long_name)
+    assert mq._timer.isActive(), "超长文件名必须启动滚动定时器"
+    assert mq._text == long_name
+    # 窗口固定为 8 个汉字宽（+8px 内边距）
+    assert mq._window_w == int(mq._char_w * 8) + 8, (mq._window_w, mq._char_w)
+    assert mq._window_w > 0 and mq._window_w < 400
+    short.deleteLater()
+    mq.deleteLater()
+
+    step("v0.7.6 修复1: 三个队列卡片文件名均使用 MarqueeName")
+    tw = QueueItemWidget(
+        Task(id="t3", input_path=png, output_path=os.path.join(out, "photo.jpg"),
+             target_format="jpg", category="image", use_gpu=False)
+    )
+    assert isinstance(tw.nameLbl, MarqueeName), type(tw.nameLbl).__name__
+    tw.deleteLater()
+    c_row = compress.listWidget.items[cimg]
+    assert isinstance(c_row.nameLbl, MarqueeName), type(c_row.nameLbl).__name__
+    u_row = upscale.listWidget.items[img]
+    assert isinstance(u_row.nameLbl, MarqueeName), type(u_row.nameLbl).__name__
+
+    step("v0.7.6 修复2: 引擎名/介绍可换行并限宽（不撑破 UI 画面）")
+    from momentshift.gui.engine_card import EngineRow
+    er = EngineRow(eng_mod.ENGINE_BY_ID["realesrgan-ncnn-vulkan"])
+    assert er.nameLbl.wordWrap() and er.descLbl.wordWrap()
+    assert er.nameLbl.sizePolicy().horizontalPolicy() == _QSP.Policy.Expanding
+    assert er.descLbl.sizePolicy().horizontalPolicy() == _QSP.Policy.Expanding
+    er.deleteLater()
+
+    step("v0.7.6 修复3: 弱化文字颜色由过灰 #BDBDBD 调深为 #515151")
+    from momentshift.gui.theme import TEXT_MUTED
+    assert TEXT_MUTED.upper() == "#515151", f"expected #515151, got {TEXT_MUTED}"
+
+    step("v0.7.6 功能2: 可下载引擎显示一键下载按钮；不可下载显示原因说明")
+    row_dl = EngineRow(eng_mod.ENGINE_BY_ID["realesrgan-ncnn-vulkan"])
+    assert row_dl.dlBtn is not None and row_dl.reasonLbl is None
+    assert row_dl.dlBtn.text() == tr("engine.download.oneclick")
+    row_no = EngineRow(eng_mod.ENGINE_BY_ID["srmd-cuda"])
+    assert row_no.reasonLbl is not None and row_no.dlBtn is None
+    assert row_no.reasonLbl.text() == tr(row_no.engine.download_reason_key)
+    row_dl.deleteLater()
+    row_no.deleteLater()
+
+    step("v0.7.6 功能2: 引擎注册表下载字段完整（可下载 13 / 不可下载 2）")
+    dl_count = sum(1 for e in eng_mod.ENGINES if e.downloadable)
+    no_dl_count = sum(1 for e in eng_mod.ENGINES if not e.downloadable)
+    assert dl_count == 12, dl_count
+    assert no_dl_count == 2, no_dl_count
+    for e in eng_mod.ENGINES:
+        if e.downloadable:
+            assert e.download_sources, f"{e.eid} 缺少下载源"
+        else:
+            assert e.download_reason_key, f"{e.eid} 缺少不可下载原因键"
+
+    step("v0.7.6 功能2: ffmpeg.download 文案改为「一键下载并安装」")
+    assert "一键下载并安装" in tr("ffmpeg.download"), tr("ffmpeg.download")
+
+    step("v0.7.6 功能1: 放大参数面板每行附带帮助按钮（engine.help.* 键齐备）")
+    for p in eng_mod.ENGINE_BY_ID["realesrgan-ncnn-vulkan"].params:
+        assert tr(f"engine.help.{p.key}") != f"engine.help.{p.key}", \
+            f"缺少帮助键 engine.help.{p.key}"
+
+    step("v0.7.6 功能4/1: 放大队列卡片翻新（FormatPill + 复制/对比/删除按钮 + 滚动名）")
+    from momentshift.gui.upscale_interface import UpscaleItemWidget
+    uw = UpscaleItemWidget("u1", img, out)
+    assert isinstance(uw.nameLbl, MarqueeName)
+    assert hasattr(uw, "fmtPill")
+    assert hasattr(uw, "copyBtn") and hasattr(uw, "cmpBtn") and hasattr(uw, "delBtn")
+    uw.deleteLater()
+
     step("ALL CHECKS PASSED")
     print(f"convert engine tasks: {len(manager.tasks)}  detached tasks: {len(mgr2.tasks)}  "
           f"same-format: {len(same)}", flush=True)

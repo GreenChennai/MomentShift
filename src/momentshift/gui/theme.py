@@ -40,7 +40,7 @@ SURFACE_PRESS = QColor("#EEEEEE")  # press 态
 TEXT_STRONG     = "#212121"   # 主文字
 TEXT_SECONDARY  = "#757575"   # 次要文字
 TEXT_PLACEHOLDER = "#9E9E9E"  # 占位符
-TEXT_MUTED      = "#BDBDBD"   # 禁用/弱化
+TEXT_MUTED      = "#515151"   # 禁用/弱化（v0.7.6：由过灰 #BDBDBD 调深，提升对比度）
 TEXT_LINK       = "#2270F4"   # 链接蓝
 
 # 边框

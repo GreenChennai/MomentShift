@@ -24,7 +24,7 @@ from ..core.qt_compat import QWidget, Signal, QApplication
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, icon_btn, muted_text, accent_color, sub_text,
-    success_color, danger_color, border_color, ext_badge,
+    success_color, danger_color, border_color, ext_badge, text_strong,
 )
 
 
@@ -187,7 +187,8 @@ class QueueItemWidget(ThemedCard):
         src_ext = Path(self._task.input_path).suffix.upper().lstrip(".")
         top = QHBoxLayout()
         self.iconLbl = ext_badge(src_ext, self)
-        self.nameLbl = BodyLabel(_basename(self._task.input_path))
+        self.nameLbl = MarqueeName(self)
+        self.nameLbl.set_text(_basename(self._task.input_path))
         self.nameLbl.setObjectName("queueName")
         top.addWidget(self.iconLbl)
         top.addWidget(self.nameLbl, 1)
@@ -524,6 +525,76 @@ def _basename(path: str) -> str:
     from pathlib import Path
 
     return Path(path).name
+
+
+# --------------------------------------------------------------------------
+# MarqueeName — 文件名显示控件（v0.7.6 修复 1）
+# --------------------------------------------------------------------------
+class MarqueeName(QWidget):
+    """文件名显示：最多显示 ``max_chars`` 个汉字宽；超出则横向滚动轮流显示。
+
+    用固定宽度的窗口裁剪文字，避免长文件名把队列卡片撑出软件 UI 画面。
+    文字超出窗口宽度时启动定时器向左滚动，滚到末尾留白后回到起点循环。
+    """
+
+    def __init__(self, parent=None, max_chars: int = 8):
+        super().__init__(parent)
+        self._text = ""
+        self._max_chars = max_chars
+        self._offset = 0
+        self._char_w = 1
+        self._text_w = 0
+        self._window_w = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(60)
+        self._timer.timeout.connect(self._tick)
+        try:
+            self.setFont(BodyLabel().font())
+        except Exception:
+            pass
+        self._fm = self.fontMetrics()
+        self._measure("")
+        self.setFixedHeight(self._fm.height() + 2)
+
+    def set_text(self, text: str) -> None:
+        self._text = text or ""
+        self._measure(self._text)
+        if self._text_w > self._window_w:
+            if not self._timer.isActive():
+                self._timer.start()
+        else:
+            self._timer.stop()
+            self._offset = 0
+        self.update()
+
+    def _measure(self, text: str) -> None:
+        self._fm = self.fontMetrics()
+        self._char_w = max(1, self._fm.horizontalAdvance("中"))
+        self._window_w = int(self._char_w * self._max_chars) + 8
+        self._text_w = self._fm.horizontalAdvance(text)
+        self.setFixedWidth(self._window_w)
+
+    def _tick(self) -> None:
+        if self._text_w <= self._window_w:
+            self._timer.stop()
+            self._offset = 0
+            self.update()
+            return
+        self._offset -= 2
+        gap = self._char_w * 3
+        if -self._offset >= self._text_w + gap:
+            self._offset = self._window_w
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setClipRect(self.rect())
+        painter.setPen(QPen(QColor(text_strong())))
+        fm = self._fm
+        base_y = (self.height() + fm.ascent() - fm.descent()) // 2
+        painter.drawText(int(self._offset), int(base_y), self._text)
+        painter.end()
 
 
 def _counts_from(items: dict) -> dict:

@@ -39,7 +39,7 @@ from .drop_area import DropArea
 from .help_bubble import attach_help
 from .queue_widget import (
     ProgressBar, StatusPill, FormatPill, human_size, format_size_compare,
-    ScrollAutoFollow,
+    ScrollAutoFollow, MarqueeName,
 )
 
 
@@ -135,7 +135,8 @@ class CompressItemWidget(ThemedCard):
         # v0.7.4 Adj1：后缀矩形徽标取代固定图片图标
         self.iconLbl = ext_badge(Path(src).suffix.upper().lstrip("."), self)
         top.addWidget(self.iconLbl)
-        self.nameLbl = BodyLabel(Path(src).name)
+        self.nameLbl = MarqueeName(self)
+        self.nameLbl.set_text(Path(src).name)
         self.nameLbl.setObjectName("queueName")
         top.addWidget(self.nameLbl, 1)
         self.fmtPill = FormatPill(self._format_text())

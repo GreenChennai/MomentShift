@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget, QProgressBar
+from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget, QProgressBar, QSizePolicy
 
 from qfluentwidgets import (
     FluentIcon as FIF, StrongBodyLabel, CaptionLabel, BodyLabel,
@@ -26,6 +26,7 @@ from qfluentwidgets import (
 
 from ..core.qt_compat import QDesktopServices, QUrl, QThreadPool
 from ..core import engines as eng_mod
+from ..core import engine_download as dl_mod
 from ..i18n.translator import tr
 from .theme import (
     ThemedCard, CARD_MARGIN, muted_text, accent_color,
@@ -80,7 +81,11 @@ class EngineRow(QWidget):
         self.dot.setFixedSize(8, 8)
         top.addWidget(self.dot)
         self.nameLbl = StrongBodyLabel(engine.name)
-        top.addWidget(self.nameLbl)
+        # v0.7.6 修复2：长引擎名允许换行并收缩，避免把卡片撑出 UI 画面
+        self.nameLbl.setWordWrap(True)
+        self.nameLbl.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                   QSizePolicy.Policy.Preferred)
+        top.addWidget(self.nameLbl, 1)
         for algo in engine.algos:
             top.addWidget(algo_badge(algo, self))
         top.addStretch(1)
@@ -88,9 +93,12 @@ class EngineRow(QWidget):
         top.addWidget(self.statusLbl)
         vb.addLayout(top)
 
-        # 第二行：说明
+        # 第二行：说明（v0.7.6 修复2：限宽自动换行，字体随 #515151 提亮）
         self.descLbl = CaptionLabel(tr(engine.desc_key))
         self.descLbl.setWordWrap(True)
+        self.descLbl.setMinimumWidth(0)
+        self.descLbl.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                   QSizePolicy.Policy.Preferred)
         self.descLbl.setStyleSheet(
             f"color: {muted_text()}; background: transparent;")
         vb.addWidget(self.descLbl)
@@ -113,13 +121,21 @@ class EngineRow(QWidget):
             lambda: open_folder(str(eng_mod.engine_dir(self.engine.eid))))
         btns.addWidget(self.folderBtn)
 
-        # Real-ESRGAN 保留一键下载（官方 zip 自带 4 个模型）
+        # v0.7.6 功能2：可一键下载的引擎给「一键下载引擎与模型」按钮；
+        # 不能一键下载的（如依赖 CUDA / 显卡驱动内置）展示原因说明。
         self.dlBtn = None
-        if engine.eid == "realesrgan-ncnn-vulkan":
-            self.dlBtn = PrimaryPushButton(tr("upscale.engine.oneclick"), icon=FIF.DOWNLOAD)
+        self.reasonLbl = None
+        if engine.downloadable:
+            self.dlBtn = PrimaryPushButton(tr("engine.download.oneclick"), icon=FIF.DOWNLOAD)
             self.dlBtn.setFixedHeight(28)
             self.dlBtn.clicked.connect(self._one_click)
             btns.addWidget(self.dlBtn)
+        else:
+            self.reasonLbl = CaptionLabel(tr(engine.download_reason_key))
+            self.reasonLbl.setWordWrap(True)
+            self.reasonLbl.setStyleSheet(
+                f"color: {muted_text()}; background: transparent; font-size: 11px;")
+            btns.addWidget(self.reasonLbl)
         vb.addLayout(btns)
 
         self.prog = QProgressBar()
@@ -134,14 +150,16 @@ class EngineRow(QWidget):
 
         self.refresh()
 
-    # -- 一键下载（仅 Real-ESRGAN）--
+    # -- 一键下载（v0.7.6：按引擎注册表的下载源，HF→GitHub→官方）--
     def _one_click(self):
-        from ..core import upscaler
         if self.dlBtn:
             self.dlBtn.setEnabled(False)
         self.prog.show()
-        worker = upscaler.UpscalerDownloadWorker(
-            str(eng_mod.engine_dir(self.engine.eid)))
+        worker = dl_mod.EngineDownloadWorker(
+            self.engine.eid,
+            str(eng_mod.engine_dir(self.engine.eid)),
+            list(self.engine.download_sources),
+        )
         worker.signals.finished.connect(self._on_dl_done)
         QThreadPool.globalInstance().start(worker)
 
@@ -180,7 +198,9 @@ class EngineRow(QWidget):
         self.linkBtn.setText(tr("engine.goto_download"))
         self.folderBtn.setText(tr("engine.open_folder"))
         if self.dlBtn:
-            self.dlBtn.setText(tr("upscale.engine.oneclick"))
+            self.dlBtn.setText(tr("engine.download.oneclick"))
+        if self.reasonLbl:
+            self.reasonLbl.setText(tr(self.engine.download_reason_key))
         self.refresh()
 
 
