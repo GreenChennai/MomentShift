@@ -138,6 +138,26 @@ class QuickLaunchInterface(InterfaceBase):
         self.g_tasks.addSettingCard(self.convertCard)
         self.g_tasks.addSettingCard(self.compressCard)
         self.g_tasks.addSettingCard(self.upscaleCard)
+        # v0.7.28：通知开关拆成「开始任务通知」/「完成任务通知」（Windows 弹窗自带声音）
+        self.notifyStartCard = SwitchSettingCard(
+            FIF.PLAY, tr("quicklaunch.notify.start"), tr("quicklaunch.notify.start.hint"),
+            cfg.quickNotifyStart,
+        )
+        self.g_tasks.addSettingCard(self.notifyStartCard)
+        self.notifyDoneCard = SwitchSettingCard(
+            FIF.CHECKBOX, tr("quicklaunch.notify.done"), tr("quicklaunch.notify.done.hint"),
+            cfg.quickNotifyDone,
+        )
+        self.g_tasks.addSettingCard(self.notifyDoneCard)
+        # v0.7.29：简介文本过长 → 自动换行（SettingCard 内容默认不换行）
+        # v0.7.30：SettingCard 固定高度 70px 会截断换行后的简介 → 解除固定高度自适应
+        for _card in (self.notifyStartCard, self.notifyDoneCard):
+            try:
+                _card.contentLabel.setWordWrap(True)
+                _card.setFixedHeight(16777215)
+                _card.adjustSize()
+            except Exception:
+                pass
         self.vbox.addWidget(self.g_tasks)
 
         # =====================================================================

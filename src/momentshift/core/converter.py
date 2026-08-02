@@ -37,89 +37,120 @@ def run_conversion(
     - ``returncode < 0`` => failed to even launch ffmpeg.
     - ``returncode > 0`` => ffmpeg exited with an error (stderr captured).
 
-    Any unexpected Python exception is caught, logged, and returned as a
-    negative return code so it never crashes the host application.
+    v0.7.28: 硬件编码失败（nvenc/qsv 等运行时不可用）时自动用 CPU 重试一次。
     """
-    try:
-        args = build_args(task, hw)
+    hw = hw or {}
+
+    def _execute(args: list[str]) -> tuple[Optional[int], str]:
         cmd = [ffmpeg_path, *args]
         log.info("ffmpeg command: %s", " ".join(cmd))
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # merge logs into stdout
+                text=True,
+                bufsize=1,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=WIN_SILENT,
+            )
+        except OSError as exc:
+            log.error("Failed to launch ffmpeg: %s", exc)
+            return (-1, f"failed to launch ffmpeg: {exc}")
+
+        duration_ms: Optional[int] = None
+        last_lines: list[str] = []
+        try:
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    return (None, "canceled")
+
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+
+                if "=" in line and not line.startswith(" "):
+                    key, _, val = line.partition("=")
+                    key, val = key.strip(), val.strip()
+                    if key == "duration_ms" and val.isdigit():
+                        duration_ms = int(val)
+                        task.duration_ms = duration_ms
+                    elif key == "out_time_ms" and val.isdigit() and duration_ms:
+                        pct = min(100, int(int(val) / duration_ms * 100))
+                        if on_progress:
+                            on_progress(pct)
+                    elif key == "progress" and val == "end":
+                        if on_progress:
+                            on_progress(100)
+                else:
+                    if on_log:
+                        on_log(line)
+                    last_lines.append(line)
+                    if len(last_lines) > 60:
+                        last_lines.pop(0)
+        except Exception as exc:  # pragma: no cover - defensive
+            log.exception("Error while reading ffmpeg output: %s", exc)
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            return (-3, f"internal error reading ffmpeg output: {exc}")
+
+        returncode = proc.wait()
+        log.info(
+            "ffmpeg finished: returncode=%s input=%s output=%s",
+            returncode, task.input_path, task.output_path,
+        )
+        if returncode != 0:
+            tail = "\n".join(last_lines[-30:])
+            log.error("ffmpeg failed (rc=%s). Last output:\n%s", returncode, tail)
+            return (returncode, tail or f"ffmpeg exited with code {returncode}")
+        return (returncode, "")
+
+    # ---- 首次执行（可能走 GPU 编码） ----
+    try:
+        args = build_args(task, hw)
     except Exception as exc:  # pragma: no cover - defensive
         log.exception("Failed to build ffmpeg arguments: %s", exc)
         return (-2, f"internal error building arguments: {exc}")
 
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # merge logs into stdout for deadlock-free reading
-            text=True,
-            bufsize=1,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=WIN_SILENT,
-        )
-    except OSError as exc:
-        log.error("Failed to launch ffmpeg: %s", exc)
-        return (-1, f"failed to launch ffmpeg: {exc}")
+    returncode, err = _execute(args)
 
-    duration_ms: Optional[int] = None
-    last_lines: list[str] = []
-    try:
-        while True:
-            if cancel_event is not None and cancel_event.is_set():
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                return (None, "canceled")
-
-            line = proc.stdout.readline()
-            if not line:
-                break
-            line = line.strip()
-            if not line:
-                continue
-
-            # ffmpeg -progress lines are `key=value` with no leading whitespace.
-            if "=" in line and not line.startswith(" "):
-                key, _, val = line.partition("=")
-                key, val = key.strip(), val.strip()
-                if key == "duration_ms" and val.isdigit():
-                    duration_ms = int(val)
-                    task.duration_ms = duration_ms
-                elif key == "out_time_ms" and val.isdigit() and duration_ms:
-                    pct = min(100, int(int(val) / duration_ms * 100))
-                    if on_progress:
-                        on_progress(pct)
-                elif key == "progress" and val == "end":
-                    if on_progress:
-                        on_progress(100)
-            else:
-                if on_log:
-                    on_log(line)
-                last_lines.append(line)
-                if len(last_lines) > 60:
-                    last_lines.pop(0)
-    except Exception as exc:  # pragma: no cover - defensive
-        log.exception("Error while reading ffmpeg output: %s", exc)
-        try:
-            proc.kill()
-        except OSError:
-            pass
-        return (-3, f"internal error reading ffmpeg output: {exc}")
-
-    returncode = proc.wait()
-    log.info(
-        "ffmpeg finished: returncode=%s input=%s output=%s",
-        returncode, task.input_path, task.output_path,
-    )
+    # ---- v0.7.28：GPU 编码失败 → CPU 回退一次 ----
+    gpu_active = bool(getattr(task, "use_gpu", False)) and bool(
+        hw.get("h264") or hw.get("hevc"))
+    if returncode not in (0, None) and gpu_active and err:
+        _hw_fail = any(k in err.lower() for k in (
+            "error while opening encoder", "cannot load",
+            "error creating a mfx session", "not supported",
+            "failed to initialise", "no device", "invalid argument",
+            # v0.7.29：GPU 编码器参数不被该 ffmpeg 版本支持（如 amf -qv）
+            "unrecognized option", "option not found",
+            "error splitting the argument list",
+        ))
+        if _hw_fail:
+            log.warning("GPU encoder failed, retrying with CPU: %s", task.input_path)
+            saved = getattr(task, "use_gpu", False)
+            task.use_gpu = False
+            try:
+                returncode, err = _execute(build_args(task, {}))
+            except Exception:
+                log.exception("CPU fallback build failed")
+                returncode, err = (returncode, err or "fallback failed")
+            finally:
+                task.use_gpu = saved
 
     if returncode != 0:
-        tail = "\n".join(last_lines[-30:])
-        log.error("ffmpeg failed (rc=%s). Last output:\n%s", returncode, tail)
-        return (returncode, tail or f"ffmpeg exited with code {returncode}")
+        return (returncode, err or f"ffmpeg exited with code {returncode}")
 
     # Record the produced file size for the size-comparison UI.
     try:

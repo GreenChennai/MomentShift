@@ -85,6 +85,13 @@ class _StagingList(QWidget):
             self._paths.remove(path)
         self._render()
 
+    def add_files(self, files: list[str]) -> None:
+        """v0.7.24：追加文件（供快速调用异步载入）。"""
+        for f in files:
+            if f not in self._paths:
+                self._paths.append(f)
+        self._render()
+
     def paths(self) -> list[str]:
         return list(self._paths)
 
@@ -133,6 +140,8 @@ class _QuickTaskDialog(QDialog):
         self.setObjectName("quickDlg")
         self.setStyleSheet(f"#quickDlg {{ background-color: {surface().name()}; }}")
         self._build_ui(files, title_key, settings_title_key)
+        self._loading = False   # v0.7.24：异步载入状态
+        self._update_confirm_enabled()
 
     def _build_ui(self, files, title_key, settings_title_key):
         root = QVBoxLayout(self)
@@ -204,6 +213,30 @@ class _QuickTaskDialog(QDialog):
         self.confirmBtn.clicked.connect(self._confirm)
         btns.addWidget(self.confirmBtn)
         root.addLayout(btns)
+        self._confirm_ss = self.confirmBtn.styleSheet() or ""
+
+    def add_paths(self, paths: list[str]) -> None:
+        """v0.7.24：异步追加待处理文件。"""
+        self.staging.add_files(paths)
+        self._update_confirm_enabled()
+
+    def set_loading(self, loading: bool) -> None:
+        """v0.7.24：载入中 → 禁用并显示黄色「载入中」。"""
+        self._loading = loading
+        if loading:
+            self.confirmBtn.setEnabled(False)
+            self.confirmBtn.setText(tr("quick.loading"))
+            self.confirmBtn.setStyleSheet(
+                "QPushButton{background:#C7920A;color:#FFFFFF;border:none;"
+                "border-radius:6px;padding:0 24px;font-weight:600;}")
+        else:
+            self.confirmBtn.setText(tr("quick.confirm"))
+            self.confirmBtn.setStyleSheet(self._confirm_ss)
+            self._update_confirm_enabled()
+
+    def _update_confirm_enabled(self):
+        self.confirmBtn.setEnabled(
+            not getattr(self, "_loading", False) and bool(self.staging.paths()))
 
     def _embed_settings(self, card):
         if card is not None:

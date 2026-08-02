@@ -154,8 +154,10 @@ class AdvancedPanel(QWidget):
             return
         from ..core.compressor import default_backend
         f = (fmt or "").lower().lstrip(".")
-        valid_default = default_backend(f)  # oxipng / jpegoptim / pillow
-        for bid in ("oxipng", "jpegoptim"):
+        valid_default = default_backend(f)  # oxipng / jpegoptim / gifsicle / pillow
+        for bid in ("oxipng", "jpegoptim", "gifsicle"):   # v0.7.28: + gifsicle
+            if bid not in self._backend_order:
+                continue
             idx = self._backend_order.index(bid)
             disabled = valid_default != bid
             try:
@@ -165,7 +167,7 @@ class AdvancedPanel(QWidget):
         comp = advanced.adv["image"].get("compress", {})
         if isinstance(comp, dict):
             cur = comp.get("backend", "auto")
-            if cur in ("oxipng", "jpegoptim") and valid_default != cur:
+            if cur in ("oxipng", "jpegoptim", "gifsicle") and valid_default != cur:
                 comp["backend"] = "auto"
                 self._backend_combo.setCurrentText(tr("advanced.compression.auto"))
 
@@ -189,12 +191,13 @@ class AdvancedPanel(QWidget):
             [(tr("advanced.compression.auto"), "auto"),
              (tr("advanced.compression.oxipng"), "oxipng"),
              (tr("advanced.compression.jpegoptim"), "jpegoptim"),
+             (tr("advanced.compression.gifsicle"), "gifsicle"),
              (tr("advanced.compression.pillow"), "pillow")],
             comp.get("backend", "auto"),
             lambda v: comp.__setitem__("backend", v),
         )
         self._backend_combo = backend
-        self._backend_order = ["auto", "oxipng", "jpegoptim", "pillow"]
+        self._backend_order = ["auto", "oxipng", "jpegoptim", "gifsicle", "pillow"]
         fr = field_row(tr("advanced.compression.backend"), backend, label_width=80)
         self._add_help(fr, "advanced.help.backend")
         self.vbox.addWidget(fr)
@@ -369,9 +372,41 @@ class AdvancedPanel(QWidget):
         self._add_help(fr, "advanced.help.pil.subsampling"); pil_l.addWidget(fr)
         self.vbox.addWidget(pil_grp)
 
+        # -- Gifsicle 参数组（v0.7.28）----------------------------------
+        gs_grp, gs_l = self._param_group()
+        gs_opt = QSlider(Qt.Orientation.Horizontal)
+        gs_opt.setRange(1, 3)
+        gs_opt.setValue(int(comp.get("gs_optimize", 3)))
+        gs_opt_label = QLabel(str(comp.get("gs_optimize", 3)))
+        gs_opt.valueChanged.connect(
+            lambda v: (comp.__setitem__("gs_optimize", v), gs_opt_label.setText(str(v))))
+        gs_row = QHBoxLayout(); gs_row.addWidget(gs_opt_label); gs_row.addWidget(gs_opt, 1)
+        fr = field_row(tr("advanced.gifsicle.optimize"), gs_row)
+        self._add_help(fr, "advanced.help.gifsicle.optimize"); gs_l.addWidget(fr)
+
+        gs_loop = QSpinBox()
+        gs_loop.setRange(0, 100)
+        gs_loop.setValue(int(comp.get("gs_loop", 0)))
+        gs_loop.valueChanged.connect(lambda v: comp.__setitem__("gs_loop", v))
+        fr = field_row(tr("advanced.gifsicle.loop"), gs_loop)
+        self._add_help(fr, "advanced.help.gifsicle.loop"); gs_l.addWidget(fr)
+
+        gs_lossy = QSlider(Qt.Orientation.Horizontal)
+        gs_lossy.setRange(0, 200)
+        gs_lossy.setValue(int(comp.get("gs_lossy", 0)))
+        gs_lossy_label = QLabel(str(comp.get("gs_lossy", 0)))
+        gs_lossy.valueChanged.connect(
+            lambda v: (comp.__setitem__("gs_lossy", v), gs_lossy_label.setText(str(v))))
+        gs_row = QHBoxLayout(); gs_row.addWidget(gs_lossy_label); gs_row.addWidget(gs_lossy, 1)
+        fr = field_row(tr("advanced.gifsicle.lossy"), gs_row)
+        self._add_help(fr, "advanced.help.gifsicle.lossy"); gs_l.addWidget(fr)
+        self.vbox.addWidget(gs_grp)
+
         # -- 按后端显示对应参数组 ----------------------------------------
         self._backend_groups = {
-            "oxipng": oxi_grp, "jpegoptim": jo_grp, "pillow": pil_grp,
+            "oxipng": oxi_grp, "jpegoptim": jo_grp,
+            "gifsicle": gs_grp,   # v0.7.28
+            "pillow": pil_grp,
         }
 
         def _sync(val: str):

@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMessageBox
 from qfluentwidgets import setTheme, Theme, setThemeColor
 
 from .core.config import cfg
-from .i18n.translator import translator, LocaleKey
+from .i18n.translator import translator, LocaleKey, tr
 from .core.logger import get_logger
 from .metadata import APP_NAME, VERSION
 
@@ -55,19 +55,18 @@ def _setup_app() -> QApplication:
     return app
 
 
-def _notify(window, title: str, body: str) -> None:
-    """系统提示 + 提示音通知任务完成（v0.7.19：winsound.Beep 强制蜂鸣）。"""
-    try:
-        import winsound
-        # MessageBeep 依赖系统「程序事件」声音方案，被禁用时静音；
-        # winsound.Beep 直接驱动扬声器，一定有声音
-        winsound.MessageBeep(winsound.MB_ICONINFORMATION)
-        winsound.Beep(880, 250)
-    except Exception:
-        try:
-            QApplication.beep()
-        except Exception:
-            pass
+def _notify(window, title: str, body: str, enabled_key: str = "quickNotifyDone") -> None:
+    """任务开始/完成提示（v0.7.28）。
+
+    - 通知：托盘 showMessage（Windows 通知弹窗**自带声音**，不再额外蜂鸣）
+    - 开关：cfg.quickNotifyStart / quickNotifyDone（enabled_key 指定）
+    - 开关关闭 → 不弹通知
+    """
+    from .core.config import cfg as _cfg
+    sw = getattr(_cfg, enabled_key, None)
+    if sw is not None and not sw.value:
+        log.info("quick notify disabled (%s): %s — %s", enabled_key, title, body)
+        return
     try:
         tray = getattr(window, "tray", None)
         if tray is None:
@@ -75,8 +74,26 @@ def _notify(window, title: str, body: str) -> None:
             tray.show()
             window.tray = tray
         tray.showMessage(title, body, QSystemTrayIcon.MessageIcon.Information, 4000)
+        log.info("quick notify shown: %s — %s", title, body)
     except Exception:
         log.warning("quick: notify failed (%s)", title)
+
+
+def _load_files_async(dlg, files, chunk: int = 8, delay: int = 25) -> None:
+    """v0.7.24：窗口秒弹后异步分段载入文件；载入期间确认按钮禁用并显示「载入中」。"""
+    batch = list(files)
+    dlg.set_loading(True)
+
+    def _add_next():
+        if not batch:
+            dlg.set_loading(False)
+            return
+        part = batch[:chunk]
+        del batch[:chunk]
+        dlg.add_paths(part)
+        QTimer.singleShot(delay, _add_next)
+
+    QTimer.singleShot(0, _add_next)
 
 
 def _fatal(msg: str) -> None:
@@ -86,6 +103,85 @@ def _fatal(msg: str) -> None:
     except Exception:
         pass
     QCoreApplication.quit()
+
+
+# ---------------------------------------------------------------------------
+# v0.7.22：模块级一次性通知连接（多次 flush 不重复连接/重复通知）
+# ---------------------------------------------------------------------------
+def _ensure_convert_notify(window, manager) -> None:
+    if getattr(manager, "_quick_notify_bound", False):
+        return
+    manager._quick_notify_bound = True
+    state = {"n": 0, "done": 0, "notified": False}
+
+    def _on_added(t):
+        state["n"] += 1
+        state["notified"] = False
+
+    # v0.7.23 修复：task_finished 信号为 Signal(str, bool, str)（3 参数），
+    # 之前写成 4 参数 (tid, ok, saved, detail) 导致 PyQt 静默连接失败，
+    # 转换任务完成从未触发过通知！
+    def _on_finished(tid, ok, _err):
+        state["done"] += 1
+        if (state["n"] > 0 and state["done"] >= state["n"]
+                and not state["notified"]):
+            state["notified"] = True
+            log.info("convert notify: n=%d done=%d", state["n"], state["done"])
+            # v0.7.26：下个主循环 tick 再通知，避免信号槽链深处延迟
+            QTimer.singleShot(0, lambda: _notify(
+                window, tr("quick.notify.title"),
+                tr("quick.notify.convert_done")))
+
+    manager.task_added.connect(_on_added)
+    manager.task_finished.connect(_on_finished)
+
+
+def _ensure_compress_notify(window, ci) -> None:
+    if getattr(ci, "_quick_notify_bound", False):
+        return
+    ci._quick_notify_bound = True
+    state = {"n": 0, "done": 0, "notified": False}
+
+    def _on_added(iid, name):
+        state["n"] += 1
+        state["notified"] = False
+
+    def _on_finished(iid, status):
+        state["done"] += 1
+        if (state["n"] > 0 and state["done"] >= state["n"]
+                and not state["notified"]):
+            state["notified"] = True
+            log.info("compress notify: n=%d done=%d", state["n"], state["done"])
+            QTimer.singleShot(0, lambda: _notify(
+                window, tr("quick.notify.title"),
+                tr("quick.notify.compress_done")))
+
+    ci.taskAdded.connect(_on_added)
+    ci.taskFinished.connect(_on_finished)
+
+
+def _ensure_upscale_notify(window, ui) -> None:
+    if getattr(ui, "_quick_notify_bound", False):
+        return
+    ui._quick_notify_bound = True
+    state = {"n": 0, "done": 0, "notified": False}
+
+    def _on_added(iid, name):
+        state["n"] += 1
+        state["notified"] = False
+
+    def _on_finished(iid, status):
+        state["done"] += 1
+        if (state["n"] > 0 and state["done"] >= state["n"]
+                and not state["notified"]):
+            state["notified"] = True
+            log.info("upscale notify: n=%d done=%d", state["n"], state["done"])
+            QTimer.singleShot(0, lambda: _notify(
+                window, tr("quick.notify.title"),
+                tr("quick.notify.upscale_done")))
+
+    ui.taskAdded.connect(_on_added)
+    ui.taskFinished.connect(_on_finished)
 
 
 # ---------------------------------------------------------------------------
@@ -100,13 +196,13 @@ def _try_forward_to_running(task: str, files: list[str]) -> bool:
     from PyQt6.QtNetwork import QLocalSocket
     sock = QLocalSocket()
     sock.connectToServer(_QUICK_IPC_NAME)
-    if not sock.waitForConnected(400):
+    if not sock.waitForConnected(200):   # v0.7.23：缩短连接超时
         return False
     try:
         payload = json.dumps({"task": task, "files": files}).encode("utf-8")
         sock.write(payload)
         sock.flush()
-        sock.waitForBytesWritten(600)
+        sock.waitForBytesWritten(300)   # v0.7.23：缩短写超时
         log.info("quick: forwarded %s (%d files) to running instance",
                  task, len(files))
         return True
@@ -120,33 +216,38 @@ def _try_forward_to_running(task: str, files: list[str]) -> bool:
             pass
 
 
-def handle_ipc_request(task: str, files: list[str], window, manager) -> None:
-    """已运行实例收到 IPC 快速调用请求：在当前主窗口弹设置窗并注入队列。"""
-    log.info("handle IPC: task=%s files=%d", task, len(files))
-    try:
-        if task == "convert":
-            _run_convert(files, window, manager)
-        elif task == "compress":
-            _run_compress(files, window)
-        elif task == "upscale":
-            _run_upscale(files, window)
-        else:
-            log.error("quick: unknown task %s", task)
-    except Exception:
-        import traceback
-        log.critical("quick IPC dispatch failed:\n%s", traceback.format_exc())
+def handle_quick_batch(batch, window, manager) -> None:
+    """v0.7.22：批量快速调用请求 → 同 task 合并文件后弹窗。
+
+    batch: list[(task, files)]，来自本地请求或 IPC 转发（多选 %1 逐文件）。
+    """
+    merged: dict[str, list[str]] = {}
+    for task, files in batch:
+        merged.setdefault(task, []).extend(files or [])
+    for task, files in merged.items():
+        log.info("quick batch dispatch: task=%s files=%d", task, len(files))
         try:
-            QMessageBox.critical(None, APP_NAME, "快速调用失败，详见日志。")
+            if task == "convert":
+                _run_convert(files, window, manager)
+            elif task == "compress":
+                _run_compress(files, window)
+            elif task == "upscale":
+                _run_upscale(files, window)
+            else:
+                log.error("quick: unknown task %s", task)
         except Exception:
-            pass
+            import traceback
+            log.critical("quick batch dispatch failed:\n%s", traceback.format_exc())
 
 
 # ---------------------------------------------------------------------------
 def run_quick(task: str, files: list[str]) -> int:
     """快速调用入口。
 
-    v0.7.16：遵守单实例 —— 已有实例则 IPC 转发后退出；
-    无实例才启动主窗口并把任务注入对应队列。
+    v0.7.22：%1 逐文件调用（可靠）；多选由已运行实例按时间窗口聚合。
+    - 已有实例 → IPC 转发进批次队列
+    - 无实例 → 启动主窗口，本地请求也进同一批次队列
+    - 单实例锁被占（多选竞态）→ 轮询转发到刚启动的主窗口
     """
     log.info("Quick launch: task=%s files=%d first=%s", task, len(files),
              files[0] if files else "")
@@ -159,8 +260,15 @@ def run_quick(task: str, files: list[str]) -> int:
     # 无 IPC 转发（无实例或实例为旧版本）→ 获取单实例锁，防止后续重复启动
     lock = _acquire_instance_lock()
     if lock is None:
-        _fatal("MomentShift 已在运行，请从系统托盘唤起。")
-        return 1
+        # v0.7.22：多选时 N 个进程同时启动，锁被首个进程占用 → 轮询转发到
+        # 刚启动的主窗口（IPC server 初始化约需 1s），不报错不闪退
+        import time
+        for _ in range(20):
+            if _try_forward_to_running(task, files):
+                return 0
+            time.sleep(0.25)
+        log.warning("quick: 无法转发到已运行实例，静默放弃本次请求")
+        return 0
     _KEEP_ALIVE.append(lock)   # 持有锁，防止 GC 释放
 
     from .core.queue import ConversionManager
@@ -170,39 +278,11 @@ def run_quick(task: str, files: list[str]) -> int:
     window = MainWindow(manager)
     window.show()
 
-    def _dispatch():
-        # v0.7.17：等待主窗口懒加载（压缩/放大）完成后再派发，避免提前
-        # addSubInterface 破坏导航模块顺序
-        try:
-            if task == "convert":
-                _run_convert(files, window, manager)
-            elif task == "compress":
-                if window.compressInterface is None:
-                    for spec in window._lazy:
-                        if spec[0] == "compress":
-                            window._build_lazy(*spec)
-                            break
-                _run_compress(files, window)
-            elif task == "upscale":
-                if window.upscaleInterface is None:
-                    for spec in window._lazy:
-                        if spec[0] == "upscale":
-                            window._build_lazy(*spec)
-                            break
-                _run_upscale(files, window)
-            else:
-                log.error("quick: unknown task %s", task)
-        except Exception:
-            import traceback
-            tb = traceback.format_exc()
-            log.critical("quick dispatch failed:\n%s", tb)
-            try:
-                QMessageBox.critical(None, APP_NAME, f"快速调用失败：\n{tb[-1500:]}")
-            except Exception:
-                pass
+    # v0.7.22：本地请求也进批次队列（等待懒加载完成后入队，与其他 IPC 请求聚合）
+    def _enqueue():
+        window.enqueue_quick_request(task, files)
+    QTimer.singleShot(150, _enqueue)   # v0.7.23：缩短等待，尽快入批次
 
-    # v0.7.17：300ms 确保主窗口懒加载（compress/upscale）全部完成，模块顺序不乱
-    QTimer.singleShot(300, _dispatch)
     app.exec()
     log.info("quick: %s done", task)
     return 0
@@ -252,36 +332,26 @@ def _run_convert(files, window, manager):
     elif cfg.hardware.value == "auto":
         gpu = bool(manager.hw)
 
-    # v0.7.19：同类文件 → 合并进一个弹窗；混合类型 → 每个类别一个弹窗。
-    # 通知计数全局统一，避免重复通知。
-    added = {"n": 0}
-    done = {"count": 0}
-    notified = {"ok": False}
-
-    def _on_task_added(t):
-        added["n"] += 1
-    manager.task_added.connect(_on_task_added)
-
-    def _on_task_finished(tid, ok, saved, detail):
-        done["count"] += 1
-        if (not notified["ok"] and added["n"] > 0
-                and done["count"] >= added["n"]):
-            notified["ok"] = True
-            _notify(window, tr("quick.notify.title"),
-                    tr("quick.notify.convert_done"))
-    manager.task_finished.connect(_on_task_finished)
+    # v0.7.22：通知连接一次（模块级），多次 flush 不重复
+    _ensure_convert_notify(window, manager)
 
     for cat, paths in cat_files.items():
-        dlg = ConvertSetupDialog(None, manager, paths, {}, lambda: gpu, cat)
+        # v0.7.24：空文件秒弹，文件异步分段载入
+        dlg = ConvertSetupDialog(None, manager, [], {}, lambda: gpu, cat)
         dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         def _on_dialog_finished(r: int, _m=manager):
             if r == 1:
                 _m.start()   # 主窗口转换队列自动开始
+                # v0.7.26：任务已开始提示（v0.7.27：仅 toast 不蜂鸣，刺耳）
+                QTimer.singleShot(0, lambda: _notify(
+                    window, tr("quick.notify.title"), tr("quick.notify.started"),
+                    enabled_key="quickNotifyStart"))
             # v0.7.16：取消不弹任何提示框，主窗口保留
         dlg.finished.connect(_on_dialog_finished)
         _KEEP_ALIVE.append(dlg)
         dlg.show()
+        _load_files_async(dlg, paths)
 
 
 def _run_compress(files, window):
@@ -296,14 +366,8 @@ def _run_compress(files, window):
         return
 
     ci = window.compressInterface
-    total = {"n": 0, "done": 0}
-
-    def _on_task_finished(iid, status):
-        total["done"] += 1
-        if total["done"] >= total["n"] > 0:
-            _notify(window, tr("quick.notify.title"),
-                    tr("quick.notify.compress_done"))
-    ci.taskFinished.connect(_on_task_finished)
+    # v0.7.22：通知连接一次（模块级），多次 flush 不重复
+    _ensure_compress_notify(window, ci)
 
     def _confirm(paths, iface_settings):
         # 应用对话框设置到主窗口压缩队列
@@ -315,14 +379,19 @@ def _run_compress(files, window):
         ci._folder = iface_settings._folder
         for f in paths:
             ci._add_item(f)
-        total["n"] = len(paths)
         ci._on_start()   # 主窗口压缩队列自动开始
+        # v0.7.28：开始通知（受 quickNotifyStart 开关控制，不蜂鸣）
+        QTimer.singleShot(0, lambda: _notify(
+            window, tr("quick.notify.title"), tr("quick.notify.started"),
+            enabled_key="quickNotifyStart"))
 
-    dlg = QuickCompressDialog(None, valid_files, _confirm)
+    # v0.7.24：空文件秒弹，文件异步分段载入
+    dlg = QuickCompressDialog(None, [], _confirm)
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.finished.connect(lambda r: None)   # v0.7.16：取消不弹提示框
     _KEEP_ALIVE.append(dlg)
     dlg.show()
+    _load_files_async(dlg, valid_files)
 
 
 def _run_upscale(files, window):
@@ -342,14 +411,8 @@ def _run_upscale(files, window):
         return
 
     ui = window.upscaleInterface
-    total = {"n": 0, "done": 0}
-
-    def _on_task_finished(iid, status):
-        total["done"] += 1
-        if total["done"] >= total["n"] > 0:
-            _notify(window, tr("quick.notify.title"),
-                    tr("quick.notify.upscale_done"))
-    ui.taskFinished.connect(_on_task_finished)
+    # v0.7.22：通知连接一次（模块级），多次 flush 不重复
+    _ensure_upscale_notify(window, ui)
 
     def _confirm(paths, iface_settings):
         # 应用对话框设置到主窗口放大队列
@@ -364,11 +427,16 @@ def _run_upscale(files, window):
         except Exception:
             ui._run_values = None
         ui._add_to_queue(paths)
-        total["n"] = len(paths)
         ui._on_start()   # 主窗口放大队列自动开始
+        # v0.7.28：开始通知（受 quickNotifyStart 开关控制，不蜂鸣）
+        QTimer.singleShot(0, lambda: _notify(
+            window, tr("quick.notify.title"), tr("quick.notify.started"),
+            enabled_key="quickNotifyStart"))
 
-    dlg = QuickUpscaleDialog(None, valid_files, _confirm)
+    # v0.7.24：空文件秒弹，文件异步分段载入
+    dlg = QuickUpscaleDialog(None, [], _confirm)
     dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.finished.connect(lambda r: None)   # v0.7.16：取消不弹提示框
     _KEEP_ALIVE.append(dlg)
     dlg.show()
+    _load_files_async(dlg, valid_files)

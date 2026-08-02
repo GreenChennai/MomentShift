@@ -51,11 +51,14 @@ class _WorkerSignals(QObject):
     # id, ok, saved_bytes, detail, effective_backend
     finished = Signal(str, bool, int, str, str)
 
+    def __init__(self, parent=None):
+        super().__init__(parent)   # v0.7.24：parent=界面，Qt 持有防 GC
+
 
 class CompressWorker(QRunnable):
     """单个图片压缩任务。在 QThreadPool 线程中执行。"""
 
-    def __init__(self, item_id, src, out, target_fmt, mode, quality, preferred, opts=None):
+    def __init__(self, item_id, src, out, target_fmt, mode, quality, preferred, opts=None, owner=None):
         super().__init__()
         self.setAutoDelete(True)
         self.item_id = item_id
@@ -66,7 +69,7 @@ class CompressWorker(QRunnable):
         self.quality = quality
         self.preferred = preferred  # "pillow"/"oxipng"/"jpegoptim" 或 None
         self.opts = opts or {}
-        self.signals = _WorkerSignals()
+        self.signals = _WorkerSignals(owner)   # v0.7.24：parent=界面
 
     def run(self):
         """在线程池中执行压缩。"""
@@ -361,6 +364,7 @@ class CompressInterface(InterfaceBase):
             "jpegoptim": {"jo_mode": "lossless", "jo_max": 85, "jo_strip": "none",
                           "jo_progressive": "auto", "jo_threshold": 0,
                           "jo_preserve": True, "jo_retry": False},
+            "gifsicle": {"gs_optimize": 3, "gs_loop": 0, "gs_lossy": 0},  # v0.7.28
             "pillow": {"pil_quality": 95, "pil_optimize": True,
                        "pil_progressive": True, "pil_subsampling": "4:4:4"},
         }
@@ -393,11 +397,12 @@ class CompressInterface(InterfaceBase):
             "compress.settings.title", collapsed=True)
         self._settingsCard = scard
 
-        # 压缩后端选择（v0.7.0：auto / oxipng / jpegoptim / pillow）
+        # 压缩后端选择（v0.7.0：auto / oxipng / jpegoptim / pillow；v0.7.28：+ gifsicle）
         self.programCombo = self._make_combo(
             [(tr("advanced.compression.auto"), "auto"),
              (tr("advanced.compression.oxipng"), "oxipng"),
              (tr("advanced.compression.jpegoptim"), "jpegoptim"),
+             (tr("advanced.compression.gifsicle"), "gifsicle"),
              (tr("advanced.compression.pillow"), "pillow")],
             self._program, lambda v: self._on_program(v))
         svb.addWidget(field_row(tr("advanced.compression.backend"), self.programCombo))
@@ -435,6 +440,8 @@ class CompressInterface(InterfaceBase):
         _bcont_ly.addWidget(self.oxipngGroup)
         self.joGroup = self._backend_section("jpegoptim", self._build_jpegoptim())
         _bcont_ly.addWidget(self.joGroup)
+        self.gsGroup = self._backend_section("gifsicle", self._build_gifsicle())
+        _bcont_ly.addWidget(self.gsGroup)
         self.pilGroup = self._backend_section("pillow", self._build_pillow())
         _bcont_ly.addWidget(self.pilGroup)
         svb.addWidget(self._backend_container)
@@ -657,6 +664,51 @@ class CompressInterface(InterfaceBase):
         if hasattr(self, "_jo_max_fr"):
             self._jo_max_fr.setEnabled(mode == "lossy")
 
+    def _build_gifsicle(self):
+        """v0.7.28：Gifsicle 动图压缩参数（优化级别 / 循环次数 / 有损阈值）。"""
+        grp = self._tool_opts["gifsicle"]
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 0, 0, 0)
+        ly.setSpacing(10)
+
+        # 优化级别 1-3
+        lvl = QSlider(Qt.Orientation.Horizontal)
+        lvl.setRange(1, 3)
+        lvl.setValue(int(grp.get("gs_optimize", 3)))
+        lvl_label = QLabel(str(grp.get("gs_optimize", 3)))
+        lvl.valueChanged.connect(
+            lambda v: (grp.__setitem__("gs_optimize", v), lvl_label.setText(str(v))))
+        row = QHBoxLayout()
+        row.addWidget(lvl_label)
+        row.addWidget(lvl, 1)
+        fr = field_row(tr("advanced.gifsicle.optimize"), row)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.gifsicle.optimize")
+
+        # 循环次数 0-100（0=无限）
+        loop = QSpinBox()
+        loop.setRange(0, 100)
+        loop.setValue(int(grp.get("gs_loop", 0)))
+        loop.valueChanged.connect(lambda v: grp.__setitem__("gs_loop", v))
+        fr = field_row(tr("advanced.gifsicle.loop"), loop)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.gifsicle.loop")
+
+        # 有损阈值 0-200（0=无损）
+        lossy = QSlider(Qt.Orientation.Horizontal)
+        lossy.setRange(0, 200)
+        lossy.setValue(int(grp.get("gs_lossy", 0)))
+        lossy_label = QLabel(str(grp.get("gs_lossy", 0)))
+        lossy.valueChanged.connect(
+            lambda v: (grp.__setitem__("gs_lossy", v), lossy_label.setText(str(v))))
+        row = QHBoxLayout()
+        row.addWidget(lossy_label)
+        row.addWidget(lossy, 1)
+        fr = field_row(tr("advanced.gifsicle.lossy"), row)
+        ly.addWidget(fr); attach_help(fr, "advanced.help.gifsicle.lossy")
+
+        return w
+
     def _build_pillow(self):
         grp = self._tool_opts["pillow"]
         w = QWidget()
@@ -710,6 +762,7 @@ class CompressInterface(InterfaceBase):
         self._backend_container.setVisible(True)
         for key, grp_w in (("oxipng", self.oxipngGroup),
                            ("jpegoptim", self.joGroup),
+                           ("gifsicle", self.gsGroup),   # v0.7.28
                            ("pillow", self.pilGroup)):
             grp_w.setVisible(auto or p == key)
             grp_w._header.setVisible(auto)
@@ -732,6 +785,8 @@ class CompressInterface(InterfaceBase):
             installed = compressor.find_tool("oxipng") is not None
         elif self._program == "jpegoptim":
             installed = compressor.find_tool("jpegoptim") is not None
+        elif self._program == "gifsicle":
+            installed = compressor.find_tool("gifsicle") is not None   # v0.7.28
         self.toolsBtn.setVisible(not installed)
         self.toolsStatus.setVisible(installed)
         if installed:
@@ -909,7 +964,8 @@ class CompressInterface(InterfaceBase):
             self._queue_auto_follow.ensure(self.listWidget.items[src])
             worker = CompressWorker(
                 src, src, out, self._target, self._current_mode(),
-                self._current_quality(), self._program, opts=self._current_opts())
+                self._current_quality(), self._program, opts=self._current_opts(),
+                owner=self)   # v0.7.24：signals parent=界面
             worker.signals.progress.connect(self.listWidget.set_progress)
             worker.signals.progress.connect(
                 lambda iid, p: self.taskProgress.emit(iid, p))
@@ -988,6 +1044,7 @@ class CompressInterface(InterfaceBase):
             (tr("advanced.compression.auto"), "auto"),
             (tr("advanced.compression.oxipng"), "oxipng"),
             (tr("advanced.compression.jpegoptim"), "jpegoptim"),
+            (tr("advanced.compression.gifsicle"), "gifsicle"),   # v0.7.30：retranslate 漏了
             (tr("advanced.compression.pillow"), "pillow"),
         ])
         self._repopulate_combo(self.targetCombo, [

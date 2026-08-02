@@ -505,7 +505,6 @@ class ConversionManager(QObject):
         （UI 由 ``compress_started`` 切换成黄色「压缩中」）。这样状态序列
         才是 等待中 → 已完成 → 压缩中 → 压缩完成。
         """
-        self._workers.pop(task_id, None)  # v0.7.14：释放 worker 引用
         task = self.get_task(task_id)
         need_compress = bool(task and ok and task.compress_enabled)
 
@@ -515,6 +514,12 @@ class ConversionManager(QObject):
             task.status = Task.DONE if ok else Task.FAILED
 
         self._events.pop(task_id, None)
+        # v0.7.24：取出 worker 引用并延迟释放（signals 已挂 parent=manager，
+        # 额外持有 1.5s 双保险，杜绝 run() 尾声竞态）
+        _done_worker = self._workers.pop(task_id, None)
+        if _done_worker is not None:
+            from PyQt6.QtCore import QTimer as _QTimer
+            _QTimer.singleShot(1500, lambda w=_done_worker: None)
         self.task_finished.emit(task_id, ok, log)
 
         if need_compress:

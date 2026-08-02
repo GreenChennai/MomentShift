@@ -187,6 +187,32 @@ class MainWindow(FluentWindow):
                                    self._QUICK_IPC_NAME)
         else:
             get_logger("app").warning("quick IPC server failed to listen")
+        # v0.7.22：快速调用批次聚合（多选 %1 逐文件调用 → 1.2s 窗口合并）
+        from PyQt6.QtCore import QTimer as _QT
+        self._quick_pending: list[tuple] = []
+        self._quick_timer = _QT(self)
+        self._quick_timer.setSingleShot(True)
+        self._quick_timer.timeout.connect(self._flush_quick_batch)
+
+    def enqueue_quick_request(self, task: str, files: list[str]) -> None:
+        """v0.7.22：入快速调用批次队列，1.2s 后统一弹窗（多选合并）。"""
+        if not task or not files:
+            get_logger("quick").warning(
+                "quick batch skip: task=%s files=%d", task, len(files))
+            return
+        self._quick_pending.append((task, list(files)))
+        self._quick_timer.start(400)   # v0.7.23：400ms 聚合窗口，点击到弹窗 ~1s
+        get_logger("quick").info(
+            "quick batch enqueue: task=%s files=%d pending=%d",
+            task, len(files), len(self._quick_pending))
+
+    def _flush_quick_batch(self) -> None:
+        if not self._quick_pending:
+            return
+        pending, self._quick_pending = self._quick_pending, []
+        get_logger("quick").info("quick batch flush: %d requests", len(pending))
+        from ..quick_runner import handle_quick_batch
+        handle_quick_batch(pending, self, self.manager)
 
     def _on_ipc_connection(self):
         conn = self._ipc_server.nextPendingConnection()
@@ -204,9 +230,9 @@ class MainWindow(FluentWindow):
             get_logger("quick").info(
                 "IPC request: task=%s files=%d", task, len(files))
             if task and files:
-                from ..quick_runner import handle_ipc_request
                 # v0.7.17：不弹前台、不抢焦点 —— 后台静默处理任务
-                handle_ipc_request(task, files, self, self.manager)
+                # v0.7.22：进批次队列，与本地请求聚合
+                self.enqueue_quick_request(task, files)
         except Exception:
             get_logger("app").exception("IPC quick request failed")
         finally:

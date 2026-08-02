@@ -278,7 +278,32 @@ class ConvertSetupDialog(QDialog):
             self.advancedPanel.set_video_context(self._paths)
 
     def _update_confirm(self):
-        self.confirmBtn.setEnabled(bool(self._paths))
+        self.confirmBtn.setEnabled(not getattr(self, "_loading", False)
+                                   and bool(self._paths))
+
+    def add_paths(self, paths: list[str]) -> None:
+        """v0.7.24：追加待处理文件（供快速调用异步载入）。"""
+        for p in paths:
+            if p not in self._paths:
+                self._paths.append(p)
+        self._render_staging(); self._update_confirm()
+        self._sync_video_context()
+
+    def set_loading(self, loading: bool) -> None:
+        """v0.7.24：载入中 → 禁用确认按钮并显示黄色「载入中」。"""
+        self._loading = loading
+        if not hasattr(self, "_confirm_ss") or not self._confirm_ss:
+            self._confirm_ss = self.confirmBtn.styleSheet() or ""
+        if loading:
+            self.confirmBtn.setEnabled(False)
+            self.confirmBtn.setText(tr("quick.loading"))
+            self.confirmBtn.setStyleSheet(
+                "QPushButton{background:#C7920A;color:#FFFFFF;border:none;"
+                "border-radius:6px;padding:0 24px;font-weight:600;}")
+        else:
+            self.confirmBtn.setText(tr("convert.setup.confirm"))
+            self.confirmBtn.setStyleSheet(self._confirm_ss)
+            self.confirmBtn.setEnabled(bool(self._paths))
 
     def _on_confirm(self):
         if not self._paths: return

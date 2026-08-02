@@ -115,6 +115,9 @@ class Config(QConfig):
     quickLaunchConvert = ConfigItem("QuickLaunch", "Convert", False)
     quickLaunchCompress = ConfigItem("QuickLaunch", "Compress", False)
     quickLaunchUpscale = ConfigItem("QuickLaunch", "Upscale", False)
+    # v0.7.28：快速调用通知开关（开始 / 完成 两个独立开关，默认都开）
+    quickNotifyStart = ConfigItem("QuickLaunch", "NotifyStart", True)
+    quickNotifyDone = ConfigItem("QuickLaunch", "NotifyDone", True)
 
 
 cfg = Config()

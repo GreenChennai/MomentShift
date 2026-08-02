@@ -550,5 +550,18 @@
   "quick.notify.title": "MomentShift Task Done",
   "quick.notify.convert_done": "Convert tasks finished",
   "quick.notify.compress_done": "Compress tasks finished",
-  "quick.notify.upscale_done": "Upscale tasks finished"
+  "quick.notify.upscale_done": "Upscale tasks finished",
+  "quick.loading": "Loading…",
+  "quick.notify.started": "Task started",
+  "quicklaunch.notify.start": "Start task notification",
+  "quicklaunch.notify.start.hint": "Show a system notification when quick-launch tasks start (Windows balloon has its own sound)",
+  "quicklaunch.notify.done": "Task done notification",
+  "quicklaunch.notify.done.hint": "Show a system notification when quick-launch tasks finish (Windows balloon has its own sound)",
+  "advanced.compression.gifsicle": "Gifsicle (GIF optimization)",
+  "advanced.gifsicle.optimize": "Optimization level",
+  "advanced.gifsicle.loop": "Loop count",
+  "advanced.gifsicle.lossy": "Lossy threshold",
+  "advanced.help.gifsicle.optimize": "Gifsicle optimization level (-O): 1=basic, 2=stronger, 3=strongest (default). Higher = smaller output, longer processing.",
+  "advanced.help.gifsicle.loop": "GIF loop count (-l): 0=loop forever (default for animation), n=play n times.",
+  "advanced.help.gifsicle.lossy": "Lossy threshold (--lossy): 0=lossless (remove redundancy only); higher = smaller but more quality loss (recommended 20-80)."
 }

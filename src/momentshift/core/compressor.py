@@ -115,6 +115,22 @@ OXIPNG_PARAMS: dict[str, dict] = {
     "alpha": {"type": "bool", "default": False, "desc": "alpha 通道优化"},
 }
 
+#: Gifsicle 可设置参数（v0.7.28，依据 gifsicle 官方文档）。
+GIFSICLE_PARAMS: dict[str, dict] = {
+    "gs_optimize": {
+        "type": "int", "min": 1, "max": 3, "default": 3,
+        "desc": "优化级别 (-O)：1 基础 / 2 更强 / 3 最强（默认 3）",
+    },
+    "gs_loop": {
+        "type": "int", "min": 0, "max": 100, "default": 0,
+        "desc": "循环次数 (-l)：0=无限循环（动图默认），n=播放 n 次",
+    },
+    "gs_lossy": {
+        "type": "int", "min": 0, "max": 200, "default": 0,
+        "desc": "有损压缩阈值 (--lossy)：0=纯无损，越大体积越小但画质损失越多",
+    },
+}
+
 
 def param_defaults(backend: str) -> dict:
     """返回某后端的参数默认值字典。"""
@@ -122,6 +138,7 @@ def param_defaults(backend: str) -> dict:
         "jpegoptim": JPEGOPTIM_PARAMS,
         "pillow": PILLOW_PARAMS,
         "oxipng": OXIPNG_PARAMS,
+        "gifsicle": GIFSICLE_PARAMS,
     }.get(backend, {})
     return {k: v["default"] for k, v in table.items() if v.get("default") is not None}
 
@@ -178,8 +195,12 @@ def _bundled_jpegoptim() -> Optional[str]:
     return _bundled("jpegoptim.exe")
 
 
+def _bundled_gifsicle() -> Optional[str]:
+    return _bundled("gifsicle.exe")
+
+
 def find_tool(name: str) -> Optional[str]:
-    """按 内置资源 → tools/ 目录 → 系统 PATH 的顺序查找工具。
+    """按 内置资源 → tools/ 目录 → gifsicle-bin 包 → 系统 PATH 的顺序查找工具。
 
     ``name`` 可带或不带 ``.exe``。找不到返回 ``None``。
     """
@@ -194,7 +215,36 @@ def find_tool(name: str) -> Optional[str]:
     if t.is_file():
         return str(t)
 
+    # v0.7.29：gifsicle-bin（pip 包，Python 版安装到 Scripts 目录）
+    if stem == "gifsicle":
+        g = _gifsicle_bin_exe()
+        if g:
+            return g
+
     return shutil.which(stem)
+
+
+def _gifsicle_bin_exe() -> Optional[str]:
+    """定位 gifsicle-bin pip 包装的 gifsicle.exe（Scripts 目录）。"""
+    try:
+        import shutil
+        p = shutil.which("gifsicle")
+        if p and "gifsicle" in os.path.basename(p).lower():
+            return p
+    except Exception:
+        pass
+    try:
+        import importlib.metadata as _md
+        dist = _md.distribution("gifsicle-bin")
+        for f in dist.files or []:
+            name = (f.name or "").lower()
+            if name.endswith("gifsicle.exe") or name.endswith("gifsicle-bin.exe"):
+                base = dist.locate_file(f)
+                if os.path.isfile(str(base)):
+                    return str(base)
+    except Exception:
+        pass
+    return None
 
 
 # =============================================================================
@@ -210,18 +260,25 @@ def available_backends() -> dict[str, dict]:
         },
     }
 
-    ox = _bundled_oxipng()
+    ox = find_tool("oxipng")
     if ox:
         out["oxipng"] = {
             "name": "oxipng", "formats": set(_PNG),
             "lossless": True, "lossy": False, "builtin": True, "path": ox,
         }
 
-    jo = _bundled_jpegoptim()
+    jo = find_tool("jpegoptim")
     if jo:
         out["jpegoptim"] = {
             "name": "jpegoptim", "formats": set(_JPG),
             "lossless": True, "lossy": True, "builtin": True, "path": jo,
+        }
+
+    gs = find_tool("gifsicle")
+    if gs:
+        out["gifsicle"] = {
+            "name": "Gifsicle", "formats": {"gif"},
+            "lossless": True, "lossy": True, "builtin": True, "path": gs,
         }
 
     return out
@@ -229,6 +286,7 @@ def available_backends() -> dict[str, dict]:
 
 def default_backend(fmt: str) -> str:
     """v0.7.0 默认路由：png→oxipng，jpg/jpeg→jpegoptim，其他→pillow。
+    v0.7.28：gif→gifsicle（Pillow 压缩 GIF 会丢失多帧动画）。
 
     对应后端不可用时回落到 ``pillow``（调用方负责写日志提示）。
     """
@@ -238,6 +296,8 @@ def default_backend(fmt: str) -> str:
         return "oxipng"
     if f in _JPG and "jpegoptim" in backs:
         return "jpegoptim"
+    if f == "gif" and "gifsicle" in backs:
+        return "gifsicle"
     return "pillow"
 
 
@@ -274,7 +334,7 @@ def _fallback_to_pillow(backend: str, src: str) -> str:
         log.warning("oxipng 不可用（未找到内置二进制），已自动切换到 Pillow：%s",
                     Path(src).name)
         return "pillow"
-    if backend == "jpegoptim" and not _bundled_jpegoptim():
+    if backend == "jpegoptim" and not find_tool("jpegoptim"):
         log.warning("jpegoptim 不可用（未找到内置二进制），已自动切换到 Pillow：%s",
                     Path(src).name)
         return "pillow"
@@ -292,7 +352,7 @@ def compress(src: str, dst: str, fmt: str, quality: int = 95,
 
     if backend in (None, "", "auto"):
         backend = default_backend(fmt)
-    if backend not in ("oxipng", "jpegoptim", "pillow"):
+    if backend not in ("oxipng", "jpegoptim", "pillow", "gifsicle"):
         backend = default_backend(fmt)
 
     # 后端与格式不匹配时纠正（例如对 webp 选了 oxipng）
@@ -300,23 +360,29 @@ def compress(src: str, dst: str, fmt: str, quality: int = 95,
         backend = default_backend(fmt)
     elif backend == "jpegoptim" and fmt not in _JPG:
         backend = default_backend(fmt)
+    elif backend == "gifsicle" and fmt != "gif":
+        backend = default_backend(fmt)
 
     backend = _fallback_to_pillow(backend, src)
 
     handlers = {
         "oxipng": _compress_oxipng,
         "jpegoptim": _compress_jpegoptim,
+        "gifsicle": _compress_gifsicle,
         "pillow": _compress_pillow,
     }
 
     try:
         ok = handlers[backend](src, dst, fmt, quality, opts)
-        if not ok and backend != "pillow":
+        # v0.7.30：gifsicle 失败直接失败（Pillow 压 GIF 会丢帧，兜底无意义）
+        if not ok and backend not in ("pillow", "gifsicle"):
             log.warning("%s 压缩未成功，已自动切换到 Pillow：%s", backend, Path(src).name)
             return _compress_pillow(src, dst, fmt, quality, opts)
         return ok
     except Exception:
-        log.exception("%s 压缩异常，已自动切换到 Pillow：%s", backend, Path(src).name)
+        log.exception("%s 压缩异常：%s", backend, Path(src).name)
+        if backend == "gifsicle":
+            return False   # v0.7.30：gifsicle 异常不切 Pillow
         try:
             return _compress_pillow(src, dst, fmt, quality, opts)
         except Exception:
@@ -327,7 +393,7 @@ def compress(src: str, dst: str, fmt: str, quality: int = 95,
 # -- oxipng ------------------------------------------------------------------
 def _compress_oxipng(src: str, dst: str, fmt: str, quality: int, opts: dict) -> bool:
     """oxipng PNG 无损压缩（内置二进制，原地优化临时副本）。"""
-    ox = _bundled_oxipng()
+    ox = find_tool("oxipng")
     if not ox:
         return False
 
@@ -384,7 +450,7 @@ def _compress_jpegoptim(src: str, dst: str, fmt: str, quality: int, opts: dict) 
     jpegoptim 默认覆盖输入文件，因此先把源复制成临时文件再原地优化，
     最后移动到目标路径，避免污染源文件。
     """
-    jo = _bundled_jpegoptim()
+    jo = find_tool("jpegoptim")
     if not jo:
         return False
     if fmt not in _JPG:
@@ -458,6 +524,50 @@ def _compress_jpegoptim(src: str, dst: str, fmt: str, quality: int, opts: dict) 
     except Exception:
         log.exception("jpegoptim 执行失败")
         _rm(tmp)
+        return False
+
+
+# -- Gifsicle ----------------------------------------------------------------
+def _compress_gifsicle(src: str, dst: str, fmt: str, quality: int, opts: dict) -> bool:
+    """Gifsicle 动图压缩（v0.7.28）。
+
+    Pillow 压缩 GIF 只保留第一帧，会丢失动画；Gifsicle 专为 GIF 优化：
+    用法 ``gifsicle -O<level> -l <loop> [--lossy=n] -o out.gif in.gif``。
+    """
+    gs = find_tool("gifsicle")
+    if not gs:
+        return False
+
+    tmp = dst + ".gs.tmp"
+    try:
+        args = [gs]
+        optimize = int(opts.get("gs_optimize", 3) or 3)
+        if 1 <= optimize <= 3:
+            args.append(f"-O{optimize}")
+        loop = int(opts.get("gs_loop", 0) or 0)
+        if 0 <= loop <= 100:
+            # v0.7.29：gifsicle 的 -l 参数可选，`-l 0` 会把 0 当输入文件 → 用 --loopcount=
+            args.append(f"--loopcount={loop}")
+        lossy = int(opts.get("gs_lossy", 0) or 0)
+        if 0 < lossy <= 200:
+            args.append(f"--lossy={lossy}")
+        args += ["-o", tmp, src]
+
+        proc = subprocess.run(args, check=False, creationflags=WIN_SILENT, timeout=180,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+            log.warning("gifsicle exit=%d: %s", proc.returncode, err[:200])
+            _rm(tmp)
+            return False
+        if not os.path.isfile(tmp):
+            _rm(tmp)
+            return False
+        os.replace(tmp, dst)
+        return True
+    except Exception:
+        _rm(tmp)
+        log.exception("gifsicle 压缩异常：%s", Path(src).name)
         return False
 
 

@@ -44,6 +44,13 @@ _TOOLS: dict[str, dict] = {
         "binaries": ["jpegoptim.exe"],
         "fallback": "https://github.com/tjko/jpegoptim/releases/download/v1.5.6/jpegoptim-1.5.6-x64-windows.zip",
     },
+    # v0.7.28：Gifsicle（GIF 动图压缩，Pillow 会丢帧）
+    "gifsicle": {
+        "repo": "kohler/gifsicle",
+        "asset": "win64",
+        "binaries": ["gifsicle.exe"],
+        "fallback": "https://github.com/kohler/gifsicle/releases/download/v1.95/gifsicle-1.95-win64.zip",
+    },
 }
 
 

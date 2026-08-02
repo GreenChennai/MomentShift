@@ -550,5 +550,18 @@
   "quick.notify.title": "MomentShift 任務完成",
   "quick.notify.convert_done": "轉換任務已完成",
   "quick.notify.compress_done": "壓縮任務已完成",
-  "quick.notify.upscale_done": "放大任務已完成"
+  "quick.notify.upscale_done": "放大任務已完成",
+  "quick.loading": "載入中…",
+  "quick.notify.started": "任務已開始",
+  "quicklaunch.notify.start": "開始任務通知",
+  "quicklaunch.notify.start.hint": "快速調用建立的任務開始後彈系統通知（Windows 彈窗自帶聲音）",
+  "quicklaunch.notify.done": "完成任務通知",
+  "quicklaunch.notify.done.hint": "快速調用建立的任務全部完成後彈系統通知（Windows 彈窗自帶聲音）",
+  "advanced.compression.gifsicle": "Gifsicle（GIF 動圖優化）",
+  "advanced.gifsicle.optimize": "優化級別",
+  "advanced.gifsicle.loop": "循環次數",
+  "advanced.gifsicle.lossy": "有損閾值",
+  "advanced.help.gifsicle.optimize": "Gifsicle 的優化級別（-O）：1=基礎去冗餘，2=更強，3=最強（預設）。級別越高壓縮效果越好，處理時間越長。",
+  "advanced.help.gifsicle.loop": "GIF 動畫的循環次數（-l）：0=無限循環（動圖預設），n=播放 n 次後停止。",
+  "advanced.help.gifsicle.lossy": "有損壓縮閾值（--lossy）：0=純無損，只做冗餘優化不損失畫質；值越大體積越小但畫質損失越多（建議 20-80）。"
 }

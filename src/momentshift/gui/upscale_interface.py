@@ -180,11 +180,14 @@ class _WorkerSignals(QObject):
     progress = Signal(str, int)
     finished = Signal(str, bool, int, str)
 
+    def __init__(self, parent=None):
+        super().__init__(parent)   # v0.7.24：parent=界面，Qt 持有防 GC
+
 
 class UpscaleWorker(QRunnable):
     """单个放大 / 插帧任务，在 QThreadPool 线程中执行。"""
 
-    def __init__(self, item_id, src, out, engine_id, values):
+    def __init__(self, item_id, src, out, engine_id, values, owner=None):
         super().__init__()
         self.setAutoDelete(True)
         self.item_id = item_id
@@ -192,7 +195,7 @@ class UpscaleWorker(QRunnable):
         self.out = out
         self.engine_id = engine_id
         self.values = dict(values or {})
-        self.signals = _WorkerSignals()
+        self.signals = _WorkerSignals(owner)   # v0.7.24：parent=界面
 
     def run(self):
         # v0.7.7 修复3：流式进度回调，进度条不再卡在 0
@@ -800,7 +803,8 @@ class UpscaleInterface(InterfaceBase):
             self._queue_auto_follow.ensure(self.listWidget.items[src])
             worker = UpscaleWorker(
                 src, src, out, self._engine_id,
-                getattr(self, "_run_values", None) or self.paramPanel.values())
+                getattr(self, "_run_values", None) or self.paramPanel.values(),
+                owner=self)   # v0.7.24：signals parent=界面
             worker.signals.progress.connect(self.listWidget.set_progress)
             worker.signals.progress.connect(
                 lambda iid, p: self.taskProgress.emit(iid, p))
