@@ -97,12 +97,11 @@ def main():
     # =========================================================================
     if "--quick" in sys.argv:
         idx = sys.argv.index("--quick")
-        if idx + 2 >= len(sys.argv):
-            log.error("Usage: MomentShift --quick <task> <file1> [file2 ...]")
-            sys.exit(1)
-        task = sys.argv[idx + 1]
-        # v0.7.20：过滤空串/纯空白参数（%* 展开异常时的防御），避免误报无文件
+        task = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else ""
+        # v0.7.20：过滤空串/纯空白参数（%* 展开异常时的防御）
         files = [f for f in sys.argv[idx + 2:] if f and f.strip()]
+        # v0.7.21：即使 files 为空也不直接退出（旧版 `"%*"` 注册命令展开异常会
+        # 导致无参数）——交给 run_quick 静默处理，避免右键"没反应"。
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
         sys.exit(_quick_launch_task(task, files))

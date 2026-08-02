@@ -155,6 +155,11 @@ class QuickLaunchInterface(InterfaceBase):
         self.vbox.addStretch(1)
         self.retheme()
 
+        # v0.7.21：打开设置页时自动按最新命令格式（%* 无引号）重写注册表，
+        # 修复旧版 `"%*"`/`%1` 命令导致右键无文件参数的问题
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self._apply)
+
     # =========================================================================
     # 开关响应
     # =========================================================================
