@@ -131,9 +131,14 @@ class EngineRow(QWidget):
         vb.addLayout(btns)
 
         # === 第四行：路径提示（v0.7.7 引擎卡布局1：移到按钮下方）===
+        # v0.7.20：路径可能很长，开启自动换行（同简介），防止顶出卡片
         path_row = QHBoxLayout()
         path_row.setSpacing(8)
         self.pathLbl = CaptionLabel(f"tools/{engine.eid}")
+        self.pathLbl.setWordWrap(True)
+        self.pathLbl.setMinimumWidth(0)
+        self.pathLbl.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                   QSizePolicy.Policy.Preferred)
         self.pathLbl.setStyleSheet(
             f"color: {muted_text()}; background: transparent; font-size: 11px;")
         path_row.addWidget(self.pathLbl)
@@ -183,14 +188,21 @@ class EngineRow(QWidget):
             color = success_color().name()
             self.statusPill.set_status("done", text=tr("engine.status.ready"))
             self.pathLbl.setText(str(Path(exe).parent))
+            # v0.7.20：模型已可用 → 隐藏一键下载，防止重复下载
+            if self.dlBtn is not None:
+                self.dlBtn.hide()
         elif not self.engine.cli:
             color = "#c7920a"
             self.statusPill.set_status("compressing", text=tr("engine.status.driver"))
             self.pathLbl.setText(f"tools/{self.engine.eid}")
+            if self.dlBtn is not None:
+                self.dlBtn.show()
         else:
             color = danger_color().name()
             self.statusPill.set_status("failed", text=tr("engine.status.missing"))
             self.pathLbl.setText(f"tools/{self.engine.eid}")
+            if self.dlBtn is not None:
+                self.dlBtn.show()
         self.dot.setStyleSheet(f"background:{color}; border-radius:4px;")
 
     def retranslateUi(self) -> None:

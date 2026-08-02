@@ -232,7 +232,8 @@ def _run_convert(files, window, manager):
     valid_exts = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
     valid_files = [f for f in files if Path(f).suffix.lower() in valid_exts]
     if not valid_files:
-        _fatal("没有找到可转换的媒体文件（图片/音频/视频）。")
+        # v0.7.20：IPC 上下文静默返回，绝不 _fatal（否则会把已运行主窗口 quit 闪退）
+        log.warning("quick convert: 无有效媒体文件（共 %d 个输入）", len(files))
         return
 
     from collections import defaultdict
@@ -290,7 +291,8 @@ def _run_compress(files, window):
 
     valid_files = [f for f in files if Path(f).suffix.lower() in IMAGE_EXTS]
     if not valid_files:
-        _fatal("没有找到可压缩的图片文件。")
+        # v0.7.20：IPC 上下文静默返回，绝不 _fatal（否则 quit 掉主窗口）
+        log.warning("quick compress: 无有效图片文件（共 %d 个输入）", len(files))
         return
 
     ci = window.compressInterface
@@ -332,7 +334,8 @@ def _run_upscale(files, window):
     valid_exts = IMAGE_EXTS | eng_mod.ANIM_EXTS
     valid_files = [f for f in files if Path(f).suffix.lower() in valid_exts]
     if not valid_files:
-        _fatal("没有找到可放大的图片文件。")
+        # v0.7.20：IPC 上下文静默返回，绝不 _fatal
+        log.warning("quick upscale: 无有效图片文件（共 %d 个输入）", len(files))
         return
     if not eng_mod.installed_engines():
         _fatal("尚未安装任何放大引擎，请先到「关于」页下载引擎。")

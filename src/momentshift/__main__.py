@@ -101,7 +101,8 @@ def main():
             log.error("Usage: MomentShift --quick <task> <file1> [file2 ...]")
             sys.exit(1)
         task = sys.argv[idx + 1]
-        files = sys.argv[idx + 2:]
+        # v0.7.20：过滤空串/纯空白参数（%* 展开异常时的防御），避免误报无文件
+        files = [f for f in sys.argv[idx + 2:] if f and f.strip()]
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
         sys.exit(_quick_launch_task(task, files))
