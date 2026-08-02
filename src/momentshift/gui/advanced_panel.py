@@ -106,6 +106,7 @@ class AdvancedPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._categories: list[str] = []
+        self._video_paths: list[str] = []   # v0.7.18：视频文件上下文
         self.vbox = QVBoxLayout(self)
         self.vbox.setContentsMargins(0, 0, 0, 0)
         self.vbox.setSpacing(12)
@@ -397,11 +398,12 @@ class AdvancedPanel(QWidget):
 
 
     def _add_video(self):
-        """v0.4.2：视频参数直接展开。"""
+        """v0.4.2：视频参数直接展开。v0.7.18：分辨率选项按视频文件动态生成。"""
         adv = advanced.adv["video"]
         res = _combo(_opt_list(advanced.RESOLUTIONS),
                      adv.get("resolution", "original"),
                      lambda v: adv.__setitem__("resolution", v))
+        self._res_combo = res   # v0.7.18：保存引用供 set_video_context 动态更新
         self.vbox.addWidget(field_row(tr("advanced.resolution"), res, label_width=80))
         fps = _combo(_opt_list(advanced.FPS_OPTIONS),
                      adv.get("fps", "original"),
@@ -421,7 +423,8 @@ class AdvancedPanel(QWidget):
         merge = SwitchButton()
         merge.setChecked(bool(adv.get("merge", False)))
         merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
-        self.vbox.addWidget(field_row(tr("advanced.merge"), merge, label_width=80))
+        # v0.7.18：label_width 需容纳 7 个汉字，否则「合并为单个文件」显示不全
+        self.vbox.addWidget(field_row(tr("advanced.merge"), merge, label_width=132))
 
     def _add_audio(self):
         """v0.4.2：音频参数直接展开。"""
@@ -445,12 +448,63 @@ class AdvancedPanel(QWidget):
         merge = SwitchButton()
         merge.setChecked(bool(adv.get("merge", False)))
         merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
-        self.vbox.addWidget(field_row(tr("advanced.merge"), merge, label_width=80))
+        # v0.7.18：label_width 需容纳 7 个汉字
+        self.vbox.addWidget(field_row(tr("advanced.merge"), merge, label_width=132))
 
     # -- updates ----------------------------------------------------------
     def get_args(self, category: str, target: str = "") -> list[str]:
         """Return ffmpeg CLI args for ``category`` based on current panel state."""
         return advanced.build_advanced_args(category, target, advanced.get(category))
+
+    def set_video_context(self, video_paths: list[str]):
+        """v0.7.18：设置视频文件上下文，动态决定「分辨率」选项。
+
+        - 单个视频：按实际分辨率逐级 ÷1.5 生成可选项（可更改）
+        - 多个视频 / 无法探测：禁用，默认「原始」
+        """
+        self._video_paths = list(video_paths or [])
+        self._refresh_video_resolution()
+
+    def _refresh_video_resolution(self):
+        res = getattr(self, "_res_combo", None)
+        if res is None:
+            return
+        adv = advanced.adv["video"]
+        paths = self._video_paths
+        if len(paths) != 1:
+            # 多视频或未知 → 禁用 + 默认「原始」
+            res.setEnabled(False)
+            try:
+                res.setCurrentText(tr("advanced.original"))
+            except Exception:
+                pass
+            adv["resolution"] = "original"
+            return
+        size = advanced.probe_video_size(paths[0])
+        if not size:
+            res.setEnabled(False)
+            adv["resolution"] = "original"
+            return
+        w, h = size
+        # 逐级 ÷1.5（四舍五入），宽或高 < 320 停止
+        options: list[tuple[str, str]] = [(tr("advanced.original"), "original")]
+        cur_w, cur_h = w, h
+        while True:
+            cur_w = int(cur_w / 1.5 + 0.5)
+            cur_h = int(cur_h / 1.5 + 0.5)
+            if cur_w < 320 or cur_h < 320:
+                break
+            options.append((f"{cur_w}*{cur_h}", f"{cur_w}x{cur_h}"))
+        # 重建下拉选项（保持「原始」选中）
+        res.blockSignals(True)
+        res.clear()
+        for disp, val in options:
+            res.addItem(disp)
+        res._mapping = dict(options)
+        res.setCurrentText(tr("advanced.original"))
+        res.blockSignals(False)
+        res.setEnabled(True)
+        adv["resolution"] = "original"
 
     def retranslate(self):
         self.refresh(self._categories)

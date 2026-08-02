@@ -15,6 +15,7 @@ mutates and that ``presets.build_args`` / ``converter`` read when building a com
 from __future__ import annotations
 
 from typing import Optional
+from pathlib import Path
 
 # Resolution / fps / bitrate presets offered in the dropdowns. "original" means
 # "leave ffmpeg's default (copy / auto)".
@@ -25,6 +26,37 @@ AUDIO_BITRATES = ["original", "320k", "256k", "192k", "128k"]
 CODECS = ["original", "H.264", "H.265", "copy"]
 SAMPLE_RATES = ["original", "48000", "44100"]
 CHANNELS = ["original", "stereo", "mono"]
+
+
+def probe_video_size(path: str) -> Optional[tuple[int, int]]:
+    """v0.7.18：用 ffprobe 探测视频分辨率 (width, height)；失败返回 None。"""
+    import shutil
+    import subprocess
+    from .ffmpeg import find_ffmpeg
+    from .config import cfg
+
+    try:
+        ffmpeg = find_ffmpeg(cfg.ffmpegSource.value)
+        if not ffmpeg:
+            return None
+        ffprobe = shutil.which("ffprobe") or str(Path(ffmpeg).parent / "ffprobe.exe")
+        if not ffprobe or not Path(ffprobe).is_file():
+            return None
+        proc = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height",
+             "-of", "csv=s=x:p=0", path],
+            capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        line = proc.stdout.strip()
+        if "x" in line:
+            w, h = line.split("x")
+            return int(w), int(h)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return None
 
 
 def default_options() -> dict:

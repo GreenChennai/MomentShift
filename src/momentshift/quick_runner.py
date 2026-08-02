@@ -56,11 +56,15 @@ def _setup_app() -> QApplication:
 
 
 def _notify(window, title: str, body: str) -> None:
-    """系统提示 + 提示音通知任务完成（v0.7.17：增加系统提示音）。"""
+    """系统提示 + 提示音通知任务完成（v0.7.18：winsound 系统提示音）。"""
     try:
-        QApplication.beep()   # 系统默认提示音
+        import winsound
+        winsound.MessageBeep(winsound.MB_ICONASTERISK)
     except Exception:
-        pass
+        try:
+            QApplication.beep()
+        except Exception:
+            pass
     try:
         tray = getattr(window, "tray", None)
         if tray is None:

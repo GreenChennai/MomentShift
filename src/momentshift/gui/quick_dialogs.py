@@ -121,7 +121,7 @@ class _QuickTaskDialog(QDialog):
     """快速调用设置弹窗公共骨架：左待处理文件 / 右设置（可滚动、顶置）。"""
 
     _DIALOG_W = 900
-    _DIALOG_H = 750
+    _DIALOG_H = 630   # v0.7.18：压缩/放大窗口统一 900×630
     _LEFT_W = 300
 
     def __init__(self, parent, files, title_key, settings_title_key, on_confirm):
@@ -218,14 +218,45 @@ class QuickCompressDialog(_QuickTaskDialog):
     """创建图片压缩任务设置弹窗（v0.7.16 左右分栏）。
 
     压缩设置卡片 reparent 自 CompressInterface，参数与主窗口完全一致。
+    v0.7.18：移除「自动选择」条目及 auto 专属 UI，默认 Pillow。
     """
 
     def __init__(self, parent, files, on_confirm):
         from .compress_interface import CompressInterface
         self.iface = CompressInterface(None)
+        self._postprocess_settings()
         super().__init__(parent, files, "quick.compress.title",
                          "compress.settings.title", on_confirm)
         self._embed_settings(getattr(self.iface, "_settingsCard", None))
+
+    def _postprocess_settings(self):
+        """v0.7.18：移除 auto 条目、auto 专属 UI；默认 Pillow。"""
+        iface = self.iface
+        combo = getattr(iface, "programCombo", None)
+        if combo is not None:
+            mapping = dict(getattr(combo, "_mapping", {}) or {})
+            # 移除「自动选择」
+            for disp, val in list(mapping.items()):
+                if val == "auto":
+                    idx = combo.findText(disp)
+                    if idx >= 0:
+                        combo.removeItem(idx)
+                    mapping.pop(disp, None)
+                    break
+            # 默认 Pillow（setCurrentText 触发 _on_program → 只显示 Pillow 参数组）
+            pill_disp = next((d for d, v in mapping.items() if v == "pillow"), None)
+            if pill_disp:
+                try:
+                    combo.setCurrentText(pill_disp)
+                except Exception:
+                    pass
+        # 隐藏 auto 专属路由提示（仅 auto 模式显示）
+        hint = getattr(iface, "_route_hint", None)
+        if hint is not None:
+            try:
+                hint.hide()
+            except Exception:
+                pass
 
 
 class QuickUpscaleDialog(_QuickTaskDialog):

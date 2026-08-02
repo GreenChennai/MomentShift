@@ -186,6 +186,9 @@ class ConvertSetupDialog(QDialog):
         # v0.7.2 F3：弹窗首次打开即按默认目标格式禁用不匹配的压缩程序
         # （例如默认 .jpg 时应禁用 oxipng），避免用户看到全部可选但实际不可用。
         self.advancedPanel.on_format_change(default)
+        # v0.7.18：视频 → 传文件上下文，动态生成「分辨率」选项
+        if self._category == "video" and self._paths:
+            self.advancedPanel.set_video_context(self._paths)
         adv_card.body.addWidget(self.advancedPanel)
         right_lay.addWidget(adv_card)
         self._adv_card = adv_card
@@ -262,10 +265,17 @@ class ConvertSetupDialog(QDialog):
     def _remove(self, path):
         if path in self._paths: self._paths.remove(path)
         self._render_staging(); self._update_confirm()
+        self._sync_video_context()
 
     def _clear_all(self):
         self._paths.clear()
         self._render_staging(); self._update_confirm()
+        self._sync_video_context()
+
+    def _sync_video_context(self):
+        """v0.7.18：staging 文件增减后刷新视频「分辨率」选项。"""
+        if self._category == "video" and hasattr(self, "advancedPanel"):
+            self.advancedPanel.set_video_context(self._paths)
 
     def _update_confirm(self):
         self.confirmBtn.setEnabled(bool(self._paths))
