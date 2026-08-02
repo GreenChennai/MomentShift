@@ -55,13 +55,17 @@ def _exe_path() -> str:
 
 
 def _command_for(task: str) -> str:
-    """构造右键菜单命令：MomentShift.exe --quick <task> "%1" 格式（多文件用 "%*"）。"""
+    """构造右键菜单命令：MomentShift.exe --quick <task> "%*"。
+
+    v0.7.19：%1 在多选时会被 Shell 为每个文件单独调用一次 → 每个文件弹一个
+    设置窗；改用 %* 把所有选中文件一次性传入，同类文件合并进同一个弹窗。
+    """
     exe = _exe_path()
     if getattr(sys, "frozen", False):
-        return f'"{exe}" --quick {task} "%1"'
+        return f'"{exe}" --quick {task} "%*"'
     else:
         # 开发环境：用 python -m momentshift
-        return f'"{exe}" -m momentshift --quick {task} "%1"'
+        return f'"{exe}" -m momentshift --quick {task} "%*"'
 
 
 def register_context_menu(task: str) -> bool:

@@ -56,10 +56,13 @@ def _setup_app() -> QApplication:
 
 
 def _notify(window, title: str, body: str) -> None:
-    """系统提示 + 提示音通知任务完成（v0.7.18：winsound 系统提示音）。"""
+    """系统提示 + 提示音通知任务完成（v0.7.19：winsound.Beep 强制蜂鸣）。"""
     try:
         import winsound
-        winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        # MessageBeep 依赖系统「程序事件」声音方案，被禁用时静音；
+        # winsound.Beep 直接驱动扬声器，一定有声音
+        winsound.MessageBeep(winsound.MB_ICONINFORMATION)
+        winsound.Beep(880, 250)
     except Exception:
         try:
             QApplication.beep()
@@ -248,13 +251,8 @@ def _run_convert(files, window, manager):
     elif cfg.hardware.value == "auto":
         gpu = bool(manager.hw)
 
-    cat = next(iter(cat_files))
-    paths = cat_files[cat]
-
-    dlg = ConvertSetupDialog(None, manager, paths, {}, lambda: gpu, cat)
-    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-
-    # v0.7.16：任务全部完成后系统通知（按实际入队数计数，允许 staging 删文件）
+    # v0.7.19：同类文件 → 合并进一个弹窗；混合类型 → 每个类别一个弹窗。
+    # 通知计数全局统一，避免重复通知。
     added = {"n": 0}
     done = {"count": 0}
     notified = {"ok": False}
@@ -272,13 +270,17 @@ def _run_convert(files, window, manager):
                     tr("quick.notify.convert_done"))
     manager.task_finished.connect(_on_task_finished)
 
-    def _on_dialog_finished(r: int):
-        if r == 1:
-            manager.start()   # 主窗口转换队列自动开始
-        # v0.7.16：取消不弹任何提示框，主窗口保留
-    dlg.finished.connect(_on_dialog_finished)
-    _KEEP_ALIVE.append(dlg)
-    dlg.show()
+    for cat, paths in cat_files.items():
+        dlg = ConvertSetupDialog(None, manager, paths, {}, lambda: gpu, cat)
+        dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+
+        def _on_dialog_finished(r: int, _m=manager):
+            if r == 1:
+                _m.start()   # 主窗口转换队列自动开始
+            # v0.7.16：取消不弹任何提示框，主窗口保留
+        dlg.finished.connect(_on_dialog_finished)
+        _KEEP_ALIVE.append(dlg)
+        dlg.show()
 
 
 def _run_compress(files, window):

@@ -77,7 +77,11 @@ def compress_after_conversion(task: "Task") -> None:
 
 
 class WorkerSignals(QObject):
-    """Signals tunneled out of a worker thread."""
+    """Signals tunneled out of a worker thread.
+
+    v0.7.19：signals 挂到 manager（QObject parent），由 Qt 持有 C++ 对象，
+    不再随 worker 的 Python 包装被 GC 删除（根治 WorkerSignals has been deleted）。
+    """
 
     started = Signal(str)
     progress = Signal(str, int)
@@ -86,18 +90,22 @@ class WorkerSignals(QObject):
     compress_progress = Signal(str, int)  # v0.6.5：压缩进度
     compress_finished = Signal(str)  # v0.6.5：压缩完成
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
 
 class ConversionWorker(QRunnable):
     """Runs a single :class:`Task` inside the thread pool."""
 
-    def __init__(self, task: Task, ffmpeg_path: str, hw: dict, cancel_event: threading.Event):
+    def __init__(self, task: Task, ffmpeg_path: str, hw: dict,
+                 cancel_event: threading.Event, owner: QObject = None):
         super().__init__()
         self.setAutoDelete(True)
         self.task = task
         self.ffmpeg_path = ffmpeg_path
         self.hw = hw
         self.cancel_event = cancel_event
-        self.signals = WorkerSignals()
+        self.signals = WorkerSignals(owner)   # v0.7.19：parent=manager
 
     def run(self) -> None:
         try:
@@ -127,11 +135,11 @@ class ConversionWorker(QRunnable):
 class CompressWorker(QRunnable):
     """v0.6.7：独立压缩线程（与格式转换异步）。"""
 
-    def __init__(self, task: Task):
+    def __init__(self, task: Task, owner: QObject = None):
         super().__init__()
         self.setAutoDelete(True)
         self.task = task
-        self.signals = WorkerSignals()
+        self.signals = WorkerSignals(owner)   # v0.7.19：parent=manager
 
     def run(self) -> None:
         try:
@@ -471,7 +479,7 @@ class ConversionManager(QObject):
         task.error = ""
         event = threading.Event()
         self._events[task.id] = event
-        worker = ConversionWorker(task, self.ffmpeg_path, self.hw, event)
+        worker = ConversionWorker(task, self.ffmpeg_path, self.hw, event, self)
         worker.signals.started.connect(self._on_started)
         worker.signals.progress.connect(self._on_progress)
         worker.signals.finished.connect(self._on_finished)
@@ -513,7 +521,7 @@ class ConversionManager(QObject):
             # 压缩在独立线程池执行，COMPRESSING 不占用转换槽位（v0.6.8）
             task.status = Task.COMPRESSING
             task.pre_compress_size = task.dst_size
-            cw = CompressWorker(task)
+            cw = CompressWorker(task, self)   # v0.7.19：signals parent=manager
             cw.signals.compress_started.connect(self.compress_started)
             cw.signals.compress_finished.connect(self._on_compress_finished)
             self._compress_pool.start(cw)
