@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "momentshift"
-version = "0.1.0"
+# 与 src/momentshift/metadata.py 的 VERSION 保持一致，改版本号必须同时改两处。
+version = "0.8.1"
 description = "瞬变工坊 - 傻瓜式 ffmpeg 多媒体格式转换工具"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,9 +24,20 @@ classifiers = [
     "Topic :: Utilities",
 ]
 
+# v0.8.0（Q10）：抬高下限并封顶大版本。
+# - PyQt6 6.6 起 HiDPI 舍入策略与 QSharedMemory 行为才与本项目假设一致；
+#   7.x 是不兼容大版本，封顶避免自动升级把 GUI 打崩。
+# - qfluentwidgets 1.11 起 setBorderRadius / singledispatchmethod 构造签名固定，
+#   低于该版本会在启动阶段直接 TypeError。
 dependencies = [
-    "PyQt6>=6.6.0",
-    "PyQt6-Fluent-Widgets>=1.6.0",
+    "PyQt6>=6.6,<7",
+    "PyQt6-Fluent-Widgets>=1.11,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6",
+    "pytest>=8.0",
 ]
 
 [project.scripts]
@@ -40,3 +52,47 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 momentshift = ["i18n/locales/*.json"]
+
+# =============================================================================
+# ruff（v0.8.0 新增）
+# =============================================================================
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+extend-exclude = ["build", "dist", ".venv", "release"]
+
+[tool.ruff.lint]
+# 本轮（批次 A1）只把"能一次性清零"的规则纳入门禁：
+#   E4/E9+F = 导入位置、语法错误、未用导入 / 未定义名字
+#   I       = import 排序，历史代码里 import 顺序极其随意
+#   UP      = 语法现代化，requires-python 已是 3.10
+# 刻意暂不启用：
+#   E7   —— 78 处 `a = X(); a.setY()` 单行多语句集中在 4 个 GUI 文件里，
+#           属于批次 B（GUI 重构）的范围，A1 动它会和后续改动大面积冲突。
+#   B/SIM/RUF —— 噪声大，等 A4 异常治理收敛后再逐步纳入。
+select = ["E4", "E9", "F", "I", "UP"]
+ignore = [
+    # 项目大量使用 `FluentIcon as FIF` 这类惯用别名，不视为无用别名。
+    "UP035",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# tests/ 下除 unit/ 外都是手工脚本：需要先改 sys.path 再 import momentshift，
+# 天然违反 E402；构造出来只为验证"能构造"的局部变量也不算未使用变量。
+"tests/*.py" = ["E402", "F401", "F841"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["momentshift"]
+
+# =============================================================================
+# pytest（v0.8.0 新增）
+# =============================================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+# 只收集 tests/unit：tests/ 根目录下的 offscreen_*.py 是需要 Qt 离屏环境的
+# 手工脚本，被 pytest 收集会直接把 worker 进程带崩。
+testpaths = ["tests/unit"]
+pythonpath = ["src"]
+python_files = ["test_*.py"]
+addopts = "-q --strict-markers"

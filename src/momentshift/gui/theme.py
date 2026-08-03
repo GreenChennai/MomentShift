@@ -1,4 +1,12 @@
-"""MomentShift 设计系统（v0.3.2 简化：仅浅色主题）
+"""MomentShift 设计系统。
+
+职责边界：
+- 做：集中定义主题色板与圆角等设计 token，按明暗主题返回具体颜色。
+- 不做：不持有任何控件引用；不负责触发重绘（各控件自行实现 retheme）。
+
+依赖：无内部依赖；被依赖：几乎全部 GUI 模块。
+
+为什么全走函数而不是常量：主题可在运行时切换，常量会被固化成启动时的那一套配色。
 
 提供统一的视觉语言：
 - 色彩 tokens（窗口背景、组件表面、hover/press、accent、文字）
@@ -11,64 +19,70 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from PyQt6.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPen
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame, QSizePolicy, QLabel
 
+from PyQt6.QtCore import QPropertyAnimation, QSize, Qt
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPen
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
-    CardWidget,
-    CaptionLabel,
     BodyLabel,
-    StrongBodyLabel,
+    CaptionLabel,
+    CardWidget,
     PrimaryPushButton,
-    PushButton,
+    StrongBodyLabel,
     TransparentPushButton,
     TransparentToolButton,
 )
 
+from . import animations, tokens
+
 # =============================================================================
-# 设计 tokens（仅浅色）
+# 设计 tokens（仅浅色）—— 全部转发自 gui/tokens.py
+#
+# 这里只做「语义别名 + QColor 包装」，色值本身一律以 tokens 为准。
+# 保留这批旧名字是为了不改动 20 余个调用方；新代码请直接 import tokens。
 # =============================================================================
 
 # 窗口 + 内容背景
-WINDOW_BG  = QColor("#FFFFFF")
-SURFACE    = QColor("#F5F5F5")   # 卡片/组件表面
-SURFACE_HOVER = QColor("#EEEEEE")  # hover 态
-SURFACE_PRESS = QColor("#EEEEEE")  # press 态
+WINDOW_BG = QColor(tokens.WHITE)
+SURFACE = QColor(tokens.SURFACE)  # 卡片/组件表面
+SURFACE_HOVER = QColor(tokens.SURFACE_HOVER)  # hover 态
+SURFACE_PRESS = QColor(tokens.SURFACE_PRESS)  # press 态
 
 # 文字
-TEXT_STRONG     = "#212121"   # 主文字
-TEXT_SECONDARY  = "#757575"   # 次要文字
-TEXT_PLACEHOLDER = "#9E9E9E"  # 占位符
-TEXT_MUTED      = "#515151"   # 禁用/弱化（v0.7.6：由过灰 #BDBDBD 调深，提升对比度）
-TEXT_LINK       = "#2270F4"   # 链接蓝
+TEXT_STRONG = tokens.TEXT_STRONG  # 主文字
+TEXT_SECONDARY = tokens.TEXT_SECONDARY  # 次要文字
+TEXT_PLACEHOLDER = tokens.TEXT_PLACEHOLDER  # 占位符
+TEXT_MUTED = tokens.TEXT_MUTED  # 禁用/弱化（由过灰的 BORDER_HOVER 调深）
+TEXT_LINK = tokens.TEXT_LINK  # 链接蓝
 
 # 边框
-BORDER_COLOR    = "#E0E0E0"
-BORDER_HOVER    = "#BDBDBD"
+BORDER_COLOR = tokens.BORDER
+BORDER_HOVER = tokens.BORDER_HOVER
 
 # 品牌色
-ACCENT = QColor("#238636")    # GitHub 绿
-ACCENT_HEX = "#238636"
+ACCENT = QColor(tokens.ACCENT)  # GitHub 绿
+ACCENT_HEX = tokens.ACCENT
 
 # 状态色
-COLOR_DANGER    = "#FF7279"
-COLOR_SUCCESS   = "#3EB68F"
-DANGER_TEXT     = "#B4324B"
-SUCCESS_TEXT    = "#3EB68F"
+COLOR_DANGER = tokens.DANGER
+COLOR_SUCCESS = tokens.SUCCESS
+DANGER_TEXT = tokens.DANGER_TEXT
+SUCCESS_TEXT = tokens.SUCCESS
 
 # 几何
-RADIUS = 12
-SPACING = 12
-CARD_MARGIN = 16
+RADIUS = tokens.RADIUS
+SPACING = tokens.SPACING
+CARD_MARGIN = tokens.CARD_MARGIN
 
 # =============================================================================
 # SVG 图标路径
 # =============================================================================
 _RESOURCES = Path(__file__).parent.parent / "resources" / "icons"
 
+
 def _icon_path(name: str) -> str:
     return os.fspath(_RESOURCES / name)
+
 
 ICON_EXPAND = _icon_path("\u4e0b\u62c9.svg")
 ICON_COLLAPSE = _icon_path("\u6536\u8d77.svg")
@@ -77,68 +91,154 @@ ICON_COLLAPSE = _icon_path("\u6536\u8d77.svg")
 # 颜色访问器
 # =============================================================================
 
+
 def content_bg() -> QColor:
     return WINDOW_BG
+
 
 def component_bg() -> QColor:
     return SURFACE
 
+
 def surface() -> QColor:
     return SURFACE
+
 
 def surface_hover() -> QColor:
     return SURFACE_HOVER
 
+
 def surface_pressed() -> QColor:
     return SURFACE_PRESS
+
 
 def accent_color() -> QColor:
     return ACCENT
 
+
 def accent_name() -> str:
     return ACCENT_HEX
+
 
 def text_strong() -> str:
     return TEXT_STRONG
 
+
 def text_secondary() -> str:
     return TEXT_SECONDARY
+
 
 def placeholder_text() -> str:
     return TEXT_PLACEHOLDER
 
+
 def text_disabled() -> str:
     return TEXT_MUTED
+
 
 def muted_text() -> str:
     return TEXT_MUTED
 
+
 def sub_text() -> str:
     return TEXT_SECONDARY
+
 
 def hint_text() -> str:
     return TEXT_PLACEHOLDER
 
+
 def link_color() -> QColor:
     return QColor(TEXT_LINK)
+
 
 def border_color() -> str:
     return BORDER_COLOR
 
+
 def border_hover() -> str:
     return BORDER_HOVER
+
 
 def danger_color() -> QColor:
     return QColor(COLOR_DANGER)
 
+
 def danger_text() -> str:
     return DANGER_TEXT
+
 
 def success_color() -> QColor:
     return QColor(COLOR_SUCCESS)
 
+
 def success_text() -> str:
     return SUCCESS_TEXT
+
+
+# =============================================================================
+# 样式应用器 —— 把「取令牌 → 拼 QSS → setStyleSheet」三步收成一次调用
+#
+# 改造前全项目散落 131 处 setStyleSheet，其中绝大多数是三种重复到极致的写法：
+# 「置透明底」「给标签上色」「把滚动区弄干净」。逐处内联的代价是：
+# 改一个语义色要全局搜、漏一处就出现视觉不一致，而且 QLabel 忘了配透明底
+# 就会冒出「文字下面一块灰」——项目历史上反复踩过。
+# 收成下面三个应用器后，调用方只表达意图，拼串与铁律由这里统一兜住。
+# =============================================================================
+
+
+def apply_transparent(*widgets: QWidget) -> None:
+    """把若干控件的自身背景置为透明。
+
+    Args:
+        *widgets: 目标控件；``None`` 会被跳过，方便直接喂 ``getattr(...)`` 的结果。
+    """
+    for w in widgets:
+        if w is not None:
+            w.setStyleSheet("background: transparent;")
+
+
+def apply_text(
+    widget,
+    color: str,
+    *,
+    size: int | None = None,
+    weight: int | None = None,
+    transparent: bool = False,
+    extra: str = "",
+) -> None:
+    """给单个文字控件应用配色样式。
+
+    Args:
+        widget: 目标控件（通常是 ``QLabel`` / ``CaptionLabel``）。
+        color: 文字颜色，直接传令牌或 ``muted_text()`` 这类访问器的返回值。
+        size: 字号（px）。
+        weight: 字重。
+        transparent: 是否追加透明背景。
+        extra: 追加在末尾的原样 QSS 声明（如 ``"padding: 24px 0;"``）。
+
+    Notes:
+        ``transparent`` 默认 **False**，与改造前逐处内联的写法保持一致。
+        B1 的铁律是「只换写法不换颜色」，此处若擅自默认补上透明底，
+        会静默改变一批标签的实际渲染，因此哪些标签缺透明底只做记录、不顺手改。
+    """
+    widget.setStyleSheet(
+        tokens.text_qss(color, size=size, weight=weight, transparent=transparent, extra=extra)
+    )
+
+
+def apply_plain_scroll(*areas, radius: int | None = None) -> None:
+    """把若干 QScrollArea 置为无边框 + 透明底 + 全局细滚动条。
+
+    Args:
+        *areas: 目标滚动区；``None`` 会被跳过。
+        radius: 滚动区圆角半径；``None`` 表示不设圆角。
+    """
+    qss = tokens.scrollarea_qss(radius)
+    for area in areas:
+        if area is not None:
+            area.setStyleSheet(qss)
+
 
 # =============================================================================
 # ThemedCard — 实色表面 + 1px 主题边框
@@ -148,8 +248,7 @@ class ThemedCard(CardWidget):
         super().__init__(parent)
         self.setBorderRadius(RADIUS)
         self.setStyleSheet(
-            "ThemedCard > QWidget { background-color: transparent; }"
-            "FluentLabelBase, QLabel { background-color: transparent; }"
+            tokens.transparent_children_qss("ThemedCard > QWidget", "FluentLabelBase, QLabel")
         )
 
     def _normalBackgroundColor(self):
@@ -176,24 +275,29 @@ class ThemedCard(CardWidget):
     def retheme(self):
         self.update()
 
+
 # =============================================================================
 # CollapsibleCard — 折叠卡片（带动效）
 # =============================================================================
 class CollapsibleCard(ThemedCard):
     _ICON_W = _ICON_H = 20
-    _ANIM_DURATION = 250
+    # v0.8.0 B3 接入点 6：时长/曲线迁到 gui/animations 收口，**数值不变**
+    # （250ms + OutCubic，与改造前逐帧一致）。保留这个类属性名是因为它是既有
+    # 对外可读的事实，只是不再在这里写死魔法数字。
+    _ANIM_DURATION = animations.DURATION_CARD
 
-    def __init__(self, title: str = "", subtitle: str = "",
-                 parent=None, collapsed: bool = False):
+    def __init__(self, title: str = "", subtitle: str = "", parent=None, collapsed: bool = False):
         super().__init__(parent)
         self._collapsed = collapsed
         self._anim = None
         self._content_height = 0
 
         self.setStyleSheet(
-            "CollapsibleCard > QWidget { background-color: transparent; }"
-            "QLabel, FluentLabelBase, BodyLabel, CaptionLabel, StrongBodyLabel,"
-            " TitleLabel, SubtitleLabel { background-color: transparent; }"
+            tokens.transparent_children_qss(
+                "CollapsibleCard > QWidget",
+                "QLabel, FluentLabelBase, BodyLabel, CaptionLabel, StrongBodyLabel,"
+                " TitleLabel, SubtitleLabel",
+            )
         )
 
         self._outer = QVBoxLayout(self)
@@ -222,10 +326,7 @@ class CollapsibleCard(ThemedCard):
         self._body_layout.setContentsMargins(CARD_MARGIN, 0, CARD_MARGIN, 14)
         self._body_layout.setSpacing(10)
 
-        self._body.setStyleSheet(
-            "QLineEdit { border: 1px solid #d0d0d0; border-radius: 4px;"
-            " padding: 4px 8px; background: #ffffff; }"
-        )
+        self._body.setStyleSheet(tokens.input_qss("QLineEdit", tokens.RADIUS_SM))
 
         self.subtitleLabel = None
         if subtitle:
@@ -239,6 +340,36 @@ class CollapsibleCard(ThemedCard):
 
         if collapsed:
             self._collapse_instant()
+
+    # -- 标题栏公开 API（v0.8.0 ODD-07）---------------------------------
+    # 「转换设置」弹窗要把折叠箭头换成一个总开关，改造前的写法是直接摸本类的
+    # 两个私有件：``adv_card._toggleBtn.hide()`` 和
+    # ``adv_card._bar.layout().insertWidget(2, sw)``。这不但把「标题栏内部长什么样、
+    # 开关该插在第几个位置」这种实现细节泄漏到了别的模块，而且那个魔数 2 一旦
+    # 标题栏加个控件就会插错位置，且不会报错。下面两个方法把它收成本类的对外契约。
+
+    def hide_toggle(self) -> None:
+        """隐藏默认的折叠箭头（调用方需自备其它展开/收起入口）。"""
+        self._toggleBtn.hide()
+
+    def add_header_widget(self, widget, *, before_toggle: bool = True) -> None:
+        """往标题栏右侧追加一个挂件。
+
+        Args:
+            widget: 要放进标题栏的控件。
+            before_toggle: True 表示放在折叠箭头**之前**（视觉上更靠左），
+                False 表示放到最右侧。
+
+        Notes:
+            位置按「折叠箭头当前所在下标」实时算出，不再依赖调用方硬编码下标，
+            因此将来标题栏增删控件也不会插错位置。
+        """
+        layout = self._bar.layout()
+        if before_toggle:
+            idx = layout.indexOf(self._toggleBtn)
+            layout.insertWidget(idx if idx >= 0 else layout.count(), widget)
+        else:
+            layout.addWidget(widget)
 
     def _collapse_instant(self):
         """初始化时的即时折叠（v0.7.3 Bug2）。
@@ -278,7 +409,7 @@ class CollapsibleCard(ThemedCard):
         self._anim.setDuration(self._ANIM_DURATION)
         self._anim.setStartValue(cur)
         self._anim.setEndValue(real_target)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.setEasingCurve(animations.CURVE_IN)
         self._anim.finished.connect(self._on_anim_finished)
         self._anim.start()
 
@@ -291,7 +422,7 @@ class CollapsibleCard(ThemedCard):
             self._body.setMaximumHeight(16777215)
 
     def _apply_collapsed(self):
-        # v0.7.4 Bug：必须同步 _collapsed 标志，否则 _on_anim_finished 在展开
+        # Bug：必须同步 _collapsed 标志，否则 _on_anim_finished 在展开
         # 动画结束后会读到残留的 True 而把卡片重新收起（"展开→收起"闪烁）。
         self._collapsed = True
         h = self._body.height()
@@ -341,17 +472,21 @@ class CollapsibleCard(ThemedCard):
         if not self._collapsed:
             self._body.setMaximumHeight(16777215)
 
+
 # =========================================================================
 # 共享 UI 构建器
 # =========================================================================
+
 
 def section_label(text: str, parent=None):
     lbl = CaptionLabel(text, parent)
     lbl.setObjectName("sectionLabel")
     return lbl
 
-def panel(title: str | None = None, subtitle: str | None = None,
-          parent=None, radius: int = RADIUS) -> tuple[ThemedCard, QVBoxLayout]:
+
+def panel(
+    title: str | None = None, subtitle: str | None = None, parent=None, radius: int = RADIUS
+) -> tuple[ThemedCard, QVBoxLayout]:
     card = ThemedCard(parent)
     card.setBorderRadius(radius)
     vb = QVBoxLayout(card)
@@ -367,10 +502,23 @@ def panel(title: str | None = None, subtitle: str | None = None,
         vb.addWidget(s)
     return card, vb
 
+
 def field_row(label_text: str, control, parent=None, label_width: int = 96) -> QWidget:
+    """构造「左标签 + 右控件」的一行。
+
+    Args:
+        label_text: 行标签文案。
+        control: 右侧控件；传入 ``QLayout`` 时按布局加入（用于多控件组合行）。
+        parent: 行控件父对象。
+        label_width: 标签固定宽度（px）。
+    Returns:
+        行控件 ``QWidget``；标签引用挂在 ``row.fieldLabel`` 上，
+        调用方的 ``retranslateUi`` 可以通过它更新文案（v0.8.1 Bug4-②）。
+    """
     from PyQt6.QtWidgets import QLayout
+
     row = QWidget(parent)
-    row.setStyleSheet("background: transparent;")
+    apply_transparent(row)
     hb = QHBoxLayout(row)
     hb.setContentsMargins(0, 0, 0, 0)
     hb.setSpacing(12)
@@ -382,17 +530,21 @@ def field_row(label_text: str, control, parent=None, label_width: int = 96) -> Q
         hb.addLayout(control, 1)
     else:
         hb.addWidget(control, 1)
+    row.fieldLabel = lbl
     return row
+
 
 def primary_btn(text: str, icon=None, parent=None) -> PrimaryPushButton:
     if icon is not None:
         return PrimaryPushButton(text, icon=icon, parent=parent)
     return PrimaryPushButton(text, parent=parent)
 
+
 def ghost_btn(text: str, icon=None, parent=None) -> TransparentPushButton:
     if icon is not None:
         return TransparentPushButton(text, icon=icon, parent=parent)
     return TransparentPushButton(text, parent=parent)
+
 
 def icon_btn(icon, parent=None) -> TransparentToolButton:
     """图标按钮。v0.7.3 调整2：全局取消鼠标悬停提示，不再接受 tooltip 参数。"""
@@ -412,39 +564,24 @@ def ext_badge(ext: str, parent=None) -> QLabel:
     lbl = QLabel(ext, parent)
     lbl.setFixedWidth(42)
     lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    lbl.setStyleSheet(
-        f"color: {accent_color().name()}; font-weight: 700; font-size: 11px;"
-        f" background: rgba(35,134,54,0.08); border-radius: 3px; padding: 1px 4px;")
+    lbl.setStyleSheet(tokens.ext_badge_qss())
     return lbl
 
+
 def scrollbar_qss() -> str:
-    handle = "rgba(140, 140, 140, 0.6)"
-    hover = "rgba(120, 120, 120, 0.85)"
-    return (
-        "QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }"
-        "QScrollBar::handle:vertical {"
-        f" background: {handle}; border-radius: 4px; min-height: 30px;"
-        " }"
-        f"QScrollBar::handle:vertical:hover {{ background: {hover}; }}"
-        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
-        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
-        "QScrollBar:horizontal { background: transparent; height: 8px; margin: 0; }"
-        "QScrollBar::handle:horizontal {"
-        f" background: {handle}; border-radius: 4px; min-width: 30px;"
-        " }"
-        f"QScrollBar::handle:horizontal:hover {{ background: {hover}; }}"
-        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }"
-        "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }"
-    )
+    """全局细滚动条样式。实现已迁至 tokens，此处保留旧入口不改调用方。"""
+    return tokens.scrollbar_qss()
+
 
 # =============================================================================
 # Monkey-patch: 强制 FluentLabelBase + SwitchButton 标签背景透明
 # =============================================================================
 def _patch_fluent_label_background():
-    from qfluentwidgets.components.widgets.label import FluentLabelBase
     from qfluentwidgets.common.style_sheet import setCustomStyleSheet
+    from qfluentwidgets.components.widgets.label import FluentLabelBase
 
     _orig = FluentLabelBase.setTextColor
+
     def _set_text_color(self, light=QColor(0, 0, 0), dark=QColor(255, 255, 255)):
         _orig(self, light, dark)
         light_qss = (
@@ -458,13 +595,16 @@ def _patch_fluent_label_background():
             f"background-color:transparent}}"
         )
         setCustomStyleSheet(self, light_qss, dark_qss)
+
     FluentLabelBase.setTextColor = _set_text_color
 
+
 def _patch_switch_button_label_background():
-    from qfluentwidgets.components.widgets.switch_button import SwitchButton
     from qfluentwidgets.common.style_sheet import setCustomStyleSheet
+    from qfluentwidgets.components.widgets.switch_button import SwitchButton
 
     _orig = SwitchButton.setTextColor
+
     def _set_text_color(self, light, dark):
         _orig(self, light, dark)
         light_qss = (
@@ -478,11 +618,24 @@ def _patch_switch_button_label_background():
             f"background-color:transparent}}"
         )
         setCustomStyleSheet(self.label, light_qss, dark_qss)
+
     SwitchButton.setTextColor = _set_text_color
 
 
-# v0.7.3 调整2：软件已全局取消鼠标悬停提示，原先用于修正 ToolTip 配色的
-# _patch_tooltip_style() 补丁随之移除（没有提示就不存在「黑块」问题）。
+def apply_fluent_patches() -> None:
+    """安装 qfluentwidgets 兼容补丁。幂等，可安全重复调用。
 
-_patch_fluent_label_background()
-_patch_switch_button_label_background()
+    Notes:
+        改为显式调用（由 ``app_bootstrap.install_fluent_patches`` 触发），
+        原先在 import 期自动执行，导致 import 顺序敏感、无法关闭、无法单测，
+        且升级 qfluentwidgets 时是首要爆炸点。
+    """
+    global _patches_applied
+    if _patches_applied:
+        return
+    _patch_fluent_label_background()
+    _patch_switch_button_label_background()
+    _patches_applied = True
+
+
+_patches_applied = False

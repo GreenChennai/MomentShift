@@ -12,6 +12,7 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from unittest.mock import patch
+
 from PyQt6.QtWidgets import QApplication
 from qfluentwidgets import InfoBar
 
@@ -20,9 +21,9 @@ InfoBar.success = staticmethod(lambda *a, **k: None)
 InfoBar.warning = staticmethod(lambda *a, **k: None)
 InfoBar.error = staticmethod(lambda *a, **k: None)
 
-from momentshift.core.queue import ConversionManager
 from momentshift.core import advanced
 from momentshift.core.config import cfg
+from momentshift.core.queue import ConversionManager
 from momentshift.gui.convert_interface import ConvertInterface
 
 

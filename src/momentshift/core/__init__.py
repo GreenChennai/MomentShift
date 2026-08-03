@@ -1,1 +1,9 @@
-"""Core conversion engine (framework-agnostic, no Qt imports)."""
+"""核心转码引擎包，与界面框架无关。
+
+职责边界：
+- 做：容纳转换、压缩、放大、队列、配置、日志等纯逻辑模块。
+- 不做：本包除 qt_compat / 含信号的 worker 外不依赖 Qt，保证核心逻辑可被
+  命令行与单元测试直接调用。
+
+依赖：无；被依赖：gui 全部模块、quick_runner。
+"""

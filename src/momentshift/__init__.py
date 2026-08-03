@@ -1,4 +1,11 @@
-"""MomentShift (瞬变工坊) - 傻瓜式 ffmpeg 多媒体格式转换工具。"""
+"""MomentShift（瞬变工坊）—— 傻瓜式 ffmpeg 多媒体格式转换工具。
+
+职责边界：
+- 做：暴露包版本号等顶层元信息。
+- 不做：不在此导入任何 GUI 模块，避免 import momentshift 就把 Qt 拉起来。
+
+依赖：metadata；被依赖：全项目。
+"""
 
 from .metadata import (
     APP_NAME,

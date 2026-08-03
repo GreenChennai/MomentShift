@@ -14,15 +14,15 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
-from qfluentwidgets import InfoBar, isDarkTheme, setTheme, Theme
+from qfluentwidgets import InfoBar, Theme, isDarkTheme, setTheme
 
 # Neutralise toasts (their paint kills the offscreen sandbox).
 InfoBar.success = staticmethod(lambda *a, **k: None)
 InfoBar.warning = staticmethod(lambda *a, **k: None)
 InfoBar.error = staticmethod(lambda *a, **k: None)
 
-from momentshift.core.queue import ConversionManager
 from momentshift.core.config import cfg
+from momentshift.core.queue import ConversionManager
 from momentshift.gui.main_window import MainWindow
 
 

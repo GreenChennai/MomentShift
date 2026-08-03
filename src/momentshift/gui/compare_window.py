@@ -1,20 +1,31 @@
-"""放大前后对比弹窗（v0.7.9 交互重构）。
+"""放大前后对比弹窗。
+
+职责边界：
+- 做：以独立弹窗展示放大前后对比，分割线跟随鼠标移动。
+- 不做：不解码封面图（复用 gui/compare_widget 的结果）。
+
+依赖：gui/theme、i18n/translator；被依赖：gui/upscale_interface。
 
 鼠标在窗口内移动时分割线与指针同步；移出窗口则恢复居中。
 删除滑块与重置按钮，改为纯鼠标驱动。
 """
+
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QRect, QPoint
-from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
+from PyQt6.QtCore import QPoint, QRect, Qt
+from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QWidget,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
     QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
-from qfluentwidgets import CaptionLabel
 
 from ..i18n.translator import tr
-from .theme import accent_color, muted_text
+from . import tokens
+from .theme import accent_color
 
 
 # --------------------------------------------------------------------------
@@ -27,7 +38,7 @@ class _CompareView(QWidget):
         self._out: QPixmap | None = None
         self._split = 0.5
         self.setMinimumHeight(300)
-        self.setStyleSheet("background: #0d0d0d;")
+        self.setStyleSheet(f"background: {tokens.COMPARE_BG};")
         self.setMouseTracking(True)
 
     def set_images(self, src: QPixmap, out: QPixmap):
@@ -50,11 +61,17 @@ class _CompareView(QWidget):
             return
 
         src_scaled = self._src.scaled(
-            view_w, view_h, Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation)
+            view_w,
+            view_h,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         out_scaled = self._out.scaled(
-            view_w, view_h, Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation)
+            view_w,
+            view_h,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
 
         sx = margin + (view_w - src_scaled.width()) // 2
         sy = margin + (view_h - src_scaled.height()) // 2
@@ -94,7 +111,7 @@ class CompareWindow(QDialog):
         self.setWindowTitle(tr("upscale.compare.title"))
         self.resize(1100, 740)
         self.setMinimumSize(800, 500)
-        self.setStyleSheet("CompareWindow{background:#1e1e1e;}")
+        self.setStyleSheet(f"CompareWindow{{background:{tokens.COMPARE_SURFACE};}}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -103,31 +120,33 @@ class CompareWindow(QDialog):
         # 标题栏（含全屏/最小化按钮）
         title_bar = QWidget()
         title_bar.setFixedHeight(40)
-        title_bar.setStyleSheet("background:#1e1e1e;border-bottom:1px solid #333;")
+        title_bar.setStyleSheet(
+            f"background:{tokens.COMPARE_SURFACE};border-bottom:1px solid {tokens.COMPARE_BORDER};"
+        )
         th = QHBoxLayout(title_bar)
         th.setContentsMargins(16, 0, 12, 0)
         th.setSpacing(8)
         t = QLabel(tr("upscale.compare.title"))
-        t.setStyleSheet("color:#ccc;font-size:13px;font-weight:600;background:transparent;")
+        t.setStyleSheet(
+            f"color:{tokens.COMPARE_TEXT};font-size:{tokens.FONT_BODY}px;"
+            f"font-weight:600;background:transparent;"
+        )
         th.addWidget(t)
         th.addStretch(1)
 
-        # 全屏/还原
+        # 标题栏右侧三个按钮外观完全一致，合并成一次建样式 + 一轮装配，
+        # 避免三处 setStyleSheet 各写一遍（顺序仍是 全屏 / 最小化 / 关闭）
         self._fullscreen = False
-        fs = QPushButton("全屏")
-        fs.setStyleSheet(self._btn_style())
-        fs.clicked.connect(self._toggle_fullscreen)
-        th.addWidget(fs)
-        # 最小化
-        mi = QPushButton("—")
-        mi.setStyleSheet(self._btn_style())
-        mi.clicked.connect(self.showMinimized)
-        th.addWidget(mi)
-        # 关闭
-        cl = QPushButton("×")
-        cl.setStyleSheet(self._btn_style())
-        cl.clicked.connect(self.close)
-        th.addWidget(cl)
+        btn_qss = self._btn_style()
+        for text, slot in (
+            ("全屏", self._toggle_fullscreen),
+            ("—", self.showMinimized),
+            ("×", self.close),
+        ):
+            btn = QPushButton(text)
+            btn.setStyleSheet(btn_qss)
+            btn.clicked.connect(slot)
+            th.addWidget(btn)
         root.addWidget(title_bar)
 
         # 图片对比区
@@ -139,11 +158,15 @@ class CompareWindow(QDialog):
         self._view.leaveEvent = self._on_mouse_leave
         self._view.enterEvent = self._on_mouse_enter
 
-    def _btn_style(self):
+    def _btn_style(self) -> str:
+        """标题栏小按钮的 QSS（深色底、浅灰字，跟随对比窗专用色板）。"""
         return (
-            "QPushButton{background:#333;color:#ccc;border:none;"
-            "border-radius:4px;padding:4px 12px;font-size:12px;}"
-            "QPushButton:hover{background:#444;}")
+            f"QPushButton{{background:{tokens.COMPARE_BORDER};"
+            f"color:{tokens.COMPARE_TEXT};border:none;"
+            f"border-radius:{tokens.RADIUS_SM}px;padding:4px 12px;"
+            f"font-size:{tokens.FONT_SMALL}px;}}"
+            f"QPushButton:hover{{background:{tokens.COMPARE_BTN_HOVER};}}"
+        )
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -182,7 +205,7 @@ class CompareWindow(QDialog):
         out = QPixmap(self._out_path)
         if src.isNull():
             src = QPixmap(1, 1)
-        # v0.7.9 调整2：输出文件不存在时，用源图占位并提示
+        # 调整2：输出文件不存在时，用源图占位并提示
         if out.isNull():
             out = src.copy()
         self._view.set_images(src, out)

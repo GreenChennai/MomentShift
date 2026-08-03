@@ -1,45 +1,88 @@
 """放大界面 —— 批量 AI 超分辨率放大 / 视频插帧。
 
-v0.7.5 重构：不再硬编码 Real-ESRGAN，改为由 :mod:`momentshift.core.engines`
+职责边界：
+- 做：收集输入、按引擎 schema 动态生成参数行、把任务交给 TaskPool、展示前后对比。
+- 不做：不执行放大（由 engines 拼出的命令行在 worker 里跑）；不做并发调度。
+
+依赖：core/config、core/engines、core/logger、core/output_path、core/qt_compat、core/task_pool、gui/base、gui/compare_window、gui/drop_area、gui/help_bubble、gui/queue_widget、gui/theme、i18n/translator；被依赖：gui/quick_dialogs。
+
+本界面不硬编码任何引擎，全部由 :mod:`momentshift.core.engines`
 的引擎注册表驱动 ——
 - 「放大模型」下拉只列出**已安装**的引擎（``tools/<engine-id>/`` 下检测到可执行文件）
 - 一个引擎都没有时：下拉禁用并显示「无模型 / 算法可用，请下载」，其余设置项
   全部隐藏，只留一个「检测环境」按钮跳转到关于页
 - 有引擎时：按该引擎的参数 schema **动态生成**设置行（模型 / 降噪 / 倍率 /
   分块 / GPU / TTA / 插帧倍率 …），不同引擎参数完全不同
+
+队列调度已下沉到 :class:`~momentshift.core.task_pool.TaskPool`，
+本模块与 ``compress_interface`` 里那两套逐行同构的手写线程池循环已删除。
 """
 
 from __future__ import annotations
 
-import os
+import threading
 from pathlib import Path
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QFileDialog, QScrollArea,
-    QLabel, QMessageBox, QProgressBar, QDoubleSpinBox, QSpinBox,
-)
 from PyQt6.QtCore import Qt, QTimer
-
+from PyQt6.QtWidgets import (
+    QDoubleSpinBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
-    FluentIcon as FIF, PushButton, PrimaryPushButton, SwitchButton, ComboBox,
-    CaptionLabel, StrongBodyLabel, BodyLabel, HyperlinkButton,
+    CaptionLabel,
+    ComboBox,
+    SwitchButton,
+)
+from qfluentwidgets import (
+    FluentIcon as FIF,
 )
 
-from ..core.config import cfg
 from ..core import engines as eng_mod
-from qfluentwidgets import qconfig
-from ..core.qt_compat import Signal, QObject, QRunnable, QThreadPool
+from ..core.config import cfg
+from ..core.logger import get_logger
+from ..core.output_path import unique_output_path
+from ..core.qt_compat import QApplication, Signal
+from ..core.task_pool import PoolItem, ProgressCb, TaskPool, TaskState
 from ..i18n.translator import tr
-from .theme import (
-    ThemedCard, CollapsibleCard, field_row, primary_btn, ghost_btn, icon_btn,
-    muted_text, sub_text, CARD_MARGIN, scrollbar_qss,
-    success_color, danger_color, accent_color, border_color, ext_badge,
+from . import tokens
+from .base import (
+    InterfaceBase,
+    QueueListBase,
+    bind_combo_mapping,
+    build_detail_label,
+    build_row_header,
+    build_row_layout,
+    combo_mapping,
 )
-from .base import InterfaceBase
+from .compare_window import CompareWindow
 from .drop_area import DropArea
 from .help_bubble import attach_help
-from .queue_widget import ProgressBar, StatusPill, human_size, format_size_compare, ScrollAutoFollow, MarqueeName, FormatPill
-from .compare_window import CompareWindow
+from .queue_widget import (
+    MarqueeName,
+    ProgressBar,
+    ScrollAutoFollow,
+    StatusPill,
+    format_size_compare,
+)
+from .theme import (
+    ThemedCard,
+    apply_text,
+    apply_transparent,
+    ext_badge,
+    field_row,
+    ghost_btn,
+    icon_btn,
+    muted_text,
+    primary_btn,
+)
+
+log = get_logger("upscale")
 
 # 放大模块支持的视频格式
 _VIDEO_EXTS = set(eng_mod.VIDEO_EXTS)
@@ -72,12 +115,12 @@ class EngineParamPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("background: transparent;")
+        apply_transparent(self)
         self._vb = QVBoxLayout(self)
         self._vb.setContentsMargins(0, 0, 0, 0)
         self._vb.setSpacing(8)
         self._engine: eng_mod.Engine | None = None
-        self._controls: dict[str, tuple] = {}   # key -> (kind, widget)
+        self._controls: dict[str, tuple] = {}  # key -> (kind, widget)
         self._rows: list[QWidget] = []
 
     # -- 构建 --
@@ -95,7 +138,7 @@ class EngineParamPanel(QWidget):
             row = field_row(tr(p.label_key), widget)
             self._rows.append(row)
             self._vb.addWidget(row)
-            # v0.7.6 功能1：各参数附帮助说明（对齐压缩设置）
+            # 功能1：各参数附帮助说明（对齐压缩设置）
             attach_help(row, f"engine.help.{p.key}")
 
     def _make_control(self, p: eng_mod.Param, current):
@@ -110,15 +153,14 @@ class EngineParamPanel(QWidget):
                 if val == current:
                     idx = i
             combo.setCurrentIndex(idx)
-            combo._mapping = mapping
+            bind_combo_mapping(combo, mapping)
             combo.currentTextChanged.connect(lambda _t: self.changed.emit())
             return combo
         if p.kind == "bool":
             sw = SwitchButton()
             sw.setChecked(bool(current))
             sw.setText(" ")
-            sw.checkedChanged.connect(lambda _c, s=sw: (s.setText(" "),
-                                                        self.changed.emit()))
+            sw.checkedChanged.connect(lambda _c, s=sw: (s.setText(" "), self.changed.emit()))
             return sw
         if p.kind == "float":
             spin = QDoubleSpinBox()
@@ -159,7 +201,8 @@ class EngineParamPanel(QWidget):
                 continue
             kind, w = entry
             if kind == "choice":
-                out[p.key] = w._mapping.get(w.currentText(), p.default)
+                # 回退到 p.default 而不是显示文案，故不能用 combo_value()
+                out[p.key] = combo_mapping(w).get(w.currentText(), p.default)
             elif kind == "bool":
                 out[p.key] = w.isChecked()
             else:
@@ -174,47 +217,61 @@ class EngineParamPanel(QWidget):
 
 
 # =============================================================================
-# 放大 Worker / 队列组件
+# 放大执行体（跑在 TaskPool 的工作线程里）/ 队列组件
 # =============================================================================
-class _WorkerSignals(QObject):
-    progress = Signal(str, int)
-    finished = Signal(str, bool, int, str)
+def run_upscale_task(
+    item: PoolItem, report: ProgressCb, cancel: threading.Event
+) -> tuple[bool, str]:
+    """跑一条放大 / 插帧任务。这是喂给 :class:`TaskPool` 的业务执行体。
 
-    def __init__(self, parent=None):
-        super().__init__(parent)   # v0.7.24：parent=界面，Qt 持有防 GC
+    Args:
+        item: 队列条目。``payload`` 是 :meth:`UpscaleInterface._prepare_item`
+            在 GUI 线程冻结好的参数快照。
+        report: 进度回调（0~100），直接交给引擎做流式上报（v0.7.7 修复3：
+            没有它进度条会一直卡在 0）。
+        cancel: 用户清空/移除该任务时被置位。
+    Returns:
+        ``(是否成功, 引擎给出的明细文本)``。省下的字节数与最终输出路径写进
+        ``item.result``，供列表行显示「前后对比」用。
+    """
+    params = item.payload or {}
+    src: str = params["src"]
+    out: str = params["out"]
+    engine_id: str = params["engine_id"]
+    values: dict = params["values"]
 
+    item.result["out"] = out
+    item.result["saved"] = 0
+    try:
+        ok, detail = eng_mod.process_media(engine_id, src, out, values, progress_cb=report)
+    except Exception as exc:
+        # 保留 str(exc) 作为展示文案：引擎抛出的多是「模型文件缺失」这类
+        # 用户能看懂并自行修复的错误，换成通用文案反而帮倒忙。
+        log.exception("[upscale] task %s raised", item.iid)
+        ok, detail = False, str(exc)
+    if ok:
+        report(100)
 
-class UpscaleWorker(QRunnable):
-    """单个放大 / 插帧任务，在 QThreadPool 线程中执行。"""
-
-    def __init__(self, item_id, src, out, engine_id, values, owner=None):
-        super().__init__()
-        self.setAutoDelete(True)
-        self.item_id = item_id
-        self.src = src
-        self.out = out
-        self.engine_id = engine_id
-        self.values = dict(values or {})
-        self.signals = _WorkerSignals(owner)   # v0.7.24：parent=界面
-
-    def run(self):
-        # v0.7.7 修复3：流式进度回调，进度条不再卡在 0
-        cb = lambda p: self.signals.progress.emit(self.item_id, p)
-        self.signals.progress.emit(self.item_id, 0)
-        try:
-            ok, detail = eng_mod.process_media(
-                self.engine_id, self.src, self.out, self.values, progress_cb=cb)
-        except Exception as exc:
-            ok, detail = False, str(exc)
-        if ok:
-            self.signals.progress.emit(self.item_id, 100)
+    saved = 0
+    try:
+        if ok and Path(out).exists():
+            saved = Path(src).stat().st_size - Path(out).stat().st_size
+    except OSError:
+        # 输出文件刚写完就被外部程序挪走/锁住：省了多少不重要，别让任务翻车。
+        log.warning("[upscale] 无法统计输出体积：%s", out)
         saved = 0
+    item.result["saved"] = saved
+
+    if cancel.is_set() and not ok:
+        # 用户中途清空了队列，半成品文件没人要。引擎自身不支持中断，只能在
+        # 收尾时补一刀，避免输出目录里留下 0 字节或残缺的图。
         try:
-            if ok and Path(self.out).exists():
-                saved = Path(self.src).stat().st_size - Path(self.out).stat().st_size
+            target = Path(out)
+            if target.exists() and target.stat().st_size == 0:
+                target.unlink()
         except OSError:
-            saved = 0
-        self.signals.finished.emit(self.item_id, ok, saved, detail)
+            log.warning("[upscale] 残留文件清理失败：%s", out)
+    return bool(ok), str(detail or "")
 
 
 class UpscaleItemWidget(ThemedCard):
@@ -223,6 +280,7 @@ class UpscaleItemWidget(ThemedCard):
     v0.7.6 翻新：对齐「转换队列」视觉 —— 后缀徽标 + 8 字滚动文件名 +
     格式胶囊(.SRC → .TGT) + 状态胶囊 / 进度条 / 大小对比行 + 复制/对比/删除。
     """
+
     removeRequested = Signal(str)
     compareRequested = Signal(str)
 
@@ -232,42 +290,36 @@ class UpscaleItemWidget(ThemedCard):
         self._src = src
         self._out = out
         self._status = "pending"
-        # v0.7.8 调整1：耗时计时
+        # 调整1：耗时计时
         self._start_time = None
         self._elapsed_timer = QTimer(self)
         self._elapsed_timer.setInterval(1000)
         self._elapsed_timer.timeout.connect(self._on_elapsed_tick)
 
-        vb = QVBoxLayout(self)
-        vb.setContentsMargins(14, 12, 14, 12)
-        vb.setSpacing(8)
+        vb = build_row_layout(self)
 
         src_ext = Path(src).suffix.upper().lstrip(".")
-        top = QHBoxLayout()
-        # v0.7.4 Adj1：后缀矩形徽标（与转换/压缩队列统一风格）
+        # Adj1：后缀矩形徽标（与转换/压缩队列统一风格）
         self.iconLbl = ext_badge(src_ext, self)
-        top.addWidget(self.iconLbl)
         self.nameLbl = MarqueeName(self)
         self.nameLbl.set_text(Path(src).name)
         self.nameLbl.setObjectName("queueName")
-        top.addWidget(self.nameLbl, 1)
-        # v0.7.8 调整1：格式胶囊改为任务耗时显示
+        # 调整1：格式胶囊改为任务耗时显示
         self.timeLbl = QLabel(tr("upscale.elapsed.pending"))
         self.timeLbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.timeLbl.setStyleSheet(
-            "color:#F5F5F5; background:#3EB68F; border-radius:9px;"
-            " padding:2px 9px; font-weight:600; font-size:11px;")
-        top.addWidget(self.timeLbl)
+            tokens.pill_qss(tokens.SURFACE, tokens.SUCCESS, size=tokens.FONT_CAPTION)
+        )
         self.pill = StatusPill("pending")
-        top.addWidget(self.pill)
-        vb.addLayout(top)
+        vb.addLayout(build_row_header(self.iconLbl, self.nameLbl, self.timeLbl, self.pill))
 
         self.prog = ProgressBar()
         vb.addWidget(self.prog)
 
         bottom = QHBoxLayout()
-        self.detailLbl = CaptionLabel()
-        self.detailLbl.setStyleSheet("color: #000000; background: transparent;")
+        # 统一到构建器后，本行**新增**了 objectName 与自动换行
+        # （三处实现里只有放大队列漏了，长错误信息此前会被截断）。
+        self.detailLbl = build_detail_label()
         bottom.addWidget(self.detailLbl, 1)
         self.copyBtn = icon_btn(FIF.COPY)
         self.copyBtn.clicked.connect(self._copy_path)
@@ -284,6 +336,12 @@ class UpscaleItemWidget(ThemedCard):
         self.set_progress(0)
 
     def _copy_path(self):
+        """复制输出所在目录到剪贴板。
+
+        v0.8.0 RISK-01：``QApplication`` 从来没在本模块导入过，用户一点「复制
+        路径」就是 NameError（PyQt 在槽函数里吞掉回溯，界面表现为按钮没反应）。
+        现统一从 ``core.qt_compat`` 取，与 queue_widget 的同名逻辑一致。
+        """
         folder = str(Path(self._out or self._src).parent)
         QApplication.clipboard().setText(folder)
 
@@ -297,6 +355,7 @@ class UpscaleItemWidget(ThemedCard):
         if status == "running":
             if self._start_time is None:
                 import time as _time
+
                 self._start_time = _time.monotonic()
             self._elapsed_timer.start()
             self.detailLbl.setText(tr("upscale.status.upscaling"))
@@ -305,7 +364,7 @@ class UpscaleItemWidget(ThemedCard):
             if status in ("done", "failed"):
                 self._update_elapsed_text()  # 定格最终耗时
         if status == "done":
-            # v0.7.7 修复2+3：用 format_size_compare 显示绿/红百分比；进度条满格
+            # 修复2+3：用 format_size_compare 显示绿/红百分比；进度条满格
             self.set_progress(100)
             src_size = Path(self._src).stat().st_size if Path(self._src).exists() else 0
             dst_size = src_size - saved
@@ -320,6 +379,7 @@ class UpscaleItemWidget(ThemedCard):
 
     def _update_elapsed_text(self):
         import time as _time
+
         secs = int(_time.monotonic() - (self._start_time or 0))
         m, s = divmod(max(0, secs), 60)
         self.timeLbl.setText(f"{tr('upscale.elapsed.prefix')} {m}:{s:02d}")
@@ -329,47 +389,24 @@ class UpscaleItemWidget(ThemedCard):
         self.set_status(self._status)
 
 
-class UpscaleListWidget(QWidget):
-    """放大任务列表（带统计栏）。"""
+class UpscaleListWidget(QueueListBase):
+    """放大任务列表（带统计栏），继承 QueueListBase 复用统计/空态/增删骨架。
+
+    与另两个队列的差异：行控件带「对比」按钮（``compareRequested`` 信号）、
+    状态语义不同（无「压缩中」态）、入队签名多 ``out`` 预览路径。
+    """
+
     removeRequested = Signal(str)
     compareRequested = Signal(str)
 
+    _empty_key = "upscale.queue.empty"
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.items: dict[str, UpscaleItemWidget] = {}
-        vb = QVBoxLayout(self)
-        vb.setContentsMargins(0, 0, 0, 0)
-        vb.setSpacing(8)
-
-        self.statsBar = QWidget()
-        hb = QHBoxLayout(self.statsBar)
-        hb.setContentsMargins(2, 0, 2, 0)
-        hb.setSpacing(14)
-        self.statTotal = CaptionLabel()
-        self.statDone = CaptionLabel()
-        self.statErr = CaptionLabel()
-        for w in (self.statTotal, self.statDone, self.statErr):
-            w.setStyleSheet("color: #000000; font-weight:600;")
-            hb.addWidget(w)
-        hb.addStretch(1)
-        vb.addWidget(self.statsBar)
-
-        self.listWidget = QWidget()
-        self.listLayout = QVBoxLayout(self.listWidget)
-        self.listLayout.setContentsMargins(0, 0, 0, 0)
-        self.listLayout.setSpacing(8)
-        self.listLayout.addStretch(1)
-        vb.addWidget(self.listWidget, 1)
-        self.emptyHint = CaptionLabel(tr("upscale.queue.empty"))
-        self.emptyHint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.emptyHint.setStyleSheet(f"color: {muted_text()}; padding: 24px 0;")
-        vb.addWidget(self.emptyHint)
-        self._refresh_empty()
-
-    def _refresh_empty(self):
-        self.emptyHint.setVisible(False)
+        self.statTotal, self.statDone, self.statErr = self._statLabels
 
     def _update_stats(self):
+        """重写基类占位：统计总数 / 完成 / 失败（基于行的 ``_status``）。"""
         total = len(self.items)
         done = sum(1 for w in self.items.values() if w._status == "done")
         failed = sum(1 for w in self.items.values() if w._status == "failed")
@@ -383,41 +420,14 @@ class UpscaleListWidget(QWidget):
         w = UpscaleItemWidget(item_id, src, out)
         w.removeRequested.connect(self.removeRequested)
         w.compareRequested.connect(self.compareRequested)
-        self.items[item_id] = w
-        self.listLayout.insertWidget(self.listLayout.count() - 1, w)
-        self._refresh_empty()
+        self._attach_row(item_id, w)
         self._update_stats()
-
-    def set_progress(self, item_id: str, pct: int):
-        w = self.items.get(item_id)
-        if w:
-            w.set_progress(pct)
 
     def set_status(self, item_id: str, status: str, saved: int = 0, detail: str = ""):
         w = self.items.get(item_id)
         if w:
             w.set_status(status, saved, detail)
             self._update_stats()
-
-    def remove_item(self, item_id: str):
-        w = self.items.pop(item_id, None)
-        if w:
-            w.deleteLater()
-        self._refresh_empty()
-        self._update_stats()
-
-    def clear(self):
-        for w in self.items.values():
-            w.deleteLater()
-        self.items.clear()
-        self._refresh_empty()
-        self._update_stats()
-
-    def retranslate(self):
-        for w in self.items.values():
-            w.retranslate()
-        self.emptyHint.setText(tr("upscale.queue.empty"))
-        self._update_stats()
 
 
 # =============================================================================
@@ -426,10 +436,12 @@ class UpscaleListWidget(QWidget):
 class UpscaleInterface(InterfaceBase):
     """AI 超分辨率放大标签页。
 
-    自管任务队列（QRunnable + QThreadPool），使用 Real-ESRGAN 引擎。
+    队列调度委托给 :class:`~momentshift.core.task_pool.TaskPool`（v0.8.0
+    DUP-01）；引擎由 :mod:`momentshift.core.engines` 的注册表驱动。
     媒体文件直传队列（无暂存步骤），全局设置驱动整队参数。
 
-    v0.7.12：新增公开信号供快速调用进度窗使用。
+    对外暴露 ``taskAdded`` / ``taskProgress`` / ``taskFinished`` 三条信号供快速
+    调用进度窗使用（v0.7.12）。
     """
 
     # (item_id, 文件名)
@@ -442,17 +454,27 @@ class UpscaleInterface(InterfaceBase):
     def __init__(self, parent=None):
         super().__init__("Upscale", tr("nav.upscale"), tr("upscale.tagline"), parent)
 
-        self._items: dict[str, dict] = {}
-        self._active: set[str] = set()
-        self._pending: list[str] = []
-        # v0.7.14：持有 worker 引用，防止 GC 删除 signals
-        self._workers: dict[str, UpscaleWorker] = {}
-        self._running = False
-        self._paused = False
-        # 重入防护（v0.3.0）：防止模态对话框事件循环触发二次弹框
+        # 队列引擎。max_workers 传方法本身，好让设置页改「最大线程数」后下一轮
+        # 调度立即生效（放大侧上限比压缩低，见 _max_threads）。
+        self._pool = TaskPool(
+            run_upscale_task,
+            max_workers=self._max_threads,
+            parent=self,
+            prepare_fn=self._prepare_item,
+        )
+        self._pool.itemStarted.connect(self._on_pool_started)
+        self._pool.itemProgress.connect(self._on_pool_progress)
+        self._pool.itemFinished.connect(self._on_pool_finished)
+        self._pool.stateChanged.connect(self._update_controls)
+        self._pool.allFinished.connect(self._on_pool_all_finished)
+
+        # 整队运行参数快照，_on_start 时从参数面板取一次（见 _on_start 注释）。
+        self._run_values: dict | None = None
+        # 重入防护：模态对话框自带事件循环，期间用户仍能再次点按钮，
+        # 不挡住就会叠出第二个弹框
         self._picking = False
 
-        # 放大参数默认值（v0.7.5：引擎由注册表驱动）
+        # 放大参数默认值（：引擎由注册表驱动）
         self._engine_id = ""
         self._fmt = "png"
         self._output_mode = cfg.upscaleMode.value
@@ -476,28 +498,27 @@ class UpscaleInterface(InterfaceBase):
         self._inputCard = card
 
         # =====================================================================
-        # 放大设置卡片（v0.7.5：引擎驱动的动态参数面板）
+        # 放大设置卡片（：引擎驱动的动态参数面板）
         # =====================================================================
         setc, setvb, self.tSettings = self._make_card("upscale.settings.title")
-        self._settingsCard = setc  # v0.7.15：供快速调用设置窗 reparent 复用
+        self._settingsCard = setc  # 供快速调用设置窗 reparent 复用
 
         # -- 「放大模型」：只列已安装的引擎 --
         self.modelCombo = ComboBox()
-        # v0.7.9 修复5：不设固定最大宽度，让 field_row 决定（对齐下方设置条目）
+        # 修复5：不设固定最大宽度，让 field_row 决定（对齐下方设置条目）
         self.modelCombo.currentTextChanged.connect(self._on_engine_change)
         self.modelRow = field_row(tr("upscale.model"), self.modelCombo)
         setvb.addWidget(self.modelRow)
 
         # -- 引擎缺失时的提示 + 检测环境按钮 --
         self.noEngineBox = QWidget(self)
-        self.noEngineBox.setStyleSheet("background: transparent;")
+        apply_transparent(self.noEngineBox)
         nb = QVBoxLayout(self.noEngineBox)
         nb.setContentsMargins(0, 4, 0, 0)
         nb.setSpacing(10)
         self.noEngineHint = CaptionLabel(tr("upscale.engine.none_hint"))
         self.noEngineHint.setWordWrap(True)
-        self.noEngineHint.setStyleSheet(
-            f"color: {muted_text()}; background: transparent;")
+        apply_text(self.noEngineHint, muted_text(), transparent=True)
         nb.addWidget(self.noEngineHint)
         self.detectBtn = primary_btn(tr("upscale.engine.detect"), icon=FIF.SEARCH)
         self.detectBtn.clicked.connect(self._goto_about)
@@ -510,27 +531,32 @@ class UpscaleInterface(InterfaceBase):
 
         # -- 输出相关（引擎缺失时整体隐藏）--
         self.outputBox = QWidget(self)
-        self.outputBox.setStyleSheet("background: transparent;")
+        apply_transparent(self.outputBox)
         ob = QVBoxLayout(self.outputBox)
         ob.setContentsMargins(0, 0, 0, 0)
         ob.setSpacing(8)
 
         self.fmtCombo = self._make_combo(
-            [(tr("upscale.fmt.png"), "png"), (tr("upscale.fmt.jpg"), "jpg"),
-             (tr("upscale.fmt.webp"), "webp")], self._fmt,
-            lambda v: setattr(self, "_fmt", v))
+            [
+                (tr("upscale.fmt.png"), "png"),
+                (tr("upscale.fmt.jpg"), "jpg"),
+                (tr("upscale.fmt.webp"), "webp"),
+            ],
+            self._fmt,
+            lambda v: setattr(self, "_fmt", v),
+        )
         self.fmtRow = field_row(tr("upscale.output.fmt"), self.fmtCombo)
         ob.addWidget(self.fmtRow)
 
         self.outputSwitch = SwitchButton()
         self.outputSwitch.checkedChanged.connect(self._on_output_mode)
-        ob.addWidget(field_row(tr("upscale.output.mode"), self.outputSwitch))
+        self.outputModeRow = field_row(tr("upscale.output.mode"), self.outputSwitch)
+        ob.addWidget(self.outputModeRow)
         self.suffixEdit = QLineEdit(self._suffix)
         self.suffixEdit.setPlaceholderText(tr("upscale.output.suffix_hint"))
         self.suffixEdit.textChanged.connect(
-            lambda t: (setattr(self, "_suffix", t),
-                       setattr(cfg.upscaleSuffix, "value", t),
-                       qconfig.save()))
+            lambda t: (setattr(self, "_suffix", t), setattr(cfg.upscaleSuffix, "value", t))
+        )
         self.suffixRow = field_row(tr("upscale.output.suffix"), self.suffixEdit)
         ob.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(self._folder)
@@ -550,15 +576,14 @@ class UpscaleInterface(InterfaceBase):
         # =====================================================================
         # 队列卡片
         # =====================================================================
-        qcard, qvb, self.tQueue = self._make_card(
-            "upscale.queue.title", "upscale.queue.hint")
+        qcard, qvb, self.tQueue = self._make_card("upscale.queue.title", "upscale.queue.hint")
         self.listWidget = UpscaleListWidget(self)
         self.listWidget.removeRequested.connect(self._on_remove)
         self.listWidget.compareRequested.connect(self._on_compare)
         self.queueScroll = self._make_scroll(280)
         self.queueScroll.setWidget(self.listWidget)
         qvb.addWidget(self.queueScroll)
-        # v0.7.4 Adj2：队列自动跟随当前处理任务
+        # Adj2：队列自动跟随当前处理任务
         self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
@@ -616,18 +641,68 @@ class UpscaleInterface(InterfaceBase):
             self._picking = False
 
     def _add_to_queue(self, paths):
+        """把文件加进队列。重复路径由池挡掉。
+
+        这里就先算一次输出路径，只为了在列表行上把「会输出到哪」显示出来；
+        真正生效的那个由 :meth:`_prepare_item` 在派发前重算（中途改输出设置的
+        话，两者可以不一样）。
+        """
         if not paths:
             return
         for p in paths:
-            if p not in self._items:
-                self._items[p] = {"src": p, "out": self._out_path(p),
-                                  "status": "pending", "saved": 0}
-                self.listWidget.add_item(p, p, self._items[p]["out"])
-                self.taskAdded.emit(p, Path(p).name)
+            preview_out = self._out_path(p)
+            if not self._pool.add(p, Path(p).name, payload={"src": p, "out": preview_out}):
+                continue
+            self.listWidget.add_item(p, p, preview_out)
+            self.taskAdded.emit(p, Path(p).name)
         self._update_controls()
 
     # =========================================================================
-    # 引擎装载与切换（v0.7.5）
+    # 快速调用（右键菜单）对接的公开 API ——  ODD-07
+    # =========================================================================
+
+    def export_settings(self) -> dict:
+        """导出当前放大设置，供另一个 UpscaleInterface 实例套用。
+
+        ODD-07 背景：``quick_runner`` 之前是跨模块直接写别人的私有属性
+        （``ui._engine_id = ...`` 一路写到 ``ui._folder``），再调私有方法
+        ``ui._add_to_queue()`` / ``ui._on_start()``。这类耦合的代价是：私有字段
+        一改名，右键菜单链路就静默失效——而它没有任何测试覆盖。
+        用一对 export/apply 把契约显式化。
+        """
+        try:
+            run_values = self.paramPanel.values()
+        except (AttributeError, RuntimeError):
+            # 无引擎安装时 paramPanel 未 build，取值会失败；此时不带引擎参数。
+            run_values = None
+        return {
+            "engine_id": self._engine_id,
+            "fmt": self._fmt,
+            "output_mode": self._output_mode,
+            "suffix": self._suffix,
+            "folder": self._folder,
+            "run_values": run_values,
+        }
+
+    def apply_settings(self, settings: dict) -> None:
+        """套用 :meth:`export_settings` 导出的设置（缺项保持现状）。"""
+        self._engine_id = settings.get("engine_id", self._engine_id)
+        self._fmt = settings.get("fmt", self._fmt)
+        self._output_mode = settings.get("output_mode", self._output_mode)
+        self._suffix = settings.get("suffix", self._suffix)
+        self._folder = settings.get("folder", self._folder)
+        # run_values 为 None 时保持现有值，交给 _on_start 从面板重新取。
+        run_values = settings.get("run_values")
+        if run_values is not None:
+            self._run_values = run_values
+
+    def enqueue_and_start(self, paths: list[str]) -> None:
+        """把 ``paths`` 加进放大队列并立即开始（右键菜单入口用）。"""
+        self._add_to_queue(paths)
+        self._on_start()
+
+    # =========================================================================
+    # 引擎装载与切换
     # =========================================================================
 
     def reload_engines(self) -> None:
@@ -657,7 +732,7 @@ class UpscaleInterface(InterfaceBase):
             full_label = f"{e.name}  ·  {'/'.join(e.algos)}"
             if e.is_interp:
                 full_label = f"{full_label}  [{tr('engine.group.interp')}]"
-            # v0.7.10：超出 32 字截断 + …（qfluentwidgets ComboBox 不支持逐项 tooltip）
+            # 超出 32 字截断 + …（qfluentwidgets ComboBox 不支持逐项 tooltip）
             label = full_label if len(full_label) <= 32 else full_label[:31] + "…"
             self.modelCombo.addItem(label)
             self._engine_map[label] = e.eid
@@ -703,14 +778,12 @@ class UpscaleInterface(InterfaceBase):
     def _on_output_mode(self, checked):
         self._output_mode = "same" if checked else "fixed"
         cfg.upscaleMode.value = self._output_mode
-        qconfig.save()
         self._apply_output_mode()
 
     def _apply_output_mode(self):
         same = self._output_mode == "same"
         self.outputSwitch.setChecked(same)
-        self.outputSwitch.setText(
-            tr("convert.output.same") if same else tr("convert.output.fixed"))
+        self.outputSwitch.setText(tr("convert.output.same") if same else tr("convert.output.fixed"))
         self.suffixRow.setVisible(same)
         self.folderRow.setVisible(not same)
 
@@ -720,37 +793,24 @@ class UpscaleInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            d = self._ask_directory(tr("convert.output.browse"),
-                                    self._folder or "")
+            d = self._ask_directory(tr("convert.output.browse"), self._folder or "")
             if d:
                 self._folder = d
                 cfg.upscaleFolder.value = d
-                qconfig.save()
                 self.folderEdit.setText(d)
         finally:
             self._picking = False
 
     def _out_path(self, src: str) -> str:
-        p = Path(src)
-        src_ext = p.suffix.lower()
-        # v0.7.5：GIF / 视频保持原容器，只有静态图片才套用「输出格式」
-        if src_ext in eng_mod.IMAGE_EXTS:
-            ext = "." + self._fmt
-        else:
-            ext = src_ext or ".mp4"
-        if self._output_mode == "same":
-            out_dir = p.parent
-            stem = p.stem + (self._suffix or "")
-        else:
-            out_dir = Path(self._folder) if self._folder else p.parent
-            stem = p.stem
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out = out_dir / (stem + ext)
-        i = 1
-        while out.exists():
-            out = out_dir / f"{stem}_{i}{ext}"
-            i += 1
-        return str(out)
+        """放大产物的落盘路径。
+
+        v0.7.5：GIF / 视频保持原容器，只有静态图片才套用「输出格式」下拉的值。
+        """
+        src_ext = Path(src).suffix.lower()
+        ext = "." + self._fmt if src_ext in eng_mod.IMAGE_EXTS else (src_ext or ".mp4")
+        return unique_output_path(
+            src, ext=ext, output_mode=self._output_mode, suffix=self._suffix, folder=self._folder
+        )
 
     def _max_threads(self) -> int:
         return max(1, min(int(cfg.maxThreads.value), 4))
@@ -760,9 +820,13 @@ class UpscaleInterface(InterfaceBase):
     # =========================================================================
 
     def _on_compare(self, item_id):
-        item = self._items.get(item_id)
-        if item:
-            self._show_compare(item["src"], item.get("out", ""))
+        item = self._pool.item(item_id)
+        if item is None:
+            return
+        payload = item.payload or {}
+        # result["out"] 是真正跑出来的那个路径，payload["out"] 是入队时的预估值。
+        out = item.result.get("out") or payload.get("out", "")
+        self._show_compare(payload.get("src", item_id), out)
 
     def _show_compare(self, src, out):
         """弹出 1280×720 放大前后对比窗口（v0.3.5）。"""
@@ -770,97 +834,91 @@ class UpscaleInterface(InterfaceBase):
         dlg.exec()
 
     # =========================================================================
-    # 任务运行管理（自管线程池循环）
+    # 队列对接（调度本身在 core.task_pool.TaskPool 里）
     # =========================================================================
+
+    def _prepare_item(self, item: PoolItem) -> bool:
+        """任务出队前重算输出路径并冻结引擎参数。由池在 GUI 线程串行调用。
+
+        **必须串行**：``_out_path`` 用「文件存不存在」给重名文件挑 ``_1`` /
+        ``_2`` 后缀，并发调用会给两条任务分到同一个文件名。
+        """
+        try:
+            out = self._out_path(item.iid)
+        except OSError:
+            log.exception("[upscale] 输出路径准备失败：%s", item.iid)
+            return False
+        values = self._run_values or self.paramPanel.values()
+        item.payload = {
+            "src": item.iid,
+            "out": out,
+            "engine_id": self._engine_id,
+            # 拷一份：参数面板的 values() 每次返回新字典，但调用方可能传的是
+            # apply_settings 塞进来的外部字典，别让工作线程读到 UI 侧的活对象。
+            "values": dict(values or {}),
+        }
+        return True
+
+    def _on_pool_started(self, iid: str) -> None:
+        self.listWidget.set_status(iid, "running")
+        widget = self.listWidget.items.get(iid)
+        if widget is not None:
+            self._queue_auto_follow.ensure(widget)
+
+    def _on_pool_progress(self, iid: str, pct: int) -> None:
+        self.listWidget.set_progress(iid, pct)
+        self.taskProgress.emit(iid, pct)
+
+    def _on_pool_finished(self, iid: str, state: str, message: str) -> None:
+        """把池里的结束状态渲染到列表行。
+
+        ``canceled`` 归到 ``failed`` 展示：``taskFinished`` 的对外契约是
+        「done / failed 二选一」，快速调用进度窗靠它计数。
+        """
+        item = self._pool.item(iid)
+        saved = int(item.result.get("saved", 0)) if item else 0
+        status = "done" if state == TaskState.DONE.value else "failed"
+        self.listWidget.set_status(iid, status, saved, message)
+        self.taskFinished.emit(iid, status)
+
+    def _on_pool_all_finished(self) -> None:
+        self._queue_auto_follow.set_active(False)
 
     def _on_start(self):
         if not self._engine_id or not eng_mod.find_engine(self._engine_id):
-            QMessageBox.warning(
-                self, tr("common.warning"), tr("upscale.toast.no_engine"))
+            QMessageBox.warning(self, tr("common.warning"), tr("upscale.toast.no_engine"))
             return
-        if not self._items:
+        # 与  一致：再点一次「开始」= 重跑所有待处理 / 失败的条目。
+        if not any(it.is_restartable for it in self._pool.items()):
             return
-        self._pending = [k for k, v in self._items.items()
-                         if v["status"] in ("pending", "failed")]
-        if not self._pending:
-            return
-        self._running = True
-        self._paused = False
-        # 入队瞬间快照当前参数，运行中改设置不影响已启动的任务
+        # 开跑瞬间快照参数面板，运行途中改设置不影响本轮任务。
         self._run_values = self.paramPanel.values()
         self._queue_auto_follow.set_active(True)
-        self._launch_next()
-
-    def _launch_next(self):
-        while (self._running and not self._paused
-               and len(self._active) < self._max_threads() and self._pending):
-            src = self._pending.pop(0)
-            self._active.add(src)
-            out = self._out_path(src)
-            self._items[src]["out"] = out
-            self._items[src]["status"] = "running"
-            self.listWidget.set_status(src, "running")
-            self._queue_auto_follow.ensure(self.listWidget.items[src])
-            worker = UpscaleWorker(
-                src, src, out, self._engine_id,
-                getattr(self, "_run_values", None) or self.paramPanel.values(),
-                owner=self)   # v0.7.24：signals parent=界面
-            worker.signals.progress.connect(self.listWidget.set_progress)
-            worker.signals.progress.connect(
-                lambda iid, p: self.taskProgress.emit(iid, p))
-            worker.signals.finished.connect(self._on_finished)
-            self._workers[src] = worker  # v0.7.14：持有引用防 GC
-            QThreadPool.globalInstance().start(worker)
-
-    def _on_finished(self, item_id, ok, saved, detail):
-        self._workers.pop(item_id, None)  # v0.7.14：释放 worker 引用
-        self._active.discard(item_id)
-        status = "done" if ok else "failed"
-        self._items[item_id]["status"] = status
-        self._items[item_id]["saved"] = saved
-        self.listWidget.set_status(item_id, status, saved, detail)
-        self.taskFinished.emit(item_id, status)
-        if self._running and not self._paused:
-            self._launch_next()
-        if not self._pending and not self._active:
-            self._running = False
-            self._queue_auto_follow.set_active(False)
-        self._update_controls()
+        self._pool.start()
 
     def _on_pause(self):
-        if self._running and not self._paused:
-            self._paused = True
-        else:
-            self._paused = False
-            if self._running:
-                self._launch_next()
-        self._update_controls()
+        self._pool.toggle_pause()
 
     def _on_clear(self):
-        self._items.clear()
-        self._pending.clear()
-        self._active.clear()
-        self._running = False
-        self._paused = False
+        self._pool.clear()
         self.listWidget.clear()
         self._update_controls()
 
     def _on_remove(self, item_id):
-        self._items.pop(item_id, None)
-        if item_id in self._pending:
-            self._pending.remove(item_id)
-        self._active.discard(item_id)
+        self._pool.remove(item_id)
         self.listWidget.remove_item(item_id)
 
     def _update_controls(self):
         ready = bool(self._engine_id) and bool(eng_mod.find_engine(self._engine_id))
-        self.startBtn.setEnabled(
-            ready and bool(self._items)
-            and not (self._running and not self._paused))
-        self.pauseBtn.setEnabled(self._running)
-        self.clearBtn.setEnabled(bool(self._items))
-        self.pauseBtn.setText(tr("convert.resume")
-            if (self._running and self._paused) else tr("convert.pause"))
+        has_items = len(self._pool) > 0
+        self.startBtn.setEnabled(ready and has_items and not self._pool.is_busy)
+        self.pauseBtn.setEnabled(self._pool.is_running)
+        self.clearBtn.setEnabled(has_items)
+        self.pauseBtn.setText(
+            tr("convert.resume")
+            if (self._pool.is_running and self._pool.is_paused)
+            else tr("convert.pause")
+        )
 
     # =========================================================================
     # 主题 / i18n
@@ -877,11 +935,17 @@ class UpscaleInterface(InterfaceBase):
         self.tSettings.setText(tr("upscale.settings.title"))
         self.tQueue.setText(tr("upscale.queue.title"))
         self.dropArea.retranslate(
-            tr("upscale.drop.title"), tr("upscale.drop.hint"),
-            tr("upscale.drop.formats"))
+            tr("upscale.drop.title"), tr("upscale.drop.hint"), tr("upscale.drop.formats")
+        )
         self.addFolderBtn.setText(tr("upscale.add_folder"))
         self.noEngineHint.setText(tr("upscale.engine.none_hint"))
         self.detectBtn.setText(tr("upscale.engine.detect"))
+        # v0.8.1 Bug4-②：field_row 行标签同步语言（此前标签是拿不到引用的局部变量）
+        self.modelRow.fieldLabel.setText(tr("upscale.model"))
+        self.fmtRow.fieldLabel.setText(tr("upscale.output.fmt"))
+        self.outputModeRow.fieldLabel.setText(tr("upscale.output.mode"))
+        self.suffixRow.fieldLabel.setText(tr("upscale.output.suffix"))
+        self.folderRow.fieldLabel.setText(tr("upscale.output.folder"))
         self.reload_engines()
         self._apply_output_mode()
         self.startBtn.setText(tr("convert.start"))

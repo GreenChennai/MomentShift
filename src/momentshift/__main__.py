@@ -1,32 +1,34 @@
-"""Entry point: ``python -m momentshift`` or the installed ``momentshift`` CLI.
+"""程序入口：``python -m momentshift`` 或安装后的 ``momentshift`` 命令。
 
-v0.2.9: ``--quick <task> <files...>`` mode for Windows right-click context menu.
-v0.3.1: single-instance enforcement via QSharedMemory."""
+职责边界：
+- 做：解析命令行参数、建立单实例锁（QSharedMemory）、安装全局异常钩子、拉起主窗口；
+  支持 ``--quick <task> <files...>`` 右键菜单快速调用模式。
+- 不做：任何具体的转码/压缩/放大业务逻辑（交给对应界面与核心模块）。
 
+依赖：core/platform、gui/main_window；被依赖：无（进程唯一入口）。
+"""
+
+import os
 import sys
 import threading
 import traceback
-import os
-from pathlib import Path
 
-from momentshift.core.logger import init_logging, get_logger
-from PyQt6.QtGui import QColor
-from momentshift.core.qt_compat import QApplication, Qt
 from PyQt6.QtCore import QSharedMemory
 from PyQt6.QtWidgets import QMessageBox
-from qfluentwidgets import setTheme, Theme, setThemeColor
-from momentshift.core.config import cfg
-from momentshift.i18n.translator import translator, LocaleKey
+
+from momentshift.app_bootstrap import create_application
+from momentshift.core.logger import get_logger, init_logging
+from momentshift.core.qt_compat import QApplication
 from momentshift.core.queue import ConversionManager
 from momentshift.gui.main_window import MainWindow
 from momentshift.metadata import APP_NAME, VERSION
 
-
 # ---------------------------------------------------------------------------
-# 单实例守卫（v0.3.1）：同一时刻只允许运行一个 MomentShift 进程
+# 单实例守卫：同一时刻只允许运行一个 MomentShift 进程
 # ---------------------------------------------------------------------------
 _instance_lock = QSharedMemory("MomentShift_SingleInstance_v031")
 _IS_FIRST_INSTANCE = False
+
 
 def _check_single_instance():
     """尝试获取共享内存锁。失败表示已有一个实例在运行。"""
@@ -43,36 +45,48 @@ def _check_single_instance():
 
 
 class Application(QApplication):
-    """QApplication that logs (instead of crashing on) exceptions raised inside
-    Qt event handlers / slots. This turns a silent "闪退" into a logged,
-    diagnosable event written to ``logs/``.
+    """记录 Qt 事件处理器 / 槽函数内异常的 QApplication。
+
+    为什么要覆写 notify：Qt 槽里抛出的异常默认会直接终止进程，用户看到的
+    只是「闪退」，事后毫无线索。这里兜住异常并写入 ``logs/``，把闪退变成
+    一条可排查的日志。
+
+    Notes:
+        这是最外层兜底，必须捕获 Exception 而非具体异常类型：
+        任何一个界面回调出错都不应该带走整个程序。
     """
 
     def notify(self, receiver, event):
+        """转发事件，并兜住槽函数抛出的任何异常。"""
         try:
             return super().notify(receiver, event)
         except Exception:
-            get_logger("app").critical(
-                "Exception in Qt event handler:\n" + traceback.format_exc()
-            )
+            get_logger("app").critical("Qt 事件处理器内发生异常：\n" + traceback.format_exc())
             return False
 
 
 def _excepthook(exc_type, exc, tb):
+    """主线程未捕获异常的兜底钩子，只记录不退出。"""
     get_logger("app").critical(
-        "Unhandled exception:\n" + "".join(traceback.format_exception(exc_type, exc, tb))
+        "未捕获异常：\n" + "".join(traceback.format_exception(exc_type, exc, tb))
     )
 
 
 def _threading_excepthook(args):
+    """子线程未捕获异常的兜底钩子。
+
+    Notes:
+        threading.excepthook 与 sys.excepthook 是两套机制，
+        只装后者的话子线程崩溃仍然静默无声。
+    """
     get_logger("app").critical(
-        f"Unhandled exception in thread ({args.thread.name}):\n"
+        f"线程 {args.thread.name} 内发生未捕获异常：\n"
         + "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
     )
 
 
 # =============================================================================
-# 快速调用（v0.7.12：委托 quick_runner 执行完整 GUI 流程）
+# 快速调用（：委托 quick_runner 执行完整 GUI 流程）
 # =============================================================================
 def _quick_launch_task(task: str, files: list[str]) -> int:
     """处理来自右键菜单的快速调用请求。
@@ -80,6 +94,7 @@ def _quick_launch_task(task: str, files: list[str]) -> int:
     v0.7.12 重构：弹设置窗 → 入对应队列 → 自动开始 → 右下角任务进度窗。
     """
     from momentshift.quick_runner import run_quick
+
     return run_quick(task, files)
 
 
@@ -92,71 +107,38 @@ def main():
     log.info("Starting %s %s (pid=%d)", APP_NAME, VERSION, os.getpid())
 
     # =========================================================================
-    # 快速调用模式（v0.2.9）：无 GUI，右键菜单触发
-    #   MomentShift.exe --quick convert file1.png file2.jpg
+    # 快速调用模式：无 GUI，右键菜单触发
+    # MomentShift.exe --quick convert file1.png file2.jpg
     # =========================================================================
     if "--quick" in sys.argv:
         idx = sys.argv.index("--quick")
         task = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else ""
-        # v0.7.20：过滤空串/纯空白参数（%* 展开异常时的防御）
-        files = [f for f in sys.argv[idx + 2:] if f and f.strip()]
-        # v0.7.21：即使 files 为空也不直接退出（旧版 `"%*"` 注册命令展开异常会
+        # 过滤空串/纯空白参数（%* 展开异常时的防御）
+        files = [f for f in sys.argv[idx + 2 :] if f and f.strip()]
+        # 即使 files 为空也不直接退出（旧版 `"%*"` 注册命令展开异常会
         # 导致无参数）——交给 run_quick 静默处理，避免右键"没反应"。
-        QApplication.setHighDpiScaleFactorRoundingPolicy(
-            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+        # HiDPI 策略由 quick_runner 内的 app_bootstrap.create_application 统一设置。
         sys.exit(_quick_launch_task(task, files))
 
     # =========================================================================
-    # 单实例检查（v0.3.1）：禁止重复启动
+    # 单实例检查：禁止重复启动
     # =========================================================================
     if not _check_single_instance():
         log.warning("Another instance is running (pid=%d), exiting.", os.getpid())
         app = QApplication.instance() or QApplication(sys.argv)
         QMessageBox.warning(
-            None, APP_NAME,
-            "MomentShift 已在运行。\n\n如需重新打开，请从系统托盘唤起或退出后再启动。")
+            None,
+            APP_NAME,
+            "MomentShift 已在运行。\n\n如需重新打开，请从系统托盘唤起或退出后再启动。",
+        )
         sys.exit(0)
 
     # =========================================================================
     # 正常 GUI 模式
     # =========================================================================
-    QApplication.setHighDpiScaleFactorRoundingPolicy(
-        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
-    )
-    # AA_UseHighDpiPixmaps was removed in Qt6 (high-DPI pixmaps are automatic),
-    # so guard it to stay compatible across PyQt6 versions.
-    if hasattr(Qt.ApplicationAttribute, "AA_UseHighDpiPixmaps"):
-        QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps)
-
-    app = Application(sys.argv)
-    app.setApplicationName(APP_NAME)
-    app.setApplicationVersion(VERSION)
-
-    # =========================================================================
-    # 字体加载（v0.3.2）：简体中文 → HarmonyOS Sans SC，英文/数字 → FiraCode
-    # =========================================================================
-    from PyQt6.QtGui import QFont, QFontDatabase
-    from pathlib import Path
-    _res = Path(__file__).parent / "resources"
-    for _name in ("HarmonyOS_Sans_SC_Regular.ttf", "FiraCode-Regular.ttf"):
-        _fp = _res / _name
-        if _fp.exists():
-            _fid = QFontDatabase.addApplicationFont(str(_fp))
-            log.info("Loaded font: %s (id=%s)", _name, _fid)
-    # 设置默认字体：中文用 HarmonyOS Sans SC，fallback 用 FiraCode
-    _qfont = QFont("HarmonyOS Sans SC", 10)
-    _qfont.setStyleHint(QFont.StyleHint.SansSerif)
-    app.setFont(_qfont)
-    # 全局样式表强制字体 — 覆盖 qfluentwidgets 等库的内部字体设置
-    # v0.7.3 调整2：软件已取消全部鼠标悬停提示，原 QToolTip 配色规则一并移除。
-    app.setStyleSheet(
-        "* { font-family: 'HarmonyOS Sans SC', 'FiraCode', 'Microsoft YaHei', sans-serif; }"
-    )
-
-    # v0.3.2: 固定浅色主题，移除深色主题
-    setTheme(Theme.LIGHT)
-    setThemeColor(QColor("#238636"))   # GitHub 绿
-    translator.set_locale(LocaleKey(cfg.language.value))
+    # HiDPI / 字体 / 主题 / 语言 / qfluentwidgets 补丁全部由 app_bootstrap 负责，
+    # 与 quick_runner 共用同一份实现，避免两条启动路径的初始化再次漂移。
+    app = create_application(sys.argv, app_cls=Application)
 
     manager = ConversionManager()
     window = MainWindow(manager)

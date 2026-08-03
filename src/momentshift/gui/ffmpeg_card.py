@@ -1,17 +1,26 @@
-"""ffmpeg status + one-click download card (Convert screen)."""
+"""ffmpeg 状态卡片 + 一键下载（转换界面）。
+
+职责边界：
+- 做：展示 ffmpeg 是否就绪，未就绪时提供「一键下载并安装」按钮。
+- 不做：不执行下载（交给 FfmpegDownloadWorker）；不探测 ffmpeg 路径。
+
+依赖：core/ffmpeg、core/ffmpeg_download、gui/theme；被依赖：gui/convert_interface。
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QProgressBar, QLabel
 
-from qfluentwidgets import FluentIcon as FIF, StrongBodyLabel, BodyLabel, PrimaryPushButton, HyperlinkButton
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QVBoxLayout
+from qfluentwidgets import BodyLabel, HyperlinkButton, PrimaryPushButton, StrongBodyLabel
+from qfluentwidgets import FluentIcon as FIF
 
-from ..core.qt_compat import Signal, QThreadPool
-from ..core.ffmpeg import find_ffmpeg, ffmpeg_install_dir, get_version
+from ..core.ffmpeg import ffmpeg_install_dir, find_ffmpeg, get_version
 from ..core.ffmpeg_download import FfmpegDownloadWorker
+from ..core.qt_compat import QThreadPool, Signal
 from ..i18n.translator import tr
-from .theme import ThemedCard, muted_text, sub_text
+from . import tokens
+from .theme import ThemedCard, sub_text
 
 
 class FfmpegCard(ThemedCard):
@@ -34,8 +43,9 @@ class FfmpegCard(ThemedCard):
         top.addWidget(self.statusLbl, 1)
         vb.addLayout(top)
 
-        self.linkBtn = HyperlinkButton("https://ffmpeg.org/download.html",
-                                       tr("ffmpeg.download.page"))
+        self.linkBtn = HyperlinkButton(
+            "https://ffmpeg.org/download.html", tr("ffmpeg.download.page")
+        )
         self.dlBtn = PrimaryPushButton(tr("ffmpeg.download"), icon=FIF.DOWNLOAD)
         self.dlBtn.clicked.connect(self._download)
         row = QHBoxLayout()
@@ -47,33 +57,40 @@ class FfmpegCard(ThemedCard):
         self.prog = QProgressBar()
         self.prog.setRange(0, 0)
         self.prog.setFixedHeight(4)
-        self.prog.setStyleSheet("QProgressBar{background:#dcdcdc; border:none; border-radius:2px;} "
-                                "QProgressBar::chunk{background:#0f6cbd; border-radius:2px;}")
+        self.prog.setStyleSheet(
+            tokens.progress_qss(tokens.PROGRESS_TRACK, tokens.PROGRESS_CHUNK, 2)
+        )
         self.prog.hide()
         vb.addWidget(self.prog)
 
         self._refresh()
 
     def _refresh(self):
+        """按 ffmpeg 是否可用刷新卡片的状态文案、配色与按钮可见性。
+
+        Notes:
+            两个分支原本各自调一次 ``statusLbl.setStyleSheet`` 与
+            ``dot.setStyleSheet``（共 4 处）；现在只算出颜色，出了分支再统一应用，
+            收敛成 2 处，配色规则一眼可比对。
+        """
         path = find_ffmpeg()
         if path:
             ver = get_version(path)
             self.statusLbl.setText(
-                tr("ffmpeg.found", name=Path(path).name)
-                + (f"  ·  {ver.split()[0]}" if ver else "")
+                tr("ffmpeg.found", name=Path(path).name) + (f"  ·  {ver.split()[0]}" if ver else "")
             )
-            self.statusLbl.setStyleSheet("color:#10893e;")
-            self.dot.setStyleSheet("background:#10893e; border-radius:5px;")
-            # Collapse download / link buttons when ffmpeg is ready
+            text_color, dot_color = tokens.SUCCESS_DOT, tokens.SUCCESS_DOT
+            # ffmpeg 已就绪时收起下载与官网按钮，避免给用户「还需要操作」的错觉
             self.linkBtn.hide()
             self.dlBtn.hide()
             self.prog.hide()
         else:
             self.statusLbl.setText(tr("ffmpeg.missing"))
-            self.statusLbl.setStyleSheet(f"color:{sub_text()};")
-            self.dot.setStyleSheet("background:#e81123; border-radius:5px;")
+            text_color, dot_color = sub_text(), tokens.DANGER_DOT
             self.linkBtn.show()
             self.dlBtn.show()
+        self.statusLbl.setStyleSheet(f"color:{text_color};")
+        self.dot.setStyleSheet(tokens.dot_qss(dot_color))
 
     def _download(self):
         self.dlBtn.setEnabled(False)

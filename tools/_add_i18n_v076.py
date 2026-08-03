@@ -7,6 +7,7 @@
 用法：python tools/_add_i18n_v076.py
 会就地更新 src/momentshift/i18n/locales/{loc}.json（含已存在键的改写）。
 """
+
 from __future__ import annotations
 
 import json

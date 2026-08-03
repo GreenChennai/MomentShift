@@ -1,4 +1,10 @@
-"""转换设置弹窗（v0.3.5 卡片化 + 正方形格式按钮 + 开关合并）。
+"""转换设置弹窗：卡片化布局 + 正方形格式按钮。
+
+职责边界：
+- 做：让用户挑目标格式与高级参数，返回一份可直接入队的配置。
+- 不做：不入队、不启动转换，只负责「收集并返回选择」。
+
+依赖：core/config、core/presets、gui/advanced_panel、gui/theme、i18n/translator；被依赖：gui/convert_interface、quick_runner。
 
 - 选择目标格式 → CollapsibleCard（可折叠）
 - 高级设置 → CollapsibleCard（折叠按钮即总开关）
@@ -9,34 +15,57 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QFrame,
-    QDialog, QPushButton, QGridLayout,
+    QDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
 from qfluentwidgets import (
-    FluentIcon as FIF, FlowLayout, SwitchButton,
+    FluentIcon as FIF,
 )
+from qfluentwidgets import (
+    SwitchButton,
+)
+
 from ..core.config import cfg
 from ..i18n.translator import tr
-from .theme import (
-    ThemedCard, primary_btn, ghost_btn, icon_btn,
-    muted_text, accent_name, surface, scrollbar_qss,
-    accent_color, CollapsibleCard,
-)
+from . import tokens
 from .advanced_panel import AdvancedPanel
+from .theme import (
+    CollapsibleCard,
+    ThemedCard,
+    accent_color,
+    apply_plain_scroll,
+    apply_text,
+    apply_transparent,
+    ghost_btn,
+    icon_btn,
+    muted_text,
+    primary_btn,
+    surface,
+)
 
-# 格式卡片按钮样式（v0.3.7：75×75 正方形）
+# 格式卡片按钮样式（：75×75 正方形）
 _FMT_CARD_CSS = (
     "QPushButton{"
-    "  background: #e8f5e9; border: 2px solid #c8e6c9; border-radius: 10px;"
-    "  color: #2e7d32; font-weight: 700; font-size: 16px;"
+    f"  background: {tokens.ACCENT_TINT_BG}; border: 2px solid {tokens.ACCENT_TINT_BORDER};"
+    "  border-radius: 10px;"
+    f"  color: {tokens.ACCENT_TINT_TEXT}; font-weight: 700; font-size: {tokens.FONT_LARGE}px;"
     "  min-width: 150px; min-height: 75px; max-width: 150px; max-height: 75px;"
     "}"
-    "QPushButton:hover{ background: #c8e6c9; border-color: #238636; }"
+    f"QPushButton:hover{{ background: {tokens.ACCENT_TINT_BORDER};"
+    f" border-color: {tokens.ACCENT}; }}"
     "QPushButton:checked{"
-    "  border-color: #238636; border-width: 2px; background: #238636;"
-    "  color: #fff;"
+    f"  border-color: {tokens.ACCENT}; border-width: 2px; background: {tokens.ACCENT};"
+    f"  color: {tokens.WHITE};"
     "}"
 )
+
 
 class ConvertSetupDialog(QDialog):
     """单类别格式 + 高级选项 + 待处理列表。"""
@@ -49,8 +78,11 @@ class ConvertSetupDialog(QDialog):
         self._gpu = gpu_fn
         self._category = category
 
-        cat_names = {"image": tr("category.image"), "audio": tr("category.audio"),
-                     "video": tr("category.video")}
+        cat_names = {
+            "image": tr("category.image"),
+            "audio": tr("category.audio"),
+            "video": tr("category.video"),
+        }
         cat_disp = cat_names.get(category, category)
 
         self.setWindowTitle(f"{tr('convert.setup.title')} — {cat_disp}")
@@ -69,15 +101,15 @@ class ConvertSetupDialog(QDialog):
         root.setSpacing(12)
 
         title = QLabel(tr("convert.setup.title"))
-        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #1a1a1a;")
+        apply_text(title, tokens.TEXT_TITLE, size=tokens.FONT_TITLE, weight=700)
         root.addWidget(title)
         hint = QLabel(tr("convert.setup.hint"))
-        hint.setStyleSheet(f"color: {muted_text()};")
+        apply_text(hint, muted_text())
         root.addWidget(hint)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"color: {muted_text()};")
+        apply_text(sep, muted_text())
         root.addWidget(sep)
 
         body = QHBoxLayout()
@@ -109,18 +141,18 @@ class ConvertSetupDialog(QDialog):
         left_lay.setSpacing(8)
 
         self.stagingTitle = QLabel(tr("convert.setup.staging"))
-        self.stagingTitle.setStyleSheet("font-weight: 700; color: #212121;")
+        apply_text(self.stagingTitle, tokens.TEXT_STRONG, weight=700)
         left_lay.addWidget(self.stagingTitle)
         self.stagingCount = QLabel("")
-        self.stagingCount.setStyleSheet(f"color: {muted_text()}; font-size: 12px;")
+        apply_text(self.stagingCount, muted_text(), size=tokens.FONT_SMALL)
         left_lay.addWidget(self.stagingCount)
         self.stagingScroll = QScrollArea()
         self.stagingScroll.setWidgetResizable(True)
         self.stagingScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.stagingScroll.setStyleSheet(
-            f"QScrollArea{{ border: none; background: transparent; border-radius: 8px; }} {scrollbar_qss()}")
+        apply_plain_scroll(self.stagingScroll, radius=tokens.RADIUS_MD)
         self.stagingScroll.viewport().setStyleSheet(
-            f"background: {surface().name()}; border-radius: 8px;")
+            f"background: {surface().name()}; border-radius: {tokens.RADIUS_MD}px;"
+        )
         self.stagingList = QWidget()
         self.stagingLayout = QVBoxLayout(self.stagingList)
         self.stagingLayout.setContentsMargins(0, 0, 0, 0)
@@ -130,11 +162,7 @@ class ConvertSetupDialog(QDialog):
         left_lay.addWidget(self.stagingScroll, 1)
         self.clearBtn = QPushButton(tr("convert.clear"))
         self.clearBtn.clicked.connect(self._clear_all)
-        self.clearBtn.setStyleSheet(
-            "QPushButton{ background: #238636; color: #FFFFFF; border: none; border-radius: 8px;"
-            " padding: 8px 20px; font-weight: 600; font-size: 13px; }"
-            "QPushButton:hover{ background: #2ea043; }"
-            "QPushButton:pressed{ background: #196c2e; }")
+        self.clearBtn.setStyleSheet(tokens.accent_button_qss())
         left_lay.addWidget(self.clearBtn)
         body.addWidget(left_card)
 
@@ -145,15 +173,17 @@ class ConvertSetupDialog(QDialog):
         right_lay.setSpacing(12)
 
         # ---- 选择目标格式（2×3 网格）----
-        fmt_card, fmt_vb, _ = self._fmt_card = CollapsibleCard(
-            tr("convert.setup.format"), "", self, collapsed=False), None, None
+        # ODD-02：原来写成
+        # fmt_card, fmt_vb, _ = self._fmt_card = CollapsibleCard(...), None, None
+        # 链式赋值让 self._fmt_card 拿到的是整个三元组而不是卡片本身，而 fmt_vb
+        # 从头到尾没人用。self._fmt_card 也没有任何读取方，直接去掉。
+        fmt_card = CollapsibleCard(tr("convert.setup.format"), "", self, collapsed=False)
         fmt_card.body.setSpacing(10)
         self._fmt_list = self._load_formats(self._category)
         self._fmt_btns = {}
         default = self._selection.get(self._category, "").upper()
-        import math
+        # 格式按钮固定三列铺开；行数由 addWidget 的 i // cols 自然决定，不需要预先算。
         cols = 3
-        rows = max(1, math.ceil(len(self._fmt_list) / cols))
         self.fmtGrid = QGridLayout()
         self.fmtGrid.setSpacing(10)
         for i, fmt in enumerate(self._fmt_list):
@@ -167,26 +197,27 @@ class ConvertSetupDialog(QDialog):
         fmt_card.body.addLayout(self.fmtGrid)
         right_lay.addWidget(fmt_card)
 
-        # ---- 高级设置（v0.4.4：SwitchButton 替换折叠箭头）----
+        # ---- 高级设置（：SwitchButton 替换折叠箭头）----
         adv_card = CollapsibleCard(tr("convert.setup.advanced"), "", self, collapsed=True)
         adv_card.body.setSpacing(8)
 
         # 隐藏原始折叠箭头，用 SwitchButton 替换
-        adv_card._toggleBtn.hide()
+        # v0.8.0 ODD-07：改走 CollapsibleCard 的公开 API，不再直接摸它的
+        # _toggleBtn / _bar 两个私有件，也不再硬编码「插到第 2 格」这个魔数。
+        adv_card.hide_toggle()
         self.advMasterSwitch = SwitchButton()
         self.advMasterSwitch.setChecked(False)
         self.advMasterSwitch.setText(" ")
         self.advMasterSwitch.checkedChanged.connect(self._on_adv_master)
         self.advMasterSwitch.checkedChanged.connect(lambda: self.advMasterSwitch.setText(" "))
-        # 插入到 header bar 中（在标题和 stretch 之间）
-        adv_card._bar.layout().insertWidget(2, self.advMasterSwitch)
+        adv_card.add_header_widget(self.advMasterSwitch)
 
         self.advancedPanel = AdvancedPanel(self)
         self.advancedPanel.refresh([self._category])
-        # v0.7.2 F3：弹窗首次打开即按默认目标格式禁用不匹配的压缩程序
+        # F3：弹窗首次打开即按默认目标格式禁用不匹配的压缩程序
         # （例如默认 .jpg 时应禁用 oxipng），避免用户看到全部可选但实际不可用。
         self.advancedPanel.on_format_change(default)
-        # v0.7.18：视频 → 传文件上下文，动态生成「分辨率」选项
+        # 视频 → 传文件上下文，动态生成「分辨率」选项
         if self._category == "video" and self._paths:
             self.advancedPanel.set_video_context(self._paths)
         adv_card.body.addWidget(self.advancedPanel)
@@ -198,19 +229,19 @@ class ConvertSetupDialog(QDialog):
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
         right_scroll.setWidget(right_wrap)
-        right_scroll.setStyleSheet(
-            f"QScrollArea{{ border: none; background: transparent; }} {scrollbar_qss()}")
-        right_scroll.viewport().setStyleSheet("background: transparent;")
+        apply_plain_scroll(right_scroll)
+        apply_transparent(right_scroll.viewport())
         body.addWidget(right_scroll, 1)
 
     def _load_formats(self, cat):
         from ..core.presets import TARGET_GROUPS
+
         return [f.upper() for f in TARGET_GROUPS.get(cat, [])]
 
     def _select_fmt(self, fmt):
         for f, btn in self._fmt_btns.items():
             btn.setChecked(f == fmt)
-        # v0.4.3：格式切换时自动调整推荐后端
+        # 格式切换时自动调整推荐后端
         self.advancedPanel.on_format_change(fmt)
 
     def _on_adv_master(self, checked: bool):
@@ -228,10 +259,11 @@ class ConvertSetupDialog(QDialog):
         while self.stagingLayout.count():
             item = self.stagingLayout.takeAt(0)
             w = item.widget()
-            if w: w.deleteLater()
+            if w:
+                w.deleteLater()
         if not self._paths:
             empty = QLabel(tr("convert.setup.empty"))
-            empty.setStyleSheet(f"color: {muted_text()}; padding: 30px 0;")
+            apply_text(empty, muted_text(), extra="padding: 30px 0;")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.stagingLayout.insertWidget(0, empty)
             self.stagingLayout.addStretch(1)
@@ -241,20 +273,19 @@ class ConvertSetupDialog(QDialog):
         acc = accent_color().name()
         for i, p in enumerate(self._paths):
             row_w = QWidget()
-            row_w.setStyleSheet(
-                "background: rgba(35,134,54,0.04); border-radius: 4px;" if i % 2 == 0
-                else "background: transparent; border-radius: 4px;")
+            row_w.setStyleSheet(tokens.staging_row_qss(i % 2 == 0))
             hb = QHBoxLayout(row_w)
-            hb.setContentsMargins(8, 5, 4, 5); hb.setSpacing(8)
+            hb.setContentsMargins(8, 5, 4, 5)
+            hb.setSpacing(8)
             ext = Path(p).suffix.upper().lstrip(".")
             ext_lbl = QLabel(ext)
-            ext_lbl.setFixedWidth(42); ext_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            ext_lbl.setStyleSheet(
-                f"color: {acc}; font-weight: 700; font-size: 11px;"
-                f" background: rgba(35,134,54,0.08); border-radius: 3px; padding: 1px 4px;")
+            ext_lbl.setFixedWidth(42)
+            ext_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ext_lbl.setStyleSheet(tokens.ext_badge_qss(acc))
             name = QLabel(Path(p).name)
-            name.setStyleSheet("color: #333;")
-            hb.addWidget(ext_lbl); hb.addWidget(name, 1)
+            apply_text(name, tokens.TEXT_SUBTLE)
+            hb.addWidget(ext_lbl)
+            hb.addWidget(name, 1)
             rm = icon_btn(FIF.DELETE)
             rm.setFixedSize(26, 26)
             rm.clicked.connect(lambda _, path=p: self._remove(path))
@@ -263,13 +294,16 @@ class ConvertSetupDialog(QDialog):
         self.stagingLayout.addStretch(1)
 
     def _remove(self, path):
-        if path in self._paths: self._paths.remove(path)
-        self._render_staging(); self._update_confirm()
+        if path in self._paths:
+            self._paths.remove(path)
+        self._render_staging()
+        self._update_confirm()
         self._sync_video_context()
 
     def _clear_all(self):
         self._paths.clear()
-        self._render_staging(); self._update_confirm()
+        self._render_staging()
+        self._update_confirm()
         self._sync_video_context()
 
     def _sync_video_context(self):
@@ -278,15 +312,15 @@ class ConvertSetupDialog(QDialog):
             self.advancedPanel.set_video_context(self._paths)
 
     def _update_confirm(self):
-        self.confirmBtn.setEnabled(not getattr(self, "_loading", False)
-                                   and bool(self._paths))
+        self.confirmBtn.setEnabled(not getattr(self, "_loading", False) and bool(self._paths))
 
     def add_paths(self, paths: list[str]) -> None:
         """v0.7.24：追加待处理文件（供快速调用异步载入）。"""
         for p in paths:
             if p not in self._paths:
                 self._paths.append(p)
-        self._render_staging(); self._update_confirm()
+        self._render_staging()
+        self._update_confirm()
         self._sync_video_context()
 
     def set_loading(self, loading: bool) -> None:
@@ -297,31 +331,39 @@ class ConvertSetupDialog(QDialog):
         if loading:
             self.confirmBtn.setEnabled(False)
             self.confirmBtn.setText(tr("quick.loading"))
-            self.confirmBtn.setStyleSheet(
-                "QPushButton{background:#C7920A;color:#FFFFFF;border:none;"
-                "border-radius:6px;padding:0 24px;font-weight:600;}")
+            self.confirmBtn.setStyleSheet(tokens.warning_button_qss())
         else:
             self.confirmBtn.setText(tr("convert.setup.confirm"))
             self.confirmBtn.setStyleSheet(self._confirm_ss)
             self.confirmBtn.setEnabled(bool(self._paths))
 
     def _on_confirm(self):
-        if not self._paths: return
+        if not self._paths:
+            return
         mode = cfg.outputMode.value
         suffix = cfg.outputSuffix.value
         folder = cfg.outputFolder.value or ""
         fmt_text = ""
         for f, btn in self._fmt_btns.items():
-            if btn.isChecked(): fmt_text = f.lower(); break
-        if not fmt_text: fmt_text = self._fmt_list[0].lower() if self._fmt_list else "jpg"
+            if btn.isChecked():
+                fmt_text = f.lower()
+                break
+        if not fmt_text:
+            fmt_text = self._fmt_list[0].lower() if self._fmt_list else "jpg"
         gpu = self._gpu()
         self.manager.add_files(
-            self._paths, fmt_text,
-            folder if mode == "fixed" else None, gpu, mode, suffix,
-            compress_enabled=self.advMasterSwitch.isChecked())
+            self._paths,
+            fmt_text,
+            folder if mode == "fixed" else None,
+            gpu,
+            mode,
+            suffix,
+            compress_enabled=self.advMasterSwitch.isChecked(),
+        )
         self.accept()
 
     def get_selection(self):
         for f, btn in self._fmt_btns.items():
-            if btn.isChecked(): return {self._category: f.lower()}
+            if btn.isChecked():
+                return {self._category: f.lower()}
         return {}

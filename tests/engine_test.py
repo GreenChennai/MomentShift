@@ -19,8 +19,8 @@ os_environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication
 
 from momentshift.core import converter as converter_mod
-from momentshift.core.queue import ConversionManager
 from momentshift.core.models import Task
+from momentshift.core.queue import ConversionManager
 
 
 class FakePopen:
@@ -29,14 +29,16 @@ class FakePopen:
     def __init__(self, cmd, **kw):
         self.cmd = cmd
         self.out = cmd[-1]
-        self._lines = iter([
-            "ffmpeg version fake",
-            "duration_ms=1000",
-            "out_time_ms=500",
-            "progress=continue",
-            "out_time_ms=1000",
-            "progress=end",
-        ])
+        self._lines = iter(
+            [
+                "ffmpeg version fake",
+                "duration_ms=1000",
+                "out_time_ms=500",
+                "progress=continue",
+                "out_time_ms=1000",
+                "progress=end",
+            ]
+        )
         self.stdout = self
 
     def readline(self):
@@ -64,9 +66,12 @@ def test_converter_parse():
     from momentshift.core.converter import run_conversion
 
     task = Task(
-        id="t1", input_path="in.png",
+        id="t1",
+        input_path="in.png",
         output_path=os.path.join(tempfile.mkdtemp(), "out.jpg"),
-        target_format="jpg", category="image", use_gpu=False,
+        target_format="jpg",
+        category="image",
+        use_gpu=False,
     )
     logs = []
     rc, err = run_conversion(task, "fake", {}, on_log=logs.append, on_progress=lambda p: None)

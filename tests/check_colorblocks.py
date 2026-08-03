@@ -44,9 +44,7 @@ CORE_DIR = REPO / "src" / "momentshift" / "core"
 
 # Match setStyleSheet("...") or setStyleSheet(f"...") — single-line literals.
 # Captures the raw string body (we don't resolve f-string expressions).
-_STYLE_RE = re.compile(
-    r"""setStyleSheet\(\s*(?:f)?(r?['"])(.*?)\1""", re.DOTALL
-)
+_STYLE_RE = re.compile(r"""setStyleSheet\(\s*(?:f)?(r?['"])(.*?)\1""", re.DOTALL)
 
 # A background declaration (color or shorthand) inside a rule.
 _BG_RE = re.compile(r"background(?:-color)?\s*:\s*([^;}]+)")
@@ -86,18 +84,34 @@ def _analyze(css: str, file: Path, lineno: int, report: list) -> None:
             opaque = _is_opaque(value)
             if not selector or selector == "*":
                 if opaque:
-                    report.append((file, lineno, "CRITICAL",
-                                   f"unscoped opaque background '{value}' "
-                                   f"(selector={selector or '<empty>'})"))
+                    report.append(
+                        (
+                            file,
+                            lineno,
+                            "CRITICAL",
+                            f"unscoped opaque background '{value}' "
+                            f"(selector={selector or '<empty>'})",
+                        )
+                    )
                 else:
-                    report.append((file, lineno, "REVIEW",
-                                   f"unscoped transparent background "
-                                   f"(selector={selector or '<empty>'})"))
+                    report.append(
+                        (
+                            file,
+                            lineno,
+                            "REVIEW",
+                            f"unscoped transparent background (selector={selector or '<empty>'})",
+                        )
+                    )
             else:
                 if opaque:
-                    report.append((file, lineno, "REVIEW",
-                                   f"scoped opaque background '{value}' "
-                                   f"(selector='{selector}')"))
+                    report.append(
+                        (
+                            file,
+                            lineno,
+                            "REVIEW",
+                            f"scoped opaque background '{value}' (selector='{selector}')",
+                        )
+                    )
 
 
 def main() -> int:

@@ -1,41 +1,52 @@
-"""转换界面 —— 多媒体格式转换（v0.2.9 重写）。
+"""转换界面 —— 多媒体格式转换。
+
+职责边界：
+- 做：收集输入文件、唤起设置弹窗、把确认后的任务交给 ConversionManager、驱动队列视图。
+- 不做：不执行 ffmpeg；不决定具体参数（在 ConvertSetupDialog 与 AdvancedPanel）。
+
+依赖：core/config、core/models、core/presets、gui/base、gui/convert_setup_dialog、gui/drop_area、gui/queue_widget、gui/theme、i18n/translator；被依赖：gui/main_window。
 
 流程：输入卡（DropArea + 添加文件夹）→ 选取文件 → 800×500 设置弹窗
 （ConvertSetupDialog）→ 确认后入队 → ConversionManager 驱动转换队列。
 
-v0.2.9 改动：使用 InterfaceBase 共享组件构建器（_make_card / _make_scroll /
-_expand_paths），消除与 Compress/Upscale 的重复代码。
+卡片、滚动区与路径展开一律复用 InterfaceBase 的共享构建器
+（_make_card / _make_scroll / _expand_paths），避免与压缩、放大三处各写一份。
 """
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QFileDialog, QScrollArea,
-    QMessageBox,
-)
 from PyQt6.QtCore import Qt
-
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLineEdit,
+    QMessageBox,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
-    FluentIcon as FIF, PrimaryPushButton, SwitchButton,
-    TransparentToolButton, CaptionLabel,
+    CaptionLabel,
+    SwitchButton,
+    TransparentToolButton,
+)
+from qfluentwidgets import (
+    FluentIcon as FIF,
 )
 
 from ..core.config import cfg
 from ..core.models import Task
-from ..core.presets import IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS
+from ..core.presets import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS
 from ..i18n.translator import tr
-from qfluentwidgets import qconfig
-from .theme import (
-    CollapsibleCard, field_row, primary_btn, ghost_btn, muted_text,
-)
+from . import tokens
 from .base import InterfaceBase
+from .convert_setup_dialog import ConvertSetupDialog
 from .drop_area import DropArea
 from .queue_widget import QueueListWidget, ScrollAutoFollow
-from .convert_setup_dialog import ConvertSetupDialog
-from .theme import success_color, danger_color
+from .theme import (
+    apply_text,
+    field_row,
+    ghost_btn,
+    primary_btn,
+)
 
 # 转换模块支持的所有媒体类型
 _CONVERT_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
@@ -53,17 +64,17 @@ class ConvertInterface(InterfaceBase):
         self.manager = manager
         # 默认目标格式（按媒体大类）
         self._selection = {"image": "jpg", "audio": "mp3", "video": "mp4"}
-        # 重入防护（v0.3.0）：模态对话框内部事件循环会递送 synthetic
+        # 重入防护：模态对话框内部事件循环会递送 synthetic
         # mouseReleaseEvent，此标志确保只有第一次点击真正打开文件选择器
         self._picking = False
 
-        # FFmpeg 状态指示器（v0.3.6：加标签文字，右对齐胶囊）
+        # FFmpeg 状态指示器（：加标签文字，右对齐胶囊）
         ff_wrap = QWidget()
         ff_v = QVBoxLayout(ff_wrap)
         ff_v.setContentsMargins(0, 0, 0, 0)
         ff_v.setSpacing(3)
         self._ff_label = CaptionLabel(tr("convert.ffmpeg_status"))
-        self._ff_label.setStyleSheet(f"color: #000000; font-size: 11px;")
+        apply_text(self._ff_label, tokens.TEXT_BLACK, size=tokens.FONT_CAPTION)
         self._ff_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         self._ff_status = CaptionLabel("")
         self._ff_status.setFixedHeight(22)
@@ -96,12 +107,12 @@ class ConvertInterface(InterfaceBase):
         # 输出模式切换开关
         self.outputSwitch = SwitchButton()
         self.outputSwitch.checkedChanged.connect(self._on_output_mode)
-        ovb.addWidget(field_row(tr("convert.output.mode"), self.outputSwitch))
+        self.outputModeRow = field_row(tr("convert.output.mode"), self.outputSwitch)
+        ovb.addWidget(self.outputModeRow)
         # 文件名后缀
         self.suffixEdit = QLineEdit(cfg.outputSuffix.value)
         self.suffixEdit.setPlaceholderText(tr("convert.output.suffix.ph"))
-        self.suffixEdit.textChanged.connect(
-            lambda t: (setattr(cfg.outputSuffix, "value", t), qconfig.save()))
+        self.suffixEdit.textChanged.connect(lambda t: setattr(cfg.outputSuffix, "value", t))
         self.suffixRow = field_row(tr("convert.output.suffix"), self.suffixEdit)
         ovb.addWidget(self.suffixRow)
         # 固定输出目录
@@ -128,7 +139,7 @@ class ConvertInterface(InterfaceBase):
         self.queueScroll = self._make_scroll(280)
         self.queueScroll.setWidget(self.queueList)
         qvb.addWidget(self.queueScroll)
-        # v0.7.4 Adj2：队列自动跟随当前处理任务
+        # Adj2：队列自动跟随当前处理任务
         self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
         self.manager.task_started.connect(self._follow_running)
 
@@ -179,6 +190,7 @@ class ConvertInterface(InterfaceBase):
         if not expanded:
             return
         from ..core.presets import guess_category
+
         by_cat: dict[str, list[str]] = {}
         for p in expanded:
             c = guess_category(p)
@@ -186,8 +198,8 @@ class ConvertInterface(InterfaceBase):
                 by_cat.setdefault(c, []).append(p)
         for cat, cat_paths in by_cat.items():
             dlg = ConvertSetupDialog(
-                self, self.manager, cat_paths, self._selection,
-                self._gpu_enabled, cat)
+                self, self.manager, cat_paths, self._selection, self._gpu_enabled, cat
+            )
             if dlg.exec():
                 self._selection.update(dlg.get_selection())
         self._update_controls()
@@ -223,15 +235,13 @@ class ConvertInterface(InterfaceBase):
     def _on_output_mode(self, checked: bool):
         """切换输出模式：同目录 + 后缀 vs 固定目录。"""
         cfg.outputMode.value = "same" if checked else "fixed"
-        qconfig.save()
         self._apply_output_mode()
 
     def _apply_output_mode(self):
         """根据当前输出模式显示/隐藏对应 UI 行。"""
         same = cfg.outputMode.value == "same"
         self.outputSwitch.setChecked(same)
-        self.outputSwitch.setText(
-            tr("convert.output.same") if same else tr("convert.output.fixed"))
+        self.outputSwitch.setText(tr("convert.output.same") if same else tr("convert.output.fixed"))
         self.suffixRow.setVisible(same)
         self.folderRow.setVisible(not same)
 
@@ -241,11 +251,9 @@ class ConvertInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            d = self._ask_directory(tr("convert.output.browse"),
-                                    cfg.outputFolder.value or "")
+            d = self._ask_directory(tr("convert.output.browse"), cfg.outputFolder.value or "")
             if d:
                 cfg.outputFolder.value = d
-                qconfig.save()
                 self.folderEdit.setText(d)
         finally:
             self._picking = False
@@ -255,20 +263,21 @@ class ConvertInterface(InterfaceBase):
     # =========================================================================
 
     def _refresh_ff_status(self):
-        """v0.3.5 美化：胶囊样式状态指示器。"""
+        """v0.3.5 美化：胶囊样式状态指示器。
+
+        v0.8.0-B1：就绪/缺失两条分支原本各自内联一整段 QSS，改成先按状态挑
+        「文字色/底色/描边色」三元组，再走同一个构建器 —— 两种状态的圆角、
+        字号、内边距从此不可能各改各的。
+        """
         ready = self.manager.has_ffmpeg
         if ready:
-            self._ff_status.setText("  ✓ 已就绪")
-            self._ff_status.setStyleSheet(
-                "QLabel{ color:#2ea043; font-weight:600; font-size:12px;"
-                " background:rgba(35,134,54,0.08); border:1px solid rgba(35,134,54,0.15);"
-                " border-radius: 6px; padding: 2px 10px; }")
-        if not ready:
-            self._ff_status.setText("  ✗ 不存在")
-            self._ff_status.setStyleSheet(
-                "QLabel{ color:#d32f2f; font-weight:600; font-size:12px;"
-                " background:rgba(211,47,47,0.06); border:1px solid rgba(211,47,47,0.12);"
-                " border-radius: 6px; padding: 2px 10px; }")
+            text = tr("convert.ffmpeg.ready")
+            fg, bg, border = tokens.ACCENT_HOVER, tokens.ACCENT_SOFT, tokens.ACCENT_SOFT_STRONG
+        else:
+            text = tr("convert.ffmpeg.missing")
+            fg, bg, border = tokens.DANGER_STRONG, tokens.DANGER_SOFT, tokens.DANGER_SOFT_STRONG
+        self._ff_status.setText(text)
+        self._ff_status.setStyleSheet(tokens.status_hint_qss(fg, bg, border))
 
     def _on_ffmpeg_ready(self):
         """ffmpeg 就绪后刷新引擎并更新控件。"""
@@ -282,8 +291,7 @@ class ConvertInterface(InterfaceBase):
 
     def _on_finished(self, task_id: str, ok: bool, log: str):
         """单个任务完成 → 更新 UI 状态。"""
-        self.queueList.update_status(task_id,
-            Task.DONE if ok else Task.FAILED, log)
+        self.queueList.update_status(task_id, Task.DONE if ok else Task.FAILED, log)
 
     def _on_state_changed(self):
         """manager 状态变更 → 更新按钮。"""
@@ -300,8 +308,7 @@ class ConvertInterface(InterfaceBase):
         """根据 manager 状态刷新各按钮的启用/文案。"""
         running = self.manager.is_running
         has = bool(self.manager.tasks)
-        self.startBtn.setEnabled(
-            not running and has and self.manager.has_ffmpeg)
+        self.startBtn.setEnabled(not running and has and self.manager.has_ffmpeg)
         self.pauseBtn.setEnabled(running)
         self.clearBtn.setEnabled(has)
         if running and self.manager.is_paused:
@@ -312,15 +319,15 @@ class ConvertInterface(InterfaceBase):
     def _on_start(self):
         """开始转换：检查 ffmpeg 就绪 + 同格式警告后启动。"""
         if not self.manager.has_ffmpeg:
-            QMessageBox.warning(
-                self, tr("common.warning"), tr("convert.start.no_ffmpeg"))
+            QMessageBox.warning(self, tr("common.warning"), tr("convert.start.no_ffmpeg"))
             return
         if not self.manager.tasks:
             return
         same = self.manager.pending_same_format()
         if same:
             ans = QMessageBox.question(
-                self, tr("common.warning"),
+                self,
+                tr("common.warning"),
                 tr("convert.start.same_format"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
@@ -360,9 +367,12 @@ class ConvertInterface(InterfaceBase):
         self.tQueue.setText(tr("convert.queue.title"))
         self._refresh_ff_status()
         self.dropArea.retranslate(
-            tr("convert.drop.title"), tr("convert.drop.hint"),
-            tr("convert.drop.formats"))
+            tr("convert.drop.title"), tr("convert.drop.hint"), tr("convert.drop.formats")
+        )
         self.addFolderBtn.setText(tr("convert.add.folder"))
+        self.outputModeRow.fieldLabel.setText(tr("convert.output.mode"))
+        self.suffixRow.fieldLabel.setText(tr("convert.output.suffix"))
+        self.folderRow.fieldLabel.setText(tr("convert.output.folder"))
         self.suffixEdit.setPlaceholderText(tr("convert.output.suffix.ph"))
         self._apply_output_mode()
         self.queueList.retranslate()

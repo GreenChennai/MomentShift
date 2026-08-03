@@ -31,6 +31,9 @@ datas = [
     (os.path.join(SRC_DIR, "momentshift", "resources", "oxipng.exe"), "momentshift/resources"),
     (os.path.join(SRC_DIR, "momentshift", "resources", "jpegoptim.exe"), "momentshift/resources"),
     (os.path.join(SRC_DIR, "momentshift", "resources", "gifsicle.exe"), "momentshift/resources"),  # v0.7.30
+    # v0.8.1：随包字体（load_app_fonts 从 src/momentshift/resources/ 查找）
+    (os.path.join(SRC_DIR, "momentshift", "resources", "HarmonyOS_Sans_SC_Regular.ttf"), "momentshift/resources"),
+    (os.path.join(SRC_DIR, "momentshift", "resources", "FiraCode-Regular.ttf"), "momentshift/resources"),
 ]
 
 hiddenimports = [

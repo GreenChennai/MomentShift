@@ -1,4 +1,10 @@
-"""超分辨率 / 插帧引擎检测卡片（v0.7.5）。
+"""超分辨率 / 插帧引擎检测卡片。
+
+职责边界：
+- 做：展示单个引擎的就绪状态、提供下载按钮与进度、下载完成后刷新状态。
+- 不做：不实现下载与解压（交给 core/engine_download）。
+
+依赖：core/config、core/engine_download、core/engines、core/qt_compat、gui/queue_widget、gui/theme、i18n/translator；被依赖：gui/about_interface。
 
 引擎不随软件分发。本卡片负责：
 - 逐条检测 ``tools/<engine-id>/`` 下的引擎是否就位
@@ -17,28 +23,50 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget, QProgressBar, QSizePolicy
-
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
-    FluentIcon as FIF, StrongBodyLabel, CaptionLabel, BodyLabel,
-    PushButton, HyperlinkButton, PrimaryPushButton,
+    CaptionLabel,
+    HyperlinkButton,
+    PrimaryPushButton,
+    PushButton,
+    StrongBodyLabel,
+)
+from qfluentwidgets import (
+    FluentIcon as FIF,
 )
 
-from ..core.qt_compat import QDesktopServices, QUrl, QThreadPool
-from ..core import engines as eng_mod
 from ..core import engine_download as dl_mod
+from ..core import engines as eng_mod
+from ..core.qt_compat import QDesktopServices, QThreadPool, QUrl
 from ..i18n.translator import tr
+from . import tokens
 from .theme import (
-    ThemedCard, CARD_MARGIN, muted_text, accent_color,
-    success_color, danger_color, border_color,
+    CARD_MARGIN,
+    ThemedCard,
+    accent_color,
+    apply_text,
+    apply_transparent,
+    border_color,
+    danger_color,
+    muted_text,
+    success_color,
 )
+
 
 def open_folder(path: str) -> None:
     """在系统文件管理器里打开目录（Windows 用 explorer，跨平台兜底）。"""
     p = Path(path)
     try:
         p.mkdir(parents=True, exist_ok=True)
-    except OSError:
+    except OSError:  # 静默原因：引擎目录创建失败非致命，后续下载会再次报错
         pass
     try:
         if sys.platform.startswith("win"):
@@ -50,14 +78,16 @@ def open_folder(path: str) -> None:
     except OSError:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
 
+
 def algo_badge(text: str, parent=None) -> QLabel:
     """算法名徽标（与 ext_badge 同一视觉语言）。"""
     lbl = QLabel(text, parent)
     lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
     lbl.setStyleSheet(
-        f"color: {accent_color().name()}; font-weight: 700; font-size: 10px;"
-        f" background: rgba(35,134,54,0.08); border-radius: 3px; padding: 2px 6px;")
+        tokens.ext_badge_qss(accent_color().name(), size=tokens.FONT_MICRO, padding="2px 6px")
+    )
     return lbl
+
 
 class EngineRow(QWidget):
     """单个引擎的检测行。"""
@@ -65,7 +95,7 @@ class EngineRow(QWidget):
     def __init__(self, engine: eng_mod.Engine, parent=None):
         super().__init__(parent)
         self.engine = engine
-        self.setStyleSheet("background: transparent;")
+        apply_transparent(self)
 
         vb = QVBoxLayout(self)
         vb.setContentsMargins(0, 0, 0, 0)
@@ -77,34 +107,32 @@ class EngineRow(QWidget):
         self.dot = QLabel()
         self.dot.setFixedSize(8, 8)
         top.addWidget(self.dot)
-        # v0.7.7 引擎卡布局3：名称与徽标放在子布局中，徽标紧贴名称左对齐
+        # 引擎卡布局3：名称与徽标放在子布局中，徽标紧贴名称左对齐
         from .queue_widget import StatusPill as _SP
+
         name_row = QHBoxLayout()
         name_row.setSpacing(6)
         self.nameLbl = StrongBodyLabel(engine.name)
         self.nameLbl.setWordWrap(True)
-        self.nameLbl.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                   QSizePolicy.Policy.Preferred)
+        self.nameLbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         name_row.addWidget(self.nameLbl, 1)
         for algo in engine.algos:
             name_row.addWidget(algo_badge(algo, self))
         top.addLayout(name_row, 1)
-        # v0.7.7 引擎卡布局2：状态胶囊（对齐转换中 FFmpeg 检测）
+        # 引擎卡布局2：状态胶囊（对齐转换中 FFmpeg 检测）
         self.statusPill = _SP("pending")
         top.addWidget(self.statusPill)
         vb.addLayout(top)
 
-        # 第二行：说明（v0.7.6 修复2：限宽自动换行，字体随 #515151 提亮）
+        # 第二行：说明（ 修复2：限宽自动换行，字体随 #515151 提亮）
         self.descLbl = CaptionLabel(tr(engine.desc_key))
         self.descLbl.setWordWrap(True)
         self.descLbl.setMinimumWidth(0)
-        self.descLbl.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                   QSizePolicy.Policy.Preferred)
-        self.descLbl.setStyleSheet(
-            f"color: {muted_text()}; background: transparent;")
+        self.descLbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        apply_text(self.descLbl, muted_text(), transparent=True)
         vb.addWidget(self.descLbl)
 
-        # 第三行：按钮（v0.7.7 引擎卡布局1：左对齐，移到路径提示上方）
+        # 第三行：按钮（ 引擎卡布局1：左对齐，移到路径提示上方）
         btns = QHBoxLayout()
         btns.setSpacing(8)
         self.linkBtn = HyperlinkButton(engine.homepage, tr("engine.goto_download"))
@@ -112,7 +140,8 @@ class EngineRow(QWidget):
         self.folderBtn = PushButton(tr("engine.open_folder"), icon=FIF.FOLDER)
         self.folderBtn.setFixedHeight(28)
         self.folderBtn.clicked.connect(
-            lambda: open_folder(str(eng_mod.engine_dir(self.engine.eid))))
+            lambda: open_folder(str(eng_mod.engine_dir(self.engine.eid)))
+        )
         btns.addWidget(self.folderBtn)
         self.dlBtn = None
         self.reasonLbl = None
@@ -124,23 +153,20 @@ class EngineRow(QWidget):
         else:
             self.reasonLbl = CaptionLabel(tr(engine.download_reason_key))
             self.reasonLbl.setWordWrap(True)
-            self.reasonLbl.setStyleSheet(
-                f"color: {muted_text()}; background: transparent; font-size: 11px;")
+            apply_text(self.reasonLbl, muted_text(), size=tokens.FONT_CAPTION, transparent=True)
             btns.addWidget(self.reasonLbl)
         btns.addStretch(1)
         vb.addLayout(btns)
 
-        # === 第四行：路径提示（v0.7.7 引擎卡布局1：移到按钮下方）===
-        # v0.7.20：路径可能很长，开启自动换行（同简介），防止顶出卡片
+        # === 第四行：路径提示（ 引擎卡布局1：移到按钮下方）===
+        # 路径可能很长，开启自动换行（同简介），防止顶出卡片
         path_row = QHBoxLayout()
         path_row.setSpacing(8)
         self.pathLbl = CaptionLabel(f"tools/{engine.eid}")
         self.pathLbl.setWordWrap(True)
         self.pathLbl.setMinimumWidth(0)
-        self.pathLbl.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                   QSizePolicy.Policy.Preferred)
-        self.pathLbl.setStyleSheet(
-            f"color: {muted_text()}; background: transparent; font-size: 11px;")
+        self.pathLbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        apply_text(self.pathLbl, muted_text(), size=tokens.FONT_CAPTION, transparent=True)
         path_row.addWidget(self.pathLbl)
         path_row.addStretch(1)
         vb.addLayout(path_row)
@@ -149,15 +175,13 @@ class EngineRow(QWidget):
         self.prog.setRange(0, 0)
         self.prog.setFixedHeight(3)
         self.prog.setTextVisible(False)
-        self.prog.setStyleSheet(
-            "QProgressBar{border:none;background:transparent;border-radius:1px;}"
-            f"QProgressBar::chunk{{background:{accent_color().name()};border-radius:1px;}}")
+        self.prog.setStyleSheet(tokens.progress_qss("transparent", accent_color().name(), 1))
         self.prog.hide()
         vb.addWidget(self.prog)
 
         self.refresh()
 
-    # -- 一键下载（v0.7.6：按引擎注册表的下载源，HF→GitHub→官方）--
+    # -- 一键下载（：按引擎注册表的下载源，HF→GitHub→官方）--
     def _one_click(self):
         if self.dlBtn:
             self.dlBtn.setEnabled(False)
@@ -188,11 +212,11 @@ class EngineRow(QWidget):
             color = success_color().name()
             self.statusPill.set_status("done", text=tr("engine.status.ready"))
             self.pathLbl.setText(str(Path(exe).parent))
-            # v0.7.20：模型已可用 → 隐藏一键下载，防止重复下载
+            # 模型已可用 → 隐藏一键下载，防止重复下载
             if self.dlBtn is not None:
                 self.dlBtn.hide()
         elif not self.engine.cli:
-            color = "#c7920a"
+            color = tokens.WARNING
             self.statusPill.set_status("compressing", text=tr("engine.status.driver"))
             self.pathLbl.setText(f"tools/{self.engine.eid}")
             if self.dlBtn is not None:
@@ -203,7 +227,7 @@ class EngineRow(QWidget):
             self.pathLbl.setText(f"tools/{self.engine.eid}")
             if self.dlBtn is not None:
                 self.dlBtn.show()
-        self.dot.setStyleSheet(f"background:{color}; border-radius:4px;")
+        self.dot.setStyleSheet(tokens.dot_qss(color, 4))
 
     def retranslateUi(self) -> None:
         self.descLbl.setText(tr(self.engine.desc_key))
@@ -214,6 +238,7 @@ class EngineRow(QWidget):
         if self.reasonLbl:
             self.reasonLbl.setText(tr(self.engine.download_reason_key))
         self.refresh()
+
 
 class EnginesCard(ThemedCard):
     """「超分辨率 / 插帧引擎」整卡（关于页专用）。
@@ -240,7 +265,8 @@ class EnginesCard(ThemedCard):
         head.addStretch(1)
         self.toggleBtn = PushButton(
             tr("engine.collapse") if self._expanded else tr("engine.expand"),
-            icon=FIF.UP if self._expanded else FIF.DOWN)
+            icon=FIF.UP if self._expanded else FIF.DOWN,
+        )
         self.toggleBtn.setFixedHeight(28)
         self.toggleBtn.clicked.connect(self._toggle_expand)
         head.addWidget(self.toggleBtn)
@@ -250,13 +276,11 @@ class EnginesCard(ThemedCard):
         self.hintLbl = CaptionLabel(tr("engine.card.hint"))
         self.hintLbl.setWordWrap(True)
         self.hintLbl.setMinimumWidth(0)
-        self.hintLbl.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                   QSizePolicy.Policy.Preferred)
-        self.hintLbl.setStyleSheet(
-            f"color: {muted_text()}; background: transparent;")
+        self.hintLbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        apply_text(self.hintLbl, muted_text(), transparent=True)
         vb.addWidget(self.hintLbl)
 
-        # v0.7.8 引擎卡布局2：按钮居中在简介下方
+        # 引擎卡布局2：按钮居中在简介下方
         btns_center = QHBoxLayout()
         btns_center.addStretch(1)
         self.rootBtn = PushButton(tr("engine.open_root"), icon=FIF.FOLDER)
@@ -272,13 +296,12 @@ class EnginesCard(ThemedCard):
         vb.addLayout(btns_center)
 
         self.summaryLbl = CaptionLabel("")
-        self.summaryLbl.setStyleSheet(
-            f"color: {accent_color().name()}; background: transparent; font-weight: 600;")
+        apply_text(self.summaryLbl, accent_color().name(), weight=600, transparent=True)
         vb.addWidget(self.summaryLbl)
 
-        # v0.7.8 引擎卡布局1：可展开/收起的引擎列表区域
+        # 引擎卡布局1：可展开/收起的引擎列表区域
         self._body = QWidget()
-        self._body.setStyleSheet("background: transparent;")
+        apply_transparent(self._body)
         bv = QVBoxLayout(self._body)
         bv.setContentsMargins(0, 0, 0, 0)
         bv.setSpacing(6)
@@ -286,11 +309,9 @@ class EnginesCard(ThemedCard):
         self._group_labels = {}
         for cat, key in (("sr", "engine.group.sr"), ("interp", "engine.group.interp")):
             bv.addSpacing(4)
-            # v0.7.8 引擎卡布局3：分组标题加大字号（StrongBodyLabel 代替 CaptionLabel）
+            # 引擎卡布局3：分组标题加大字号（StrongBodyLabel 代替 CaptionLabel）
             glbl = StrongBodyLabel(tr(key))
-            glbl.setStyleSheet(
-                f"color: {accent_color().name()}; background: transparent;"
-                " font-size: 16px;")
+            apply_text(glbl, accent_color().name(), size=tokens.FONT_LARGE, transparent=True)
             bv.addWidget(glbl)
             self._group_labels[cat] = (glbl, key)
             for e in eng_mod.ENGINES:
@@ -313,10 +334,8 @@ class EnginesCard(ThemedCard):
     def _toggle_expand(self):
         self._expanded = not self._expanded
         self._body.setVisible(self._expanded)
-        self.toggleBtn.setText(
-            tr("engine.collapse") if self._expanded else tr("engine.expand"))
-        self.toggleBtn.setIcon(
-            FIF.UP if self._expanded else FIF.DOWN)
+        self.toggleBtn.setText(tr("engine.collapse") if self._expanded else tr("engine.expand"))
+        self.toggleBtn.setIcon(FIF.UP if self._expanded else FIF.DOWN)
 
     # 供 EngineRow 冒泡通知
     def engineChanged(self) -> None:
@@ -326,6 +345,7 @@ class EnginesCard(ThemedCard):
 
     def _open_root(self):
         from ..core.config import tools_dir
+
         open_folder(str(tools_dir()))
 
     def rescan(self) -> None:

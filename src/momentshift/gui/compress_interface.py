@@ -1,106 +1,164 @@
-"""压缩界面 —— 批量图片压缩（v0.2.9 重写）。
+"""压缩界面 —— 批量图片压缩。
 
-自管任务队列（QRunnable 线程池模型），支持多种压缩后端（pillow/oxipng/jpegoptim）。
-v0.7.0 改动：后端改为 auto/oxipng/jpegoptim/pillow 三套独立参数面板，移除 imagecodecs/optipng/mozjpeg。
+职责边界：
+- 做：界面布局、参数收集、把任务交给 TaskPool、展示队列与结果。
+- 不做：不做队列调度、并发上限、暂停/继续与 worker 生命周期管理，
+  这些一律交给 :class:`~momentshift.core.task_pool.TaskPool`。
+
+依赖：core/compressor、core/config、core/logger、core/output_path、core/platform、
+core/presets、core/qt_compat、core/task_pool、core/tools_download、gui/base、
+gui/drop_area、gui/help_bubble、gui/queue_widget、gui/theme、i18n/translator；
+被依赖：gui/quick_dialogs。
+
+历史背景（DUP-01）：本文件曾有一套和放大界面逐行同构的 ``_pending`` /
+``_active`` / ``_workers`` 手写调度，改一处必须记得改另一处，已删除并下沉。
+
+支持的后端见 :data:`momentshift.core.compressor.BACKENDS`
+（auto/oxipng/jpegoptim/gifsicle/pillow）。
 """
 
 from __future__ import annotations
 
-import os
+import copy
+import threading
 from pathlib import Path
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QFileDialog, QScrollArea,
-    QSlider, QLabel, QMessageBox, QSpinBox, QFrame,
-)
 from PyQt6.QtCore import Qt
-
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QSlider,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
-    FluentIcon as FIF, PushButton, PrimaryPushButton, SwitchButton, ComboBox,
-    CaptionLabel, StrongBodyLabel, BodyLabel,
+    CaptionLabel,
+    StrongBodyLabel,
+    SwitchButton,
+)
+from qfluentwidgets import (
+    FluentIcon as FIF,
 )
 
-from ..core.config import cfg
 from ..core import compressor
-from qfluentwidgets import qconfig
-from ..core.presets import IMAGE_EXTS
-from ..core.qt_compat import Signal, QObject, QRunnable, QThreadPool
-from ..core.tools_download import ToolsDownloadWorker
+from ..core.config import cfg
 from ..core.logger import get_logger
+from ..core.output_path import unique_output_path
+from ..core.platform import tools_dir
+from ..core.presets import IMAGE_EXTS
+from ..core.qt_compat import QThreadPool, Signal
+from ..core.task_pool import PoolItem, ProgressCb, TaskPool, TaskState
+from ..core.tools_download import ToolsDownloadWorker
 from ..i18n.translator import tr
-
-log = get_logger("compress")
-from .theme import (
-    ThemedCard, CollapsibleCard, panel, field_row, primary_btn, ghost_btn, icon_btn,
-    muted_text, sub_text, accent_color, CARD_MARGIN, scrollbar_qss, ext_badge,
+from . import tokens
+from .base import (
+    InterfaceBase,
+    QueueListBase,
+    build_detail_label,
+    build_row_header,
+    build_row_layout,
 )
-from .base import InterfaceBase
 from .drop_area import DropArea
 from .help_bubble import attach_help
 from .queue_widget import (
-    ProgressBar, StatusPill, FormatPill, human_size, format_size_compare,
-    ScrollAutoFollow, MarqueeName,
+    FormatPill,
+    MarqueeName,
+    ProgressBar,
+    ScrollAutoFollow,
+    StatusPill,
+    format_size_compare,
+)
+from .theme import (
+    ThemedCard,
+    apply_text,
+    apply_transparent,
+    ext_badge,
+    field_row,
+    ghost_btn,
+    icon_btn,
+    muted_text,
+    primary_btn,
+    sub_text,
 )
 
+log = get_logger("compress")
+
 
 # =============================================================================
-# 压缩 Worker（QRunnable 线程池）
+# 压缩执行体（跑在 TaskPool 的工作线程里）
 # =============================================================================
-class _WorkerSignals(QObject):
-    progress = Signal(str, int)
-    # id, ok, saved_bytes, detail, effective_backend
-    finished = Signal(str, bool, int, str, str)
+def run_compress_task(
+    item: PoolItem, report: ProgressCb, cancel: threading.Event
+) -> tuple[bool, str]:
+    """压缩一张图片。这是喂给 :class:`TaskPool` 的业务执行体。
 
-    def __init__(self, parent=None):
-        super().__init__(parent)   # v0.7.24：parent=界面，Qt 持有防 GC
+    Args:
+        item: 队列条目。``payload`` 是 :meth:`CompressInterface._prepare_item`
+            在 GUI 线程冻结好的参数快照。
+        report: 进度回调（0~100）。
+        cancel: 用户清空/移除该任务时被置位。
+    Returns:
+        ``(是否成功, 展示给用户的明细文本)``。省下的字节数与实际生效的后端另外
+        写进 ``item.result``——Qt 信号只带得回两个值，塞不下业务细节。
+    Notes:
+        这里刻意**不读**任何界面控件的当前值。旧实现是在 GUI 线程构造 worker 时
+        把参数抄进 worker 字段，效果一样；换成快照字典之后这条约束才是显式的：
+        队列跑到一半用户拖动滑块，不该影响已经派发出去的任务。
+    """
+    params = item.payload or {}
+    src: str = params["src"]
+    out: str = params["out"]
+    target_fmt: str = params["target"]
+    mode: str = params["mode"]
+    quality: int = params["quality"]
+    preferred: str = params["program"]
+    opts: dict = params["opts"]
 
+    src_ext = Path(src).suffix.lower().lstrip(".")
+    # "same" → 用源文件扩展名
+    effective = src_ext if target_fmt in ("same", "", None) else target_fmt
+    # 解析「实际使用的后端」：若用户所选程序无法处理该格式，回退到能处理的程序
+    backend = compressor.best_backend(effective, mode, preferred)
+    backend = compressor.fallback_to_pillow(backend, src)
+    item.result["backend"] = backend
+    item.result["saved"] = 0
+    log.info(
+        "[compress] start id=%s src=%s ext=%s target=%s effective=%s mode=%s "
+        "quality=%s preferred=%s resolved=%s",
+        item.iid,
+        src,
+        src_ext,
+        target_fmt,
+        effective,
+        mode,
+        quality,
+        preferred,
+        backend,
+    )
+    try:
+        if compressor.needs_conversion(src_ext, effective):
+            ok, detail, saved = compressor.transcode_and_compress(
+                src, out, effective, mode, quality, opts, preferred=backend
+            )
+        else:
+            ok, detail, saved = compressor.compress_auto(
+                src, out, mode, quality, opts, preferred=backend
+            )
+    except Exception:
+        log.exception("[compress] task %s raised an exception", item.iid)
+        # RISK-10：异常路径也要把半成品清干净，否则用户输出目录里会攒 .tmp。
+        compressor.cleanup_temp_files(out)
+        return False, "exception (see log)"
 
-class CompressWorker(QRunnable):
-    """单个图片压缩任务。在 QThreadPool 线程中执行。"""
-
-    def __init__(self, item_id, src, out, target_fmt, mode, quality, preferred, opts=None, owner=None):
-        super().__init__()
-        self.setAutoDelete(True)
-        self.item_id = item_id
-        self.src = src
-        self.out = out
-        self.target_fmt = target_fmt
-        self.mode = mode
-        self.quality = quality
-        self.preferred = preferred  # "pillow"/"oxipng"/"jpegoptim" 或 None
-        self.opts = opts or {}
-        self.signals = _WorkerSignals(owner)   # v0.7.24：parent=界面
-
-    def run(self):
-        """在线程池中执行压缩。"""
-        self.signals.progress.emit(self.item_id, 0)
-        src_ext = Path(self.src).suffix.lower().lstrip(".")
-        # "same" → 用源文件扩展名
-        effective = src_ext if self.target_fmt in ("same", "", None) else self.target_fmt
-        # 解析「实际使用的后端」：若用户所选程序无法处理该格式，回退到能处理的程序
-        backend = compressor.best_backend(effective, self.mode, self.preferred)
-        backend = compressor._fallback_to_pillow(backend, self.src)
-        log.info(
-            "[compress] start id=%s src=%s ext=%s target=%s effective=%s mode=%s "
-            "quality=%s preferred=%s resolved=%s",
-            self.item_id, self.src, src_ext, self.target_fmt, effective,
-            self.mode, self.quality, self.preferred, backend,
-        )
-        try:
-            if compressor.needs_conversion(src_ext, effective):
-                ok, detail, saved = compressor.transcode_and_compress(
-                    self.src, self.out, effective, self.mode,
-                    self.quality, self.opts, preferred=backend)
-            else:
-                ok, detail, saved = compressor.compress_auto(
-                    self.src, self.out, self.mode, self.quality, self.opts,
-                    preferred=backend)
-        except Exception:
-            log.exception("[compress] task %s raised an exception", self.item_id)
-            ok, detail, saved = False, "exception (see log)", 0
-        log.info("[compress] finished id=%s ok=%s saved=%d backend=%s",
-                 self.item_id, ok, saved, backend)
-        self.signals.finished.emit(self.item_id, ok, saved, detail, backend)
+    item.result["saved"] = int(saved or 0)
+    if cancel.is_set():
+        # 用户在压缩过程中清空了队列：产物没人要，顺手把中间文件也收拾掉。
+        compressor.cleanup_temp_files(out)
+    log.info("[compress] finished id=%s ok=%s saved=%d backend=%s", item.iid, ok, saved, backend)
+    return bool(ok), str(detail or "")
 
 
 # =============================================================================
@@ -117,10 +175,12 @@ class CompressItemWidget(ThemedCard):
     类别图标 + 文件名 + 格式胶囊 + 状态胶囊 / 进度条 / 大小对比行 + 操作按钮。
     功能不变，仅统一视觉；同时修复完成时进度条停在旧值不满格的问题。
     """
+
     removeRequested = Signal(str)
 
-    def __init__(self, item_id: str, src: str, selected: str = "auto",
-                 target: str = "same", parent=None):
+    def __init__(
+        self, item_id: str, src: str, selected: str = "auto", target: str = "same", parent=None
+    ):
         super().__init__(parent)
         self._id = item_id
         self._src = src
@@ -130,33 +190,23 @@ class CompressItemWidget(ThemedCard):
         self._target = target
         self._src_size = self._read_src_size()
 
-        vb = QVBoxLayout(self)
-        vb.setContentsMargins(14, 12, 14, 12)
-        vb.setSpacing(8)
+        vb = build_row_layout(self)
 
-        top = QHBoxLayout()
-        # v0.7.4 Adj1：后缀矩形徽标取代固定图片图标
+        # Adj1：后缀矩形徽标取代固定图片图标
         self.iconLbl = ext_badge(Path(src).suffix.upper().lstrip("."), self)
-        top.addWidget(self.iconLbl)
         self.nameLbl = MarqueeName(self)
         self.nameLbl.set_text(Path(src).name)
         self.nameLbl.setObjectName("queueName")
-        top.addWidget(self.nameLbl, 1)
         self.fmtPill = FormatPill(self._format_text())
-        top.addWidget(self.fmtPill)
         self.pill = StatusPill("pending")
-        top.addWidget(self.pill)
-        vb.addLayout(top)
+        vb.addLayout(build_row_header(self.iconLbl, self.nameLbl, self.fmtPill, self.pill))
 
         self.prog = ProgressBar()
         vb.addWidget(self.prog)
 
         # 大小对比行（黑字 + 百分比绿/红），与操作按钮同行右对齐
         bottom = QHBoxLayout()
-        self.detailLbl = CaptionLabel()
-        self.detailLbl.setObjectName("queueStatus")
-        self.detailLbl.setWordWrap(True)
-        self.detailLbl.setStyleSheet("color: #000000; background: transparent;")
+        self.detailLbl = build_detail_label()
         bottom.addWidget(self.detailLbl, 1)
         self.delBtn = icon_btn(FIF.DELETE)
         self.delBtn.clicked.connect(lambda: self.removeRequested.emit(self._id))
@@ -188,25 +238,26 @@ class CompressItemWidget(ThemedCard):
     def set_progress(self, pct: int):
         self.prog.set_value(pct)
 
-    def set_status(self, status: str, saved: int = 0, detail: str = "",
-                   backend: str = ""):
+    def set_status(self, status: str, saved: int = 0, detail: str = "", backend: str = ""):
         self._status = status
         if status == "done":
             self._saved = saved
-            # v0.7.9 修复4：tr('compress.done.by') 含 {backend} 占位符，必须 .format() 替换
-            if (backend and self._selected in ("oxipng", "jpegoptim", "pillow")
-                    and backend != self._selected):
+            # 修复4：tr('compress.done.by') 含 {backend} 占位符，必须 .format() 替换
+            if (
+                backend
+                and self._selected in ("oxipng", "jpegoptim", "pillow")
+                and backend != self._selected
+            ):
                 name = BACKEND_NAMES.get(backend, backend)
-                self.pill.set_status(
-                    "done_sw", text=tr('compress.done.by').format(backend=name))
+                self.pill.set_status("done_sw", text=tr("compress.done.by").format(backend=name))
             else:
                 self.pill.set_status("done")
-            # v0.7.3 Bug4：完成时进度条必须走满，否则停在最后一次回调的旧值
+            # Bug4：完成时进度条必须走满，否则停在最后一次回调的旧值
             self.prog.set_error(False)
             self.prog.set_value(100)
             before = self._src_size or self._read_src_size()
             if before:
-                # v0.7.9 修复3：无论 saved 是否为零，都显示大小对比
+                # 修复3：无论 saved 是否为零，都显示大小对比
                 after = before - saved if saved else before
                 self.detailLbl.setText(format_size_compare(before, after))
             else:
@@ -226,46 +277,24 @@ class CompressItemWidget(ThemedCard):
         self.pill.set_status(self._status)
 
 
-class CompressListWidget(QWidget):
-    """压缩任务列表（带统计栏）。"""
+class CompressListWidget(QueueListBase):
+    """压缩任务列表（带统计栏），继承 QueueListBase 复用统计/空态/增删骨架。
+
+    与转换/放大队列的真正差异在于：统计口径按 ``_status``（done 计数而非
+    running）、入队签名多 ``selected``/``target`` 两参、无「转换前/后」双段对比。
+    这些差异留给本类，公共的「统计栏 + 行容器 + 空态 + 按 key 增删」收口在基类。
+    """
+
     removeRequested = Signal(str)
+
+    _empty_key = "compress.queue.empty"
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.items: dict[str, CompressItemWidget] = {}
-        vb = QVBoxLayout(self)
-        vb.setContentsMargins(0, 0, 0, 0)
-        vb.setSpacing(8)
-
-        self.statsBar = QWidget()
-        hb = QHBoxLayout(self.statsBar)
-        hb.setContentsMargins(2, 0, 2, 0)
-        hb.setSpacing(14)
-        self.statTotal = CaptionLabel()
-        self.statDone = CaptionLabel()
-        self.statErr = CaptionLabel()
-        for w in (self.statTotal, self.statDone, self.statErr):
-            w.setStyleSheet("color: #000000; font-weight:600;")
-            hb.addWidget(w)
-        hb.addStretch(1)
-        vb.addWidget(self.statsBar)
-
-        self.listWidget = QWidget()
-        self.listLayout = QVBoxLayout(self.listWidget)
-        self.listLayout.setContentsMargins(0, 0, 0, 0)
-        self.listLayout.setSpacing(8)
-        self.listLayout.addStretch(1)
-        vb.addWidget(self.listWidget, 1)
-        self.emptyHint = CaptionLabel(tr("compress.queue.empty"))
-        self.emptyHint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.emptyHint.setStyleSheet(f"color: {muted_text()}; padding: 24px 0;")
-        vb.addWidget(self.emptyHint)
-        self._refresh_empty()
-
-    def _refresh_empty(self):
-        self.emptyHint.setVisible(False)
+        self.statTotal, self.statDone, self.statErr = self._statLabels
 
     def _update_stats(self):
+        """重写基类占位：统计总数 / 完成 / 失败（基于行的 ``_status``）。"""
         total = len(self.items)
         done = sum(1 for w in self.items.values() if w._status == "done")
         failed = sum(1 for w in self.items.values() if w._status == "failed")
@@ -273,15 +302,12 @@ class CompressListWidget(QWidget):
         self.statDone.setText(tr("compress.queue.stats.done", n=done))
         self.statErr.setText(tr("compress.queue.stats.error", n=failed))
 
-    def add_item(self, item_id: str, src: str, selected: str = "auto",
-                 target: str = "same"):
+    def add_item(self, item_id: str, src: str, selected: str = "auto", target: str = "same"):
         if item_id in self.items:
             return
         w = CompressItemWidget(item_id, src, selected, target)
         w.removeRequested.connect(self.removeRequested)
-        self.items[item_id] = w
-        self.listLayout.insertWidget(self.listLayout.count() - 1, w)
-        self._refresh_empty()
+        self._attach_row(item_id, w)
         self._update_stats()
 
     def set_target(self, target: str):
@@ -289,37 +315,13 @@ class CompressListWidget(QWidget):
         for w in self.items.values():
             w.set_target(target)
 
-    def set_progress(self, item_id: str, pct: int):
-        w = self.items.get(item_id)
-        if w:
-            w.set_progress(pct)
-
-    def set_status(self, item_id: str, status: str, saved: int = 0,
-                   detail: str = "", backend: str = ""):
+    def set_status(
+        self, item_id: str, status: str, saved: int = 0, detail: str = "", backend: str = ""
+    ):
         w = self.items.get(item_id)
         if w:
             w.set_status(status, saved, detail, backend)
             self._update_stats()
-
-    def remove_item(self, item_id: str):
-        w = self.items.pop(item_id, None)
-        if w:
-            w.deleteLater()
-        self._refresh_empty()
-        self._update_stats()
-
-    def clear(self):
-        for w in self.items.values():
-            w.deleteLater()
-        self.items.clear()
-        self._refresh_empty()
-        self._update_stats()
-
-    def retranslate(self):
-        for w in self.items.values():
-            w.retranslate()
-        self.emptyHint.setText(tr("compress.queue.empty"))
-        self._update_stats()
 
 
 # =============================================================================
@@ -328,10 +330,13 @@ class CompressListWidget(QWidget):
 class CompressInterface(InterfaceBase):
     """图片压缩标签页。
 
-    自管任务队列（QRunnable + QThreadPool），支持 auto/oxipng/jpegoptim/pillow
-    多种压缩后端，以及无损/有损两种模式。
+    队列调度委托给 :class:`~momentshift.core.task_pool.TaskPool`（v0.8.0
+    DUP-01），本类只提供两样东西：``run_compress_task`` 需要的参数快照
+    （:meth:`_prepare_item`），以及把池发出的信号渲染成列表行的一组槽。
 
-    v0.7.12：新增公开信号供快速调用进度窗使用。
+    支持 auto/oxipng/jpegoptim/gifsicle/pillow 多种后端与无损/有损两种模式。
+    对外暴露 ``taskAdded`` / ``taskProgress`` / ``taskFinished`` 三条信号供快速
+    调用进度窗使用（v0.7.12）。
     """
 
     # (item_id, 文件名)
@@ -344,35 +349,63 @@ class CompressInterface(InterfaceBase):
     def __init__(self, parent=None):
         super().__init__("Compress", tr("nav.compress"), tr("compress.subtitle"), parent)
 
-        # 内部状态
-        self._items: dict[str, dict] = {}
-        self._pending: list[str] = []
-        self._active: set[str] = set()
-        # v0.7.14：持有 worker 引用，防止 GC 删除 signals
-        self._workers: dict[str, CompressWorker] = {}
-        self._running = False
-        self._paused = False
-        # 重入防护（v0.3.0）：防止模态对话框事件循环触发二次弹框
+        # 队列引擎。max_workers 传的是**方法本身**而不是取值结果，这样用户在
+        # 设置页改「最大线程数」时下一轮调度立即生效——与旧代码每次循环重读
+        # cfg.maxThreads 的行为一致。
+        self._pool = TaskPool(
+            run_compress_task,
+            max_workers=self._max_threads,
+            parent=self,
+            prepare_fn=self._prepare_item,
+        )
+        self._pool.itemAdded.connect(self._on_pool_added)
+        self._pool.itemStarted.connect(self._on_pool_started)
+        self._pool.itemProgress.connect(self._on_pool_progress)
+        self._pool.itemFinished.connect(self._on_pool_finished)
+        self._pool.stateChanged.connect(self._update_controls)
+        self._pool.allFinished.connect(self._on_pool_all_finished)
+
+        # 重入防护：模态对话框自带事件循环，期间用户仍能再次点按钮，
+        # 不挡住就会叠出第二个弹框
         self._picking = False
 
-        # 压缩参数默认值（v0.7.0：oxipng / jpegoptim / pillow 三后端）
-        # v0.7.7 调整1：元数据默认保留（strip=none, jo_strip=none）
+        # 压缩参数默认值（：oxipng / jpegoptim / pillow 三后端）
+        # 调整1：元数据默认保留（strip=none, jo_strip=none）
         self._program = "auto"
         self._tool_opts = {
-            "oxipng": {"level": 3, "interlace": True, "strip": "none",
-                       "filter": 0, "zc": 6, "alpha": False},
-            "jpegoptim": {"jo_mode": "lossless", "jo_max": 85, "jo_strip": "none",
-                          "jo_progressive": "auto", "jo_threshold": 0,
-                          "jo_preserve": True, "jo_retry": False},
-            "gifsicle": {"gs_optimize": 3, "gs_loop": 0, "gs_lossy": 0},  # v0.7.28
-            "pillow": {"pil_quality": 95, "pil_optimize": True,
-                       "pil_progressive": True, "pil_subsampling": "4:4:4"},
+            "oxipng": {
+                "level": 3,
+                "interlace": True,
+                "strip": "none",
+                "filter": 0,
+                "zc": 6,
+                "alpha": False,
+            },
+            "jpegoptim": {
+                "jo_mode": "lossless",
+                "jo_max": 85,
+                "jo_strip": "none",
+                "jo_progressive": "auto",
+                "jo_threshold": 0,
+                "jo_preserve": True,
+                "jo_retry": False,
+            },
+            "gifsicle": {"gs_optimize": 3, "gs_loop": 0, "gs_lossy": 0},
+            "pillow": {
+                "pil_quality": 95,
+                "pil_optimize": True,
+                "pil_progressive": True,
+                "pil_subsampling": "4:4:4",
+            },
         }
         self._target = "same"
         self._switches: list = []
         self._output_mode = cfg.compressMode.value
         self._suffix = cfg.compressSuffix.value
         self._folder = cfg.compressFolder.value or ""
+        # v0.8.1 Bug4-②：后端参数分区里的 field_row 行标签，retranslateUi 按
+        # ``(row, i18n_key)`` 逐行刷新（field_row 的标签此前是拿不到引用的局部变量）
+        self._param_rows: list[tuple] = []
 
         # =====================================================================
         # 输入卡片
@@ -393,46 +426,59 @@ class CompressInterface(InterfaceBase):
         # =====================================================================
         # 压缩设置卡片
         # =====================================================================
-        scard, svb, self.tSettings = self._make_card(
-            "compress.settings.title", collapsed=True)
+        scard, svb, self.tSettings = self._make_card("compress.settings.title", collapsed=True)
         self._settingsCard = scard
 
-        # 压缩后端选择（v0.7.0：auto / oxipng / jpegoptim / pillow；v0.7.28：+ gifsicle）
+        # 压缩后端选择（：auto / oxipng / jpegoptim / pillow；：+ gifsicle）
         self.programCombo = self._make_combo(
-            [(tr("advanced.compression.auto"), "auto"),
-             (tr("advanced.compression.oxipng"), "oxipng"),
-             (tr("advanced.compression.jpegoptim"), "jpegoptim"),
-             (tr("advanced.compression.gifsicle"), "gifsicle"),
-             (tr("advanced.compression.pillow"), "pillow")],
-            self._program, lambda v: self._on_program(v))
-        svb.addWidget(field_row(tr("advanced.compression.backend"), self.programCombo))
+            [
+                (tr("advanced.compression.auto"), "auto"),
+                (tr("advanced.compression.oxipng"), "oxipng"),
+                (tr("advanced.compression.jpegoptim"), "jpegoptim"),
+                (tr("advanced.compression.gifsicle"), "gifsicle"),
+                (tr("advanced.compression.pillow"), "pillow"),
+            ],
+            self._program,
+            lambda v: self._on_program(v),
+        )
+        self.backendRow = field_row(tr("advanced.compression.backend"), self.programCombo)
+        svb.addWidget(self.backendRow)
 
         # 路由提示（仅 auto 时显示）
         rhint = CaptionLabel(tr("advanced.compression.route"))
         rhint.setWordWrap(True)
-        rhint.setStyleSheet(f"color: {muted_text()}; background: transparent;")
+        apply_text(rhint, muted_text(), transparent=True)
         svb.addWidget(rhint)
         self._route_hint = rhint
 
         # 通用压缩参数（目标格式）
         self.paramsGroup = QWidget()
-        # 强制透明背景，防止在深/浅色主题下出现异常色块 (v0.3.1, #6)
-        self.paramsGroup.setStyleSheet("background: transparent;")
+        # 强制透明背景，防止在深/浅色主题下出现异常色块 (, #6)
+        apply_transparent(self.paramsGroup)
         fq = QVBoxLayout(self.paramsGroup)
         fq.setContentsMargins(0, 0, 0, 0)
         fq.setSpacing(6)
         self.targetCombo = self._make_combo(
-            [(tr("compress.target.same"), "same"), ("PNG", "png"), ("JPG", "jpg"),
-             ("WebP", "webp"), ("BMP", "bmp"), ("TIFF", "tiff")],
-            self._target, self._on_target)
-        fq.addWidget(field_row(tr("compress.target"), self.targetCombo))
+            [
+                (tr("compress.target.same"), "same"),
+                ("PNG", "png"),
+                ("JPG", "jpg"),
+                ("WebP", "webp"),
+                ("BMP", "bmp"),
+                ("TIFF", "tiff"),
+            ],
+            self._target,
+            self._on_target,
+        )
+        self.targetRow = field_row(tr("compress.target"), self.targetCombo)
+        fq.addWidget(self.targetRow)
         svb.addWidget(self.paramsGroup)
 
-        # 各后端专用参数组（v0.7.0：三后端独立面板）
-        # v0.7.3 Bug3：auto 模式三组同显时，除了容器间距，还要有分区小标题，
+        # 各后端专用参数组（：三后端独立面板）
+        # Bug3：auto 模式三组同显时，除了容器间距，还要有分区小标题，
         # 否则十几行参数视觉上连成一片，分不清哪几行属于哪个后端。
         self._backend_container = QWidget()
-        self._backend_container.setStyleSheet("background: transparent;")
+        apply_transparent(self._backend_container)
         _bcont_ly = QVBoxLayout(self._backend_container)
         _bcont_ly.setContentsMargins(0, 0, 0, 0)
         _bcont_ly.setSpacing(20)
@@ -449,12 +495,12 @@ class CompressInterface(InterfaceBase):
         # 输出位置
         self.outputSwitch = SwitchButton()
         self.outputSwitch.checkedChanged.connect(self._on_output_mode)
-        svb.addWidget(field_row(tr("compress.output.mode"), self.outputSwitch))
+        self.outputModeRow = field_row(tr("compress.output.mode"), self.outputSwitch)
+        svb.addWidget(self.outputModeRow)
         self.suffixEdit = QLineEdit(self._suffix)
         self.suffixEdit.textChanged.connect(
-            lambda t: (setattr(self, "_suffix", t),
-                       setattr(cfg.compressSuffix, "value", t),
-                       qconfig.save()))
+            lambda t: (setattr(self, "_suffix", t), setattr(cfg.compressSuffix, "value", t))
+        )
         self.suffixRow = field_row(tr("compress.output.suffix"), self.suffixEdit)
         svb.addWidget(self.suffixRow)
         self.folderEdit = QLineEdit(self._folder)
@@ -472,7 +518,7 @@ class CompressInterface(InterfaceBase):
         self.toolsBtn = primary_btn(tr("compress.tools.download"), icon=FIF.DOWNLOAD)
         self.toolsBtn.clicked.connect(self._on_download_tools)
         self.toolsStatus = CaptionLabel()
-        self.toolsStatus.setStyleSheet(f"color: {muted_text()};")
+        apply_text(self.toolsStatus, muted_text())
         svb.addWidget(self.toolsBtn)
         svb.addWidget(self.toolsStatus)
         self.vbox.addWidget(scard)
@@ -486,7 +532,7 @@ class CompressInterface(InterfaceBase):
         self.queueScroll = self._make_scroll(280)
         self.queueScroll.setWidget(self.listWidget)
         qvb.addWidget(self.queueScroll)
-        # v0.7.4 Adj2：队列自动跟随当前处理任务
+        # Adj2：队列自动跟随当前处理任务
         self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("compress.start"), icon=FIF.PLAY)
@@ -514,28 +560,38 @@ class CompressInterface(InterfaceBase):
     def _backend_section(self, key: str, inner: QWidget) -> QWidget:
         """给后端参数组包一层带小标题的分区（标题仅 auto 模式显示）。"""
         w = QWidget()
-        w.setStyleSheet("background: transparent;")
+        apply_transparent(w)
         ly = QVBoxLayout(w)
         ly.setContentsMargins(0, 0, 0, 0)
         ly.setSpacing(10)
         hdr = StrongBodyLabel(tr(f"advanced.compression.{key}"))
-        hdr.setStyleSheet(
-            f"color: {sub_text()}; background: transparent;")
+        apply_text(hdr, sub_text(), transparent=True)
         ly.addWidget(hdr)
         rule = QFrame()
         rule.setFrameShape(QFrame.Shape.HLine)
         rule.setFixedHeight(1)
-        rule.setStyleSheet("background: #E0E0E0; border: none;")
+        rule.setStyleSheet(f"background: {tokens.BORDER}; border: none;")
         ly.addWidget(rule)
         ly.addWidget(inner)
         w._header = hdr
         w._rule = rule
         return w
 
+    def _param_row(self, key: str, control, label_width: int = 96):
+        """建一个后端参数行，并把 ``(row, i18n_key)`` 登记进 ``_param_rows``。
+
+        v0.8.1 Bug4-②：后端分区参数行的标签此前是 field_row 里拿不到引用的
+        局部变量，语言切换后不刷新。统一走这个构造器，retranslateUi 就能按
+        登记的 key 批量刷新标签。
+        """
+        fr = field_row(tr(key), control, label_width=label_width)
+        self._param_rows.append((fr, key))
+        return fr
+
     def _build_oxipng(self):
         grp = self._tool_opts["oxipng"]
         w = QWidget()
-        w.setStyleSheet("background: transparent;")
+        apply_transparent(w)
         ly = QVBoxLayout(w)
         ly.setContentsMargins(0, 0, 0, 0)
         ly.setSpacing(10)
@@ -543,66 +599,85 @@ class CompressInterface(InterfaceBase):
         lvl.setRange(0, 6)
         lvl.setValue(int(grp["level"]))
         lvl_label = QLabel(str(grp["level"]))
-        lvl.valueChanged.connect(
-            lambda v: (grp.__setitem__("level", v), lvl_label.setText(str(v))))
+        lvl.valueChanged.connect(lambda v: (grp.__setitem__("level", v), lvl_label.setText(str(v))))
         row = QHBoxLayout()
         row.addWidget(lvl_label)
         row.addWidget(lvl, 1)
-        fr = field_row(tr("advanced.level"), row)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.level")
+        fr = self._param_row("advanced.level", row)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.level")
         inter = SwitchButton()
         inter.setChecked(bool(grp["interlace"]))
         inter.checkedChanged.connect(lambda b: grp.__setitem__("interlace", b))
         self._switches.append(inter)
-        fr = field_row(tr("advanced.interlace"), inter)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.interlace")
+        fr = self._param_row("advanced.interlace", inter)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.interlace")
         strip = self._make_combo(
-            [(tr("advanced.strip.none"), "none"),
-             (tr("advanced.strip.safe"), "safe"),
-             (tr("advanced.strip.all"), "all")],
-            grp["strip"], lambda v: grp.__setitem__("strip", v))
-        fr = field_row(tr("advanced.strip"), strip)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.strip")
+            [
+                (tr("advanced.strip.none"), "none"),
+                (tr("advanced.strip.safe"), "safe"),
+                (tr("advanced.strip.all"), "all"),
+            ],
+            grp["strip"],
+            lambda v: grp.__setitem__("strip", v),
+        )
+        fr = self._param_row("advanced.strip", strip)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.strip")
         filt = self._make_combo(
-            [(tr("advanced.filter.none"), 0), (tr("advanced.filter.sub"), 1),
-             (tr("advanced.filter.up"), 2), (tr("advanced.filter.average"), 3),
-             (tr("advanced.filter.paeth"), 4), (tr("advanced.filter.mixed"), 5)],
-            grp["filter"], lambda v: grp.__setitem__("filter", int(v)))
-        fr = field_row(tr("advanced.filter"), filt)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.filter")
+            [
+                (tr("advanced.filter.none"), 0),
+                (tr("advanced.filter.sub"), 1),
+                (tr("advanced.filter.up"), 2),
+                (tr("advanced.filter.average"), 3),
+                (tr("advanced.filter.paeth"), 4),
+                (tr("advanced.filter.mixed"), 5),
+            ],
+            grp["filter"],
+            lambda v: grp.__setitem__("filter", int(v)),
+        )
+        fr = self._param_row("advanced.filter", filt)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.filter")
         zc = QSlider(Qt.Orientation.Horizontal)
         zc.setRange(1, 9)
         zc.setValue(int(grp["zc"]))
         zc_label = QLabel(str(grp["zc"]))
-        zc.valueChanged.connect(
-            lambda v: (grp.__setitem__("zc", v), zc_label.setText(str(v))))
+        zc.valueChanged.connect(lambda v: (grp.__setitem__("zc", v), zc_label.setText(str(v))))
         zc_row = QHBoxLayout()
         zc_row.addWidget(zc_label)
         zc_row.addWidget(zc, 1)
-        fr = field_row(tr("advanced.zc"), zc_row)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.zc")
+        fr = self._param_row("advanced.zc", zc_row)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.zc")
         alpha = SwitchButton()
         alpha.setChecked(bool(grp["alpha"]))
         alpha.checkedChanged.connect(lambda b: grp.__setitem__("alpha", b))
         self._switches.append(alpha)
-        fr = field_row(tr("advanced.alpha"), alpha)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.alpha")
+        fr = self._param_row("advanced.alpha", alpha)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.alpha")
         return w
 
     def _build_jpegoptim(self):
         grp = self._tool_opts["jpegoptim"]
         w = QWidget()
-        w.setStyleSheet("background: transparent;")
+        apply_transparent(w)
         ly = QVBoxLayout(w)
         ly.setContentsMargins(0, 0, 0, 0)
         ly.setSpacing(10)
         jo_mode = self._make_combo(
-            [(tr("advanced.jo.mode.lossless"), "lossless"),
-             (tr("advanced.jo.mode.lossy"), "lossy")],
+            [
+                (tr("advanced.jo.mode.lossless"), "lossless"),
+                (tr("advanced.jo.mode.lossy"), "lossy"),
+            ],
             grp["jo_mode"],
-            lambda v: (grp.__setitem__("jo_mode", v), self._sync_jo_max(v)))
-        fr = field_row(tr("advanced.jo.mode"), jo_mode)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.mode")
+            lambda v: (grp.__setitem__("jo_mode", v), self._sync_jo_max(v)),
+        )
+        fr = self._param_row("advanced.jo.mode", jo_mode)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.jo.mode")
         jo_max = QSlider(Qt.Orientation.Horizontal)
         jo_max.setRange(0, 100)
         jo_max.setValue(int(grp["jo_max"]))
@@ -611,51 +686,67 @@ class CompressInterface(InterfaceBase):
         jo_max_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         jo_max_spin.setValue(int(grp["jo_max"]))
         jo_max.valueChanged.connect(
-            lambda v: (grp.__setitem__("jo_max", v), jo_max_spin.setValue(v)))
+            lambda v: (grp.__setitem__("jo_max", v), jo_max_spin.setValue(v))
+        )
         jo_max_spin.valueChanged.connect(
-            lambda v: (grp.__setitem__("jo_max", v), jo_max.setValue(v)))
+            lambda v: (grp.__setitem__("jo_max", v), jo_max.setValue(v))
+        )
         jm_row = QHBoxLayout()
         jm_row.addWidget(jo_max, 1)
         jm_row.addWidget(jo_max_spin)
-        jo_max_fr = field_row(tr("advanced.jo.max"), jm_row)
-        ly.addWidget(jo_max_fr); attach_help(jo_max_fr, "advanced.help.jo.max")
+        jo_max_fr = self._param_row("advanced.jo.max", jm_row)
+        ly.addWidget(jo_max_fr)
+        attach_help(jo_max_fr, "advanced.help.jo.max")
         jo_strip = self._make_combo(
-            [(tr("advanced.jo.strip.none"), "none"),
-             (tr("advanced.jo.strip.meta"), "meta"),
-             (tr("advanced.jo.strip.exif"), "exif"),
-             (tr("advanced.jo.strip.icc"), "icc"),
-             (tr("advanced.jo.strip.all"), "all")],
-            grp["jo_strip"], lambda v: grp.__setitem__("jo_strip", v))
-        fr = field_row(tr("advanced.jo.strip"), jo_strip)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.strip")
+            [
+                (tr("advanced.jo.strip.none"), "none"),
+                (tr("advanced.jo.strip.meta"), "meta"),
+                (tr("advanced.jo.strip.exif"), "exif"),
+                (tr("advanced.jo.strip.icc"), "icc"),
+                (tr("advanced.jo.strip.all"), "all"),
+            ],
+            grp["jo_strip"],
+            lambda v: grp.__setitem__("jo_strip", v),
+        )
+        fr = self._param_row("advanced.jo.strip", jo_strip)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.jo.strip")
         jo_prog = self._make_combo(
-            [(tr("advanced.jo.prog.auto"), "auto"),
-             (tr("advanced.jo.prog.keep"), "keep"),
-             (tr("advanced.jo.prog.progressive"), "progressive"),
-             (tr("advanced.jo.prog.normal"), "normal")],
-            grp["jo_progressive"], lambda v: grp.__setitem__("jo_progressive", v))
-        fr = field_row(tr("advanced.jo.prog"), jo_prog)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.prog")
+            [
+                (tr("advanced.jo.prog.auto"), "auto"),
+                (tr("advanced.jo.prog.keep"), "keep"),
+                (tr("advanced.jo.prog.progressive"), "progressive"),
+                (tr("advanced.jo.prog.normal"), "normal"),
+            ],
+            grp["jo_progressive"],
+            lambda v: grp.__setitem__("jo_progressive", v),
+        )
+        fr = self._param_row("advanced.jo.prog", jo_prog)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.jo.prog")
         jo_thr = QSpinBox()
         jo_thr.setRange(0, 99)
         jo_thr.setSuffix("%")
         jo_thr.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         jo_thr.setValue(int(grp["jo_threshold"]))
         jo_thr.valueChanged.connect(lambda v: grp.__setitem__("jo_threshold", v))
-        fr = field_row(tr("advanced.jo.threshold"), jo_thr)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.threshold")
+        fr = self._param_row("advanced.jo.threshold", jo_thr)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.jo.threshold")
         jo_pres = SwitchButton()
         jo_pres.setChecked(bool(grp["jo_preserve"]))
         jo_pres.checkedChanged.connect(lambda b: grp.__setitem__("jo_preserve", b))
         self._switches.append(jo_pres)
-        fr = field_row(tr("advanced.jo.preserve"), jo_pres)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.preserve")
+        fr = self._param_row("advanced.jo.preserve", jo_pres)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.jo.preserve")
         jo_retry = SwitchButton()
         jo_retry.setChecked(bool(grp["jo_retry"]))
         jo_retry.checkedChanged.connect(lambda b: grp.__setitem__("jo_retry", b))
         self._switches.append(jo_retry)
-        fr = field_row(tr("advanced.jo.retry"), jo_retry)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.jo.retry")
+        fr = self._param_row("advanced.jo.retry", jo_retry)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.jo.retry")
         self._jo_max_fr = jo_max_fr
         self._sync_jo_max(grp["jo_mode"])
         return w
@@ -668,7 +759,7 @@ class CompressInterface(InterfaceBase):
         """v0.7.28：Gifsicle 动图压缩参数（优化级别 / 循环次数 / 有损阈值）。"""
         grp = self._tool_opts["gifsicle"]
         w = QWidget()
-        w.setStyleSheet("background: transparent;")
+        apply_transparent(w)
         ly = QVBoxLayout(w)
         ly.setContentsMargins(0, 0, 0, 0)
         ly.setSpacing(10)
@@ -679,20 +770,23 @@ class CompressInterface(InterfaceBase):
         lvl.setValue(int(grp.get("gs_optimize", 3)))
         lvl_label = QLabel(str(grp.get("gs_optimize", 3)))
         lvl.valueChanged.connect(
-            lambda v: (grp.__setitem__("gs_optimize", v), lvl_label.setText(str(v))))
+            lambda v: (grp.__setitem__("gs_optimize", v), lvl_label.setText(str(v)))
+        )
         row = QHBoxLayout()
         row.addWidget(lvl_label)
         row.addWidget(lvl, 1)
-        fr = field_row(tr("advanced.gifsicle.optimize"), row)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.gifsicle.optimize")
+        fr = self._param_row("advanced.gifsicle.optimize", row)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.gifsicle.optimize")
 
         # 循环次数 0-100（0=无限）
         loop = QSpinBox()
         loop.setRange(0, 100)
         loop.setValue(int(grp.get("gs_loop", 0)))
         loop.valueChanged.connect(lambda v: grp.__setitem__("gs_loop", v))
-        fr = field_row(tr("advanced.gifsicle.loop"), loop)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.gifsicle.loop")
+        fr = self._param_row("advanced.gifsicle.loop", loop)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.gifsicle.loop")
 
         # 有损阈值 0-200（0=无损）
         lossy = QSlider(Qt.Orientation.Horizontal)
@@ -700,19 +794,21 @@ class CompressInterface(InterfaceBase):
         lossy.setValue(int(grp.get("gs_lossy", 0)))
         lossy_label = QLabel(str(grp.get("gs_lossy", 0)))
         lossy.valueChanged.connect(
-            lambda v: (grp.__setitem__("gs_lossy", v), lossy_label.setText(str(v))))
+            lambda v: (grp.__setitem__("gs_lossy", v), lossy_label.setText(str(v)))
+        )
         row = QHBoxLayout()
         row.addWidget(lossy_label)
         row.addWidget(lossy, 1)
-        fr = field_row(tr("advanced.gifsicle.lossy"), row)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.gifsicle.lossy")
+        fr = self._param_row("advanced.gifsicle.lossy", row)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.gifsicle.lossy")
 
         return w
 
     def _build_pillow(self):
         grp = self._tool_opts["pillow"]
         w = QWidget()
-        w.setStyleSheet("background: transparent;")
+        apply_transparent(w)
         ly = QVBoxLayout(w)
         ly.setContentsMargins(0, 0, 0, 0)
         ly.setSpacing(10)
@@ -723,36 +819,40 @@ class CompressInterface(InterfaceBase):
         pq_spin.setRange(0, 95)
         pq_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         pq_spin.setValue(int(grp["pil_quality"]))
-        pq.valueChanged.connect(
-            lambda v: (grp.__setitem__("pil_quality", v), pq_spin.setValue(v)))
-        pq_spin.valueChanged.connect(
-            lambda v: (grp.__setitem__("pil_quality", v), pq.setValue(v)))
+        pq.valueChanged.connect(lambda v: (grp.__setitem__("pil_quality", v), pq_spin.setValue(v)))
+        pq_spin.valueChanged.connect(lambda v: (grp.__setitem__("pil_quality", v), pq.setValue(v)))
         pq_row = QHBoxLayout()
         pq_row.addWidget(pq, 1)
         pq_row.addWidget(pq_spin)
-        fr = field_row(tr("advanced.pil.quality"), pq_row)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.pil.quality")
+        fr = self._param_row("advanced.pil.quality", pq_row)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.pil.quality")
         pil_opt = SwitchButton()
         pil_opt.setChecked(bool(grp["pil_optimize"]))
         pil_opt.checkedChanged.connect(lambda b: grp.__setitem__("pil_optimize", b))
         self._switches.append(pil_opt)
-        fr = field_row(tr("advanced.pil.optimize"), pil_opt)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.pil.optimize")
+        fr = self._param_row("advanced.pil.optimize", pil_opt)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.pil.optimize")
         pil_prog = SwitchButton()
         pil_prog.setChecked(bool(grp["pil_progressive"]))
-        pil_prog.checkedChanged.connect(
-            lambda b: grp.__setitem__("pil_progressive", b))
+        pil_prog.checkedChanged.connect(lambda b: grp.__setitem__("pil_progressive", b))
         self._switches.append(pil_prog)
-        fr = field_row(tr("advanced.pil.progressive"), pil_prog)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.pil.progressive")
+        fr = self._param_row("advanced.pil.progressive", pil_prog)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.pil.progressive")
         pil_sub = self._make_combo(
-            [(tr("advanced.pil.sub.444"), "4:4:4"),
-             (tr("advanced.pil.sub.422"), "4:2:2"),
-             (tr("advanced.pil.sub.420"), "4:2:0")],
+            [
+                (tr("advanced.pil.sub.444"), "4:4:4"),
+                (tr("advanced.pil.sub.422"), "4:2:2"),
+                (tr("advanced.pil.sub.420"), "4:2:0"),
+            ],
             grp["pil_subsampling"],
-            lambda v: grp.__setitem__("pil_subsampling", v))
-        fr = field_row(tr("advanced.pil.subsampling"), pil_sub)
-        ly.addWidget(fr); attach_help(fr, "advanced.help.pil.subsampling")
+            lambda v: grp.__setitem__("pil_subsampling", v),
+        )
+        fr = self._param_row("advanced.pil.subsampling", pil_sub)
+        ly.addWidget(fr)
+        attach_help(fr, "advanced.help.pil.subsampling")
         return w
 
     def _on_program(self, p):
@@ -760,16 +860,18 @@ class CompressInterface(InterfaceBase):
         auto = p == "auto"
         # 容器始终可见；auto 显示全部三个组（带分区标题），指定程序只留对应组
         self._backend_container.setVisible(True)
-        for key, grp_w in (("oxipng", self.oxipngGroup),
-                           ("jpegoptim", self.joGroup),
-                           ("gifsicle", self.gsGroup),   # v0.7.28
-                           ("pillow", self.pilGroup)):
+        for key, grp_w in (
+            ("oxipng", self.oxipngGroup),
+            ("jpegoptim", self.joGroup),
+            ("gifsicle", self.gsGroup),
+            ("pillow", self.pilGroup),
+        ):
             grp_w.setVisible(auto or p == key)
             grp_w._header.setVisible(auto)
             grp_w._rule.setVisible(auto)
         self._route_hint.setVisible(auto)
         self._refresh_tool_status()
-        # v0.7.3 Bug3：可见控件数量变了，解除折叠卡片残留的 maximumHeight 上限，
+        # Bug3：可见控件数量变了，解除折叠卡片残留的 maximumHeight 上限，
         # 否则新出现的条目会被压扁成一团。
         card = getattr(self, "_settingsCard", None)
         if card is not None:
@@ -786,7 +888,7 @@ class CompressInterface(InterfaceBase):
         elif self._program == "jpegoptim":
             installed = compressor.find_tool("jpegoptim") is not None
         elif self._program == "gifsicle":
-            installed = compressor.find_tool("gifsicle") is not None   # v0.7.28
+            installed = compressor.find_tool("gifsicle") is not None
         self.toolsBtn.setVisible(not installed)
         self.toolsStatus.setVisible(installed)
         if installed:
@@ -820,14 +922,14 @@ class CompressInterface(InterfaceBase):
     def _on_output_mode(self, checked):
         self._output_mode = "same" if checked else "fixed"
         cfg.compressMode.value = self._output_mode
-        qconfig.save()
         self._apply_output_mode()
 
     def _apply_output_mode(self):
         same = self._output_mode == "same"
         self.outputSwitch.setChecked(same)
         self.outputSwitch.setText(
-            tr("compress.output.same") if same else tr("compress.output.fixed"))
+            tr("compress.output.same") if same else tr("compress.output.fixed")
+        )
         self.suffixRow.setVisible(same)
         self.folderRow.setVisible(not same)
 
@@ -842,12 +944,10 @@ class CompressInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            d = self._ask_directory(tr("compress.output.browse"),
-                                    self._folder or "")
+            d = self._ask_directory(tr("compress.output.browse"), self._folder or "")
             if d:
                 self._folder = d
                 cfg.compressFolder.value = d
-                qconfig.save()
                 self.folderEdit.setText(d)
         finally:
             self._picking = False
@@ -856,7 +956,7 @@ class CompressInterface(InterfaceBase):
         self.toolsBtn.setEnabled(False)
         self.toolsStatus.setVisible(True)
         self.toolsStatus.setText(tr("compress.tools.downloading"))
-        worker = ToolsDownloadWorker(self._program, str(compressor.tools_dir()))
+        worker = ToolsDownloadWorker(self._program, str(tools_dir()))
         worker.signals.finished.connect(self._on_tools_downloaded)
         QThreadPool.globalInstance().start(worker)
 
@@ -883,8 +983,7 @@ class CompressInterface(InterfaceBase):
             return
         self._picking = True
         try:
-            files = self._ask_open_files(
-                tr("compress.add.files"), IMAGE_EXTS, "Images")
+            files = self._ask_open_files(tr("compress.add.files"), IMAGE_EXTS, "Images")
             if files:
                 self._on_files(files)
         finally:
@@ -907,119 +1006,157 @@ class CompressInterface(InterfaceBase):
         self.listWidget.set_target(v)
 
     def _add_item(self, src):
-        if src in self._items:
-            return
-        self._items[src] = {"src": src, "status": "pending", "saved": 0}
-        self.listWidget.add_item(src, src, self._program, self._target)
-        self.taskAdded.emit(src, Path(src).name)
+        """入队一个源文件。重复路径由池自己挡掉，这里不用再判一次。"""
+        self._pool.add(src, Path(src).name)
+
+    # =========================================================================
+    # 快速调用（右键菜单）对接的公开 API ——  ODD-07
+    # =========================================================================
+
+    def export_settings(self) -> dict:
+        """导出当前压缩设置，供另一个 CompressInterface 实例套用。
+
+        ODD-07 背景：``quick_runner`` 之前是跨模块直接写别人的私有属性
+        （``ci._program = ...`` 一路写到 ``ci._folder``），再调私有方法
+        ``ci._add_item()`` / ``ci._on_start()``。私有字段一改名，右键菜单链路
+        就静默失效，而这条链路没有测试覆盖。用 export/apply 把契约显式化。
+
+        ``_tool_opts`` 做深拷贝：它是 {程序: {参数...}} 的嵌套字典，浅拷贝会让
+        弹窗实例和主窗口实例共享同一份子字典，关掉弹窗后再改主窗口参数会串台。
+        """
+        return {
+            "program": self._program,
+            "tool_opts": copy.deepcopy(self._tool_opts),
+            "target": self._target,
+            "output_mode": self._output_mode,
+            "suffix": self._suffix,
+            "folder": self._folder,
+        }
+
+    def apply_settings(self, settings: dict) -> None:
+        """套用 :meth:`export_settings` 导出的设置（缺项保持现状）。"""
+        self._program = settings.get("program", self._program)
+        tool_opts = settings.get("tool_opts")
+        if tool_opts is not None:
+            self._tool_opts = copy.deepcopy(tool_opts)
+        self._target = settings.get("target", self._target)
+        self._output_mode = settings.get("output_mode", self._output_mode)
+        self._suffix = settings.get("suffix", self._suffix)
+        self._folder = settings.get("folder", self._folder)
+
+    def enqueue_and_start(self, paths: list[str]) -> None:
+        """把 ``paths`` 加进压缩队列并立即开始（右键菜单入口用）。"""
+        for path in paths:
+            self._add_item(path)
+        self._on_start()
 
     # =========================================================================
     # 输出路径计算
     # =========================================================================
 
     def _out_path(self, src: str) -> str:
-        p = Path(src)
-        ext = p.suffix if self._target == "same" else "." + self._target
-        if self._output_mode == "same":
-            out_dir = p.parent
-            stem = p.stem + (self._suffix or "")
-        else:
-            out_dir = Path(self._folder) if self._folder else p.parent
-            stem = p.stem
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out = out_dir / (stem + ext)
-        i = 1
-        while out.exists():
-            out = out_dir / f"{stem}_{i}{ext}"
-            i += 1
-        return str(out)
+        """压缩产物的落盘路径。目标格式为「与源相同」时沿用源扩展名。"""
+        ext = Path(src).suffix if self._target == "same" else "." + self._target
+        return unique_output_path(
+            src, ext=ext, output_mode=self._output_mode, suffix=self._suffix, folder=self._folder
+        )
 
     def _max_threads(self) -> int:
         return max(1, min(int(cfg.maxThreads.value), 8))
 
     # =========================================================================
-    # 任务运行管理（自管线程池循环）
+    # 队列对接（调度本身在 core.task_pool.TaskPool 里）
     # =========================================================================
 
+    def _prepare_item(self, item: PoolItem) -> bool:
+        """任务出队前的准备：算好输出路径，并把当前参数冻结进 ``payload``。
+
+        由 TaskPool 在 GUI 线程串行调用。**必须串行**：``_out_path`` 是靠
+        「这个文件名存不存在」来给重名文件挑 ``_1`` / ``_2`` 后缀的，两条任务
+        并发问同一个问题会同时得到「不存在」，然后一起往同一个路径写。
+
+        Returns:
+            ``False`` 表示放弃该任务（池会把它标成失败），只有建不出输出目录
+            这种情况会走到这里。旧代码里 ``_out_path`` 抛异常会直接打断整个
+            派发循环，剩下的任务全部卡在「等待中」不动。
+        """
+        try:
+            out = self._out_path(item.iid)
+        except OSError:
+            log.exception("[compress] 输出路径准备失败：%s", item.iid)
+            return False
+        item.payload = {
+            "src": item.iid,
+            "out": out,
+            "target": self._target,
+            "mode": self._current_mode(),
+            "quality": self._current_quality(),
+            "program": self._program,
+            # 深拷贝：_current_opts() 对具体后端返回的是 self._tool_opts 里的
+            # **活字典**，直接交给工作线程等于让 UI 和 worker 共享可变状态。
+            "opts": copy.deepcopy(self._current_opts()),
+        }
+        return True
+
+    def _on_pool_added(self, iid: str, name: str) -> None:
+        self.listWidget.add_item(iid, iid, self._program, self._target)
+        self.taskAdded.emit(iid, name)
+
+    def _on_pool_started(self, iid: str) -> None:
+        self.listWidget.set_status(iid, "running")
+        widget = self.listWidget.items.get(iid)
+        if widget is not None:
+            self._queue_auto_follow.ensure(widget)
+
+    def _on_pool_progress(self, iid: str, pct: int) -> None:
+        self.listWidget.set_progress(iid, pct)
+        self.taskProgress.emit(iid, pct)
+
+    def _on_pool_finished(self, iid: str, state: str, message: str) -> None:
+        """把池里的结束状态渲染到列表行。
+
+        ``canceled`` 归到 ``failed`` 展示：``taskFinished`` 的对外契约是
+        「done / failed 二选一」，快速调用进度窗靠它计数，多一种取值会漏计。
+        """
+        item = self._pool.item(iid)
+        saved = int(item.result.get("saved", 0)) if item else 0
+        backend = str(item.result.get("backend", "")) if item else ""
+        status = "done" if state == TaskState.DONE.value else "failed"
+        self.listWidget.set_status(iid, status, saved, message, backend)
+        self.taskFinished.emit(iid, status)
+
+    def _on_pool_all_finished(self) -> None:
+        self._queue_auto_follow.set_active(False)
+
     def _on_start(self):
-        if not self._items:
+        # 与  一致：再点一次「开始」= 重跑所有待处理 / 失败的条目。
+        if not any(it.is_restartable for it in self._pool.items()):
             return
-        self._pending = [k for k, v in self._items.items()
-                         if v["status"] in ("pending", "failed")]
-        if not self._pending:
-            return
-        self._running = True
-        self._paused = False
         self._queue_auto_follow.set_active(True)
-        self._launch_next()
-
-    def _launch_next(self):
-        while (self._running and not self._paused
-               and len(self._active) < self._max_threads() and self._pending):
-            src = self._pending.pop(0)
-            self._active.add(src)
-            out = self._out_path(src)
-            self._items[src]["status"] = "running"
-            self.listWidget.set_status(src, "running")
-            self._queue_auto_follow.ensure(self.listWidget.items[src])
-            worker = CompressWorker(
-                src, src, out, self._target, self._current_mode(),
-                self._current_quality(), self._program, opts=self._current_opts(),
-                owner=self)   # v0.7.24：signals parent=界面
-            worker.signals.progress.connect(self.listWidget.set_progress)
-            worker.signals.progress.connect(
-                lambda iid, p: self.taskProgress.emit(iid, p))
-            worker.signals.finished.connect(self._on_finished)
-            self._workers[src] = worker  # v0.7.14：持有引用防 GC
-            QThreadPool.globalInstance().start(worker)
-
-    def _on_finished(self, item_id, ok, saved, detail, backend):
-        self._workers.pop(item_id, None)  # v0.7.14：释放 worker 引用
-        self._active.discard(item_id)
-        status = "done" if ok else "failed"
-        self._items[item_id]["status"] = status
-        self._items[item_id]["saved"] = saved
-        self.listWidget.set_status(item_id, status, saved, detail, backend)
-        self.taskFinished.emit(item_id, status)
-        if self._running and not self._paused:
-            self._launch_next()
-        if not self._pending and not self._active:
-            self._running = False
-            self._queue_auto_follow.set_active(False)
-        self._update_controls()
+        self._pool.start()
 
     def _on_pause(self):
-        if self._running and not self._paused:
-            self._paused = True
-        else:
-            self._paused = False
-            if self._running:
-                self._launch_next()
-        self._update_controls()
+        self._pool.toggle_pause()
 
     def _on_clear(self):
-        self._items.clear()
-        self._pending.clear()
-        self._active.clear()
-        self._running = False
-        self._paused = False
+        self._pool.clear()
         self.listWidget.clear()
         self._update_controls()
 
     def _on_remove(self, item_id):
-        self._items.pop(item_id, None)
-        if item_id in self._pending:
-            self._pending.remove(item_id)
-        self._active.discard(item_id)
+        self._pool.remove(item_id)
         self.listWidget.remove_item(item_id)
 
     def _update_controls(self):
-        self.startBtn.setEnabled(
-            bool(self._items) and not (self._running and not self._paused))
-        self.pauseBtn.setEnabled(self._running)
-        self.clearBtn.setEnabled(bool(self._items))
-        self.pauseBtn.setText(tr("compress.resume")
-            if (self._running and self._paused) else tr("compress.pause"))
+        has_items = len(self._pool) > 0
+        self.startBtn.setEnabled(has_items and not self._pool.is_busy)
+        self.pauseBtn.setEnabled(self._pool.is_running)
+        self.clearBtn.setEnabled(has_items)
+        self.pauseBtn.setText(
+            tr("compress.resume")
+            if (self._pool.is_running and self._pool.is_paused)
+            else tr("compress.pause")
+        )
 
     # =========================================================================
     # 主题 / i18n
@@ -1036,27 +1173,46 @@ class CompressInterface(InterfaceBase):
         self.tSettings.setText(tr("compress.settings.title"))
         self.tQueue.setText(tr("compress.queue.title"))
         self.dropArea.retranslate(
-            tr("compress.drop.title"), tr("compress.drop.hint"),
-            tr("compress.drop.formats"))
+            tr("compress.drop.title"), tr("compress.drop.hint"), tr("compress.drop.formats")
+        )
         self.addFolderBtn.setText(tr("compress.add.folder"))
         self.toolsBtn.setText(tr("compress.tools.download"))
-        self._repopulate_combo(self.programCombo, [
-            (tr("advanced.compression.auto"), "auto"),
-            (tr("advanced.compression.oxipng"), "oxipng"),
-            (tr("advanced.compression.jpegoptim"), "jpegoptim"),
-            (tr("advanced.compression.gifsicle"), "gifsicle"),   # v0.7.30：retranslate 漏了
-            (tr("advanced.compression.pillow"), "pillow"),
-        ])
-        self._repopulate_combo(self.targetCombo, [
-            (tr("compress.target.same"), "same"),
-            ("PNG", "png"), ("JPG", "jpg"),
-            ("WebP", "webp"), ("BMP", "bmp"), ("TIFF", "tiff"),
-        ])
-        # v0.7.3 Bug3：后端分区小标题同步语言
-        for key, grp_w in (("oxipng", self.oxipngGroup),
-                           ("jpegoptim", self.joGroup),
-                           ("pillow", self.pilGroup)):
+        self._repopulate_combo(
+            self.programCombo,
+            [
+                (tr("advanced.compression.auto"), "auto"),
+                (tr("advanced.compression.oxipng"), "oxipng"),
+                (tr("advanced.compression.jpegoptim"), "jpegoptim"),
+                (tr("advanced.compression.gifsicle"), "gifsicle"),  # retranslate 漏了
+                (tr("advanced.compression.pillow"), "pillow"),
+            ],
+        )
+        self._repopulate_combo(
+            self.targetCombo,
+            [
+                (tr("compress.target.same"), "same"),
+                ("PNG", "png"),
+                ("JPG", "jpg"),
+                ("WebP", "webp"),
+                ("BMP", "bmp"),
+                ("TIFF", "tiff"),
+            ],
+        )
+        # Bug3：后端分区小标题同步语言
+        for key, grp_w in (
+            ("oxipng", self.oxipngGroup),
+            ("jpegoptim", self.joGroup),
+            ("pillow", self.pilGroup),
+        ):
             grp_w._header.setText(tr(f"advanced.compression.{key}"))
+        # v0.8.1 Bug4-②：field_row 行标签同步语言（此前标签是拿不到引用的局部变量）
+        self.backendRow.fieldLabel.setText(tr("advanced.compression.backend"))
+        self.targetRow.fieldLabel.setText(tr("compress.target"))
+        self.outputModeRow.fieldLabel.setText(tr("compress.output.mode"))
+        self.suffixRow.fieldLabel.setText(tr("compress.output.suffix"))
+        self.folderRow.fieldLabel.setText(tr("compress.output.folder"))
+        for row, key in self._param_rows:
+            row.fieldLabel.setText(tr(key))
         self._apply_output_mode()
         self._restyle_switches()
         self.listWidget.retranslate()

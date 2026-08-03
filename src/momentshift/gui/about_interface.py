@@ -1,31 +1,48 @@
-"""关于界面 — 应用信息 + 运行环境状态（v0.3.4 美化）。
+"""关于界面 —— 应用信息 + 运行环境状态。
+
+职责边界：
+- 做：展示版本与作者信息、汇总 ffmpeg 与各引擎的就绪状态、提供下载入口。
+- 不做：不实现下载逻辑（交给 core/ffmpeg_download 与 gui/engine_card）。
+
+依赖：core/ffmpeg、core/ffmpeg_download、core/logger、core/qt_compat、gui/base、gui/engine_card、gui/theme、i18n/translator、metadata；被依赖：主窗口按导航页装载。
 
 运行环境卡片使用优雅的状态指示器布局。
 """
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QColor
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QFrame, QHBoxLayout, QLabel, QProgressBar, QWidget, QSizePolicy,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtGui import QFont
-
 from qfluentwidgets import (
-    FluentIcon as FIF, TitleLabel, BodyLabel, StrongBodyLabel,
-    CaptionLabel, PushButton, PrimaryPushButton, HyperlinkButton,
+    BodyLabel,
+    CaptionLabel,
+    HyperlinkButton,
+    PrimaryPushButton,
+    PushButton,
+    StrongBodyLabel,
+    TitleLabel,
 )
-from ..core.qt_compat import QDesktopServices, QUrl
-from ..i18n.translator import tr
-from ..metadata import APP_NAME, VERSION, AUTHOR, REPO_URL, RELEASE_URL
-from .base import InterfaceBase
-from .theme import (
-    ThemedCard, accent_name, CARD_MARGIN, muted_text, ACCENT_HEX,
-    success_color, danger_color
+from qfluentwidgets import (
+    FluentIcon as FIF,
 )
+
 from ..core.ffmpeg import find_ffmpeg
-from ..core.qt_compat import Signal, QRunnable, QThreadPool
+from ..core.logger import get_logger
+from ..core.qt_compat import QDesktopServices, QThreadPool, QUrl
+from ..i18n.translator import tr
+from ..metadata import APP_NAME, AUTHOR, RELEASE_URL, REPO_URL, VERSION
+from . import tokens
+from .base import InterfaceBase
+from .theme import CARD_MARGIN, ThemedCard, accent_name, danger_color, muted_text, success_color
+
+log = get_logger("about")
 
 # 环境状态行 CSS（共用）
+
 
 class AboutInterface(InterfaceBase):
     def __init__(self, parent=None):
@@ -44,7 +61,8 @@ class AboutInterface(InterfaceBase):
         self.accentRule.setFixedHeight(3)
         self.accentRule.setFixedWidth(40)
         self.accentRule.setStyleSheet(
-            f"QFrame{{ background: {accent_name()}; border: none; border-radius: 2px; }}")
+            f"QFrame{{ background: {accent_name()}; border: none; border-radius: 2px; }}"
+        )
         cv.addWidget(self.accentRule)
         cv.addSpacing(6)
 
@@ -62,26 +80,27 @@ class AboutInterface(InterfaceBase):
         self.updateBtn = PushButton(tr("about.check_update"), icon=FIF.UPDATE)
         self.updateBtn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(RELEASE_URL)))
         row = QHBoxLayout()
-        row.addStretch(1); row.addWidget(self.repoBtn); row.addSpacing(10)
-        row.addWidget(self.updateBtn); row.addStretch(1)
+        row.addStretch(1)
+        row.addWidget(self.repoBtn)
+        row.addSpacing(10)
+        row.addWidget(self.updateBtn)
+        row.addStretch(1)
         cv.addLayout(row)
 
         cv.addSpacing(8)
+        # 三行脚注（技术栈 / 许可证 / 免责声明）外观完全一致，
+        # 合并成一次建样式 + 一轮装配，替代原来三处重复的 setStyleSheet
         self.techLabel = CaptionLabel(tr("about.tech"))
-        self.techLabel.setWordWrap(True)
-        self.techLabel.setStyleSheet(f"color: {muted_text()};")
-        cv.addWidget(self.techLabel)
         self.licenseLabel = CaptionLabel(tr("about.license"))
-        self.licenseLabel.setWordWrap(True)
-        self.licenseLabel.setStyleSheet(f"color: {muted_text()};")
-        cv.addWidget(self.licenseLabel)
         self.disclaimerLabel = CaptionLabel(tr("about.disclaimer"))
-        self.disclaimerLabel.setWordWrap(True)
-        self.disclaimerLabel.setStyleSheet(f"color: {muted_text()};")
-        cv.addWidget(self.disclaimerLabel)
+        footnote_qss = tokens.text_qss(muted_text())
+        for lbl in (self.techLabel, self.licenseLabel, self.disclaimerLabel):
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet(footnote_qss)
+            cv.addWidget(lbl)
         self.vbox.addWidget(card)
 
-        # ---- 运行环境卡片（v0.7.5：FFmpeg 独占一卡）----
+        # ---- 运行环境卡片（：FFmpeg 独占一卡）----
         env_card = ThemedCard()
         env_vb = QVBoxLayout(env_card)
         env_vb.setContentsMargins(CARD_MARGIN, 16, CARD_MARGIN, 16)
@@ -97,8 +116,9 @@ class AboutInterface(InterfaceBase):
 
         self.vbox.addWidget(env_card)
 
-        # ---- 超分辨率 / 插帧引擎卡片（v0.7.5 新增，与 FFmpeg 分开）----
+        # ---- 超分辨率 / 插帧引擎卡片（ 新增，与 FFmpeg 分开）----
         from .engine_card import EnginesCard
+
         self.enginesCard = EnginesCard(self, on_changed=self._notify_engines_changed)
         self.vbox.addWidget(self.enginesCard)
 
@@ -151,61 +171,82 @@ class AboutInterface(InterfaceBase):
         prog.setTextVisible(False)
         prog.setStyleSheet(
             "QProgressBar{border:none;background:transparent;border-radius:1px;}"
-            "QProgressBar::chunk{background:#238636;border-radius:1px;}")
+            f"QProgressBar::chunk{{background:{tokens.ACCENT};border-radius:1px;}}"
+        )
         prog.hide()
         sv.addWidget(prog)
 
         # 存储引用
-        sec._dot = dot; sec._status = status_lbl; sec._link = link_btn
-        sec._btn = action_btn; sec._prog = prog; sec._text = name_lbl
+        sec._dot = dot
+        sec._status = status_lbl
+        sec._link = link_btn
+        sec._btn = action_btn
+        sec._prog = prog
+        sec._text = name_lbl
         return sec
 
     def _update_section(self, sec, ok, name, ok_msg, fail_msg, btn_text, link_url=""):
+        """按检测结果刷新一条环境行的文案、配色与按钮可见性。
+
+        Notes:
+            两个分支原本各自给状态文字与状态点上色（共 4 处 setStyleSheet），
+            现在只在分支里定颜色，出了分支统一应用，收敛成 2 处。
+        """
         if ok:
             sec._status.setText(ok_msg)
-            sec._status.setStyleSheet(f"color:{success_color().name()};font-size:12px;")
-            sec._dot.setStyleSheet(
-                f"background:{success_color().name()};border-radius:4px;")
-            sec._link.hide(); sec._btn.hide()
+            color = success_color().name()
+            sec._link.hide()
+            sec._btn.hide()
         else:
             sec._status.setText(fail_msg)
-            sec._status.setStyleSheet(f"color:{danger_color().name()};font-size:12px;")
-            sec._dot.setStyleSheet(
-                f"background:{danger_color().name()};border-radius:4px;")
+            color = danger_color().name()
             sec._link.show()
-            sec._btn.setText(btn_text); sec._btn.show()
+            sec._btn.setText(btn_text)
+            sec._btn.show()
+        sec._status.setStyleSheet(f"color:{color};font-size:{tokens.FONT_SMALL}px;")
+        sec._dot.setStyleSheet(tokens.dot_qss(color, 4))
         sec._text.setText(name)
 
     def _refresh_env(self):
         # FFmpeg
         ff = find_ffmpeg()
         self._update_section(
-            self._ff_section, bool(ff), "FFmpeg",
+            self._ff_section,
+            bool(ff),
+            "FFmpeg",
             tr("ffmpeg.found", name="ffmpeg"),
-            tr("about.env.missing"), tr("ffmpeg.download"))
-        try: self._ff_section._btn.clicked.disconnect()
-        except: pass
+            tr("about.env.missing"),
+            tr("ffmpeg.download"),
+        )
+        try:
+            self._ff_section._btn.clicked.disconnect()
+        except (TypeError, RuntimeError):  # 静默原因：按钮尚未连接任何槽时 disconnect 会抛错
+            pass
         self._ff_section._btn.clicked.connect(self._download_ffmpeg)
 
-        # v0.7.5：Real-ESRGAN 已并入下方「超分辨率 / 插帧引擎」卡片
+        # Real-ESRGAN 已并入下方「超分辨率 / 插帧引擎」卡片
         if getattr(self, "enginesCard", None) is not None:
             self.enginesCard.rescan()
 
     def _download_ffmpeg(self):
         from ..core.ffmpeg_download import FfmpegDownloadWorker
-        self._ff_section._btn.setEnabled(False); self._ff_section._prog.show()
+
+        self._ff_section._btn.setEnabled(False)
+        self._ff_section._prog.show()
         w = FfmpegDownloadWorker()
         w.signals.finished.connect(self._on_ff_done)
         QThreadPool.globalInstance().start(w)
 
     def _on_ff_done(self, ok, msg):
-        self._ff_section._btn.setEnabled(True); self._ff_section._prog.hide()
+        self._ff_section._btn.setEnabled(True)
+        self._ff_section._prog.hide()
         self._refresh_env()
 
     def retheme(self):
         super().retheme()
         self.accentRule.setStyleSheet(
-            f"QFrame{{ background: {accent_name()}; border: none; border-radius: 2px; }}")
+            f"QFrame{{ background: {accent_name()}; border: none; border-radius: 2px; }}"
+        )
 
     def retranslateUi(self):
         self.retranslate(tr("about.title"))

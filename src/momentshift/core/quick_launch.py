@@ -1,4 +1,10 @@
-"""快速调用模块 —— Windows 右键菜单集成（v0.2.9）。
+"""快速调用模块 —— Windows 右键菜单集成。
+
+职责边界：
+- 做：读写 HKCU 下的注册表项以增删右键菜单、查询当前注册状态。
+- 不做：不处理 --quick 命令行分支（交给 quick_runner）；不写 HKLM，避免要管理员权限。
+
+依赖：core/logger、core/platform；被依赖：gui/quick_launch_interface、gui/setting_interface。
 
 通过写入 HKCU\\Software\\Classes 下的注册表项，实现：
 - 选中文件 → 右键 → 瞬变工坊 → 转换/压缩/放大
@@ -15,11 +21,11 @@
 
 from __future__ import annotations
 
-import sys
 import subprocess
-from pathlib import Path
+import sys
 
-from ..core.logger import get_logger
+from .logger import get_logger
+from .platform import run_silent
 
 log = get_logger("quick_launch")
 
@@ -86,18 +92,20 @@ def register_context_menu(task: str) -> bool:
     try:
         # 1. 创建菜单项（显示名）
         key = f"{_REG_ROOT}\\*\\shell\\{info['name']}"
-        result = subprocess.run(
+        run_silent(
             ["reg", "add", key, "/ve", "/d", info["label"], "/f"],
-            capture_output=True, text=True, check=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            capture_output=True,
+            text=True,
+            check=True,
         )
         # 2. 创建命令子键
         cmd_key = f"{key}\\command"
         cmd = _command_for(task)
-        result = subprocess.run(
+        run_silent(
             ["reg", "add", cmd_key, "/ve", "/d", cmd, "/f"],
-            capture_output=True, text=True, check=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            capture_output=True,
+            text=True,
+            check=True,
         )
         log.info("quick_launch: registered %s → %s", task, info["name"])
         return True
@@ -121,10 +129,11 @@ def unregister_context_menu(task: str) -> bool:
     info = _TASKS[task]
     try:
         key = f"{_REG_ROOT}\\*\\shell\\{info['name']}"
-        result = subprocess.run(
+        run_silent(
             ["reg", "delete", key, "/f"],
-            capture_output=True, text=True, check=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            capture_output=True,
+            text=True,
+            check=True,
         )
         log.info("quick_launch: unregistered %s", task)
         return True
@@ -146,10 +155,7 @@ def is_context_menu_registered(task: str) -> bool:
         return False
     info = _TASKS[task]
     key = f"{_REG_ROOT}\\*\\shell\\{info['name']}"
-    result = subprocess.run(
-        ["reg", "query", key], capture_output=True, text=True,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    result = run_silent(["reg", "query", key], capture_output=True, text=True)
     return result.returncode == 0
 
 
@@ -163,16 +169,19 @@ def apply_all(enabled: bool, tasks_on: dict[str, bool]) -> dict[str, bool]:
     Returns:
         实际变更后的注册状态，如 {"convert": True, "compress": False}
     """
-    result = {}
+    result: dict[str, bool] = {}
     for task in _TASKS:
         should_be_on = enabled and tasks_on.get(task, False)
         if should_be_on:
-            success = register_context_menu(task)
+            # 注册失败（例如注册表被安全软件锁住）时如实返回 False。
+            # 之前无论成败都回填"期望状态"，界面因此会显示"已开启"
+            # 但右键菜单里其实什么都没有。
+            result[task] = register_context_menu(task)
         else:
-            success = not unregister_context_menu(task)  # True means removed
+            # 注销失败通常只意味着键本来就不存在，两种情况都算"已关闭"。
+            # 之前 unregister_context_menu 在这里被连续调用了两次。
             unregister_context_menu(task)
-            success = True  # unregistered is always "success" in terms of intended state
-        result[task] = should_be_on  # desired state, whether or not reg worked
+            result[task] = False
     return result
 
 

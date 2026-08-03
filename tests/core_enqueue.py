@@ -3,6 +3,7 @@
 Confirms ConversionManager.add_files accepts a real file, builds a Task, and
 emits the expected signals, independent of offscreen widget rendering.
 """
+
 import os
 import sys
 import tempfile
@@ -11,8 +12,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QCoreApplication
 
-from momentshift.core.queue import ConversionManager
 from momentshift.core.config import cfg
+from momentshift.core.queue import ConversionManager
 
 
 def main():
@@ -50,8 +51,7 @@ def main():
     manager.clear()
     assert manager.tasks == []
 
-    print("CORE ENQUEUE OK — add_files builds Task, fires signals, "
-          "skips unsupported, clear works.")
+    print("CORE ENQUEUE OK — add_files builds Task, fires signals, skips unsupported, clear works.")
     os._exit(0)
 
 
@@ -60,5 +60,6 @@ if __name__ == "__main__":
         main()
     except Exception:
         import traceback
+
         traceback.print_exc()
         os._exit(1)

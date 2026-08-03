@@ -1,4 +1,10 @@
-"""下载「引擎 + 模型」到 ``tools/<eid>/``（v0.7.6 功能 2）。
+"""下载「引擎 + 模型」到 ``tools/<eid>/``。
+
+职责边界：
+- 做：按优先级尝试多个下载源、下载并解压引擎与模型到 tools/<eid>/。
+- 不做：不检测引擎是否可用（交给 core/engines）；不弹任何界面提示。
+
+依赖：core/qt_compat；被依赖：gui/engine_card。
 
 为每个引擎提供按优先级排序的下载源：
   HuggingFace 发布文件 → GitHub 最新 Release 资源 → 官方直链。
@@ -14,12 +20,12 @@ import shutil
 import urllib.request
 import zipfile
 
-from .qt_compat import QObject, Signal, QRunnable
+from .qt_compat import QObject, QRunnable, Signal
 
 
 class EngineDownloadSignals(QObject):
-    started = Signal(str)                 # 正在下载的引擎 eid
-    finished = Signal(str, bool, str)     # (eid, ok, message)
+    started = Signal(str)  # 正在下载的引擎 eid
+    finished = Signal(str, bool, str)  # (eid, ok, message)
 
 
 # --------------------------------------------------------------------------

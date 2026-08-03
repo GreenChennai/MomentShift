@@ -1,22 +1,20 @@
-"""Image / video upscaling engine for MomentShift.
+"""图片 / 视频放大引擎封装（MomentShift）。
 
-Wraps the open-source **realesrgan-ncnn-vulkan** binary (Vulkan-based, cross
-platform, GPU or CPU) — the same engine that powers Upscayl and is inspired by
-Real-ESRGAN / Waifu2x-Extension-GUI.
+职责边界：
+- 做：调用开源的 realesrgan-ncnn-vulkan 二进制（基于 Vulkan，跨平台，可用 GPU
+  或 CPU）做放大；GIF / 视频走「抽帧 → 整批放大 → 重新合成」管线。
+- 不做：不打包引擎二进制与模型（按需一键下载到 tools/realesrgan/）；不负责 UI。
 
-Design notes (per product spec):
-- The engine binary and its ncnn models are *not* bundled with the installer
-  (they would bloat it massively). They are kept in a unified ``tools/realesrgan/``
-  folder and fetched on demand via a one-click in-app download.
-- The Windows engine zip from the Real-ESRGAN release already bundles the four
-  standard ncnn models, so a single download gives the user both the engine and
-  the default models — exactly the "download models on demand" flow requested.
-- Still images are upscaled by the binary directly. GIF / video are processed
-  with a frame pipeline: ``ffmpeg`` extracts the frames, the binary upscales the
-  whole frame folder in one invocation, then ``ffmpeg`` recombines the upscaled
-  frames (preserving audio when present).
+依赖：core/platform、core/logger、core/engines；被依赖：gui/upscale_interface。
 
-Pure stdlib networking + Qt worker plumbing — no pip dependencies.
+设计说明：
+- 引擎二进制与 ncnn 模型不随安装包装（会严重膨胀），统一放在 tools/realesrgan/
+  目录，按需求一键下载。
+- Real-ESRGAN 的 Windows 包已自带四个标准 ncnn 模型，一次下载即得引擎与默认模型，
+  正好满足「模型按需下载」的诉求。
+- 静态图片由二进制直接放大；GIF / 视频走帧管线：ffmpeg 抽帧 → 二进制整批放大 →
+  ffmpeg 重新合成（保留音轨）。
+- 纯标准库网络请求 + Qt worker 封装，无额外 pip 依赖。
 """
 
 from __future__ import annotations
@@ -26,48 +24,44 @@ import json
 import os
 import shutil
 import subprocess
-# Suppress the per-task console window on Windows (no cmd popups for the upscaler engine).
-WIN_SILENT = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-import sys
 import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Optional, Tuple
 
-from .qt_compat import QObject, Signal, QRunnable
 from .config import tools_dir
 from .logger import get_logger
+from .platform import run_silent
+from .qt_compat import QObject, QRunnable, Signal
 
 log = get_logger("upscaler")
 
 
-# --------------------------------------------------------------------------
-# Locations
-# --------------------------------------------------------------------------
+# --- 路径定位 ---
 def realesrgan_dir() -> Path:
-    """Unified folder for the upscaling engine (``tools/realesrgan``)."""
+    """返回放大引擎的统一目录（``tools/realesrgan``），不存在时自动创建。"""
     directory = tools_dir() / "realesrgan"
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
 
 def engine_exe() -> Path:
-    """Absolute path of the realesrgan-ncnn-vulkan executable."""
+    """返回 realesrgan-ncnn-vulkan 可执行文件的绝对路径。"""
     return realesrgan_dir() / "realesrgan-ncnn-vulkan.exe"
 
 
 def models_dir() -> Path:
-    """Folder that holds the ncnn ``.bin``/``.param`` model files."""
+    """返回存放 ncnn ``.bin`` / ``.param`` 模型文件的目录，不存在时自动创建。"""
     directory = realesrgan_dir() / "models"
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
 
-def find_upscaler() -> Optional[str]:
-    """Locate the realesrgan-ncnn-vulkan binary.
+def find_upscaler() -> str | None:
+    """定位 realesrgan-ncnn-vulkan 二进制。
 
-    Prefers the managed ``tools/realesrgan`` folder, then the system ``PATH``.
+    优先用受管理的 ``tools/realesrgan`` 目录，其次退回系统 ``PATH``。
+    找不到返回 ``None``。
     """
     p = engine_exe()
     if p.is_file():
@@ -75,12 +69,9 @@ def find_upscaler() -> Optional[str]:
     return shutil.which("realesrgan-ncnn-vulkan") or shutil.which("realesrgan-ncnn-vulkan.exe")
 
 
-# --------------------------------------------------------------------------
-# Models
-# --------------------------------------------------------------------------
-# The four models bundled in the engine zip. ``scale`` is the model's native
-# output scale; the binary also accepts a final ``-s`` of 2/3/4 (it resizes
-# after inference) but we default to the native scale for best quality.
+# --- 模型 ---
+# 引擎 zip 内自带的四个模型。``scale`` 是模型的原生输出倍率；二进制也接受最终
+# ``-s`` 为 2/3/4（推理后再缩放），但默认用原生倍率以获得最佳画质。
 MODELS: dict[str, dict] = {
     "realesrgan-x4plus": {
         "label": "Real-ESRGAN x4+",
@@ -108,39 +99,33 @@ MODELS: dict[str, dict] = {
     },
 }
 
-# Image / animated inputs handled directly; everything else goes through the
-# ffmpeg frame pipeline.
+# 静态图 / 动图由二进制直接处理；其余格式一律走 ffmpeg 帧管线。
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 ANIM_EXTS = {".gif"}
 
 
 def model_present(name: str) -> bool:
-    """Whether a model's ``.bin``/``.param`` files are on disk."""
+    """判断某模型的 ``.bin`` / ``.param`` 两个文件是否都已落盘。"""
     return (models_dir() / f"{name}.bin").is_file() and (models_dir() / f"{name}.param").is_file()
 
 
 def available_models() -> list[str]:
-    """Model ids that are both defined and present on disk."""
+    """返回既在 :data:`MODELS` 中定义、又已下载到本地的模型 id 列表。"""
     return [mid for mid in MODELS if model_present(mid)]
 
 
-# --------------------------------------------------------------------------
-# Public API
-# --------------------------------------------------------------------------
-def _run(cmd: list[str], timeout: int = 3600) -> Tuple[bool, str]:
+# --- 公开 API ---
+def _run(cmd: list[str], timeout: int = 3600) -> tuple[bool, str]:
     log.info("upscaler cmd: %s", " ".join(cmd))
     try:
-        proc = subprocess.run(
+        proc = run_silent(
             cmd,
             capture_output=True,
             text=True,
             timeout=timeout,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=WIN_SILENT,
         )
     except subprocess.TimeoutExpired:
-        return False, "处理超时（超过 %d 秒）" % timeout
+        return False, f"处理超时（超过 {timeout} 秒）"
     except OSError as exc:
         return False, f"启动失败: {exc}"
     if proc.returncode != 0:
@@ -157,10 +142,18 @@ def upscale_image(
     scale: int = 4,
     tile: int = 0,
     gpu: str = "auto",
-) -> Tuple[bool, str]:
-    """Upscale a single image (or a directory of images in one call).
+) -> tuple[bool, str]:
+    """放大单张图片，或一次性放大整个图片目录。
 
-    Returns ``(ok, message)``.
+    Args:
+        input_path: 源图片路径，或存放待放大图片的目录。
+        output_path: 输出图片路径；当 ``input_path`` 是目录时同样传目录。
+        model: 模型 id，必须是 :data:`MODELS` 的键且已下载到本地。
+        scale: 放大倍率，取值 2/3/4。
+        tile: 分块大小，0 表示由引擎自动决定；显存不足时调小可避免 OOM。
+        gpu: ``auto`` 自动选卡，``cpu`` 强制 CPU，其余按字符串当作 GPU 序号。
+    Returns:
+        ``(是否成功, 失败原因或空串)``
     """
     exe = find_upscaler()
     if not exe:
@@ -170,11 +163,16 @@ def upscale_image(
 
     cmd = [
         exe,
-        "-i", input_path,
-        "-o", output_path,
-        "-n", model,
-        "-s", str(scale),
-        "-m", str(models_dir()),
+        "-i",
+        input_path,
+        "-o",
+        output_path,
+        "-n",
+        model,
+        "-s",
+        str(scale),
+        "-m",
+        str(models_dir()),
     ]
     if tile:
         cmd += ["-t", str(tile)]
@@ -191,17 +189,31 @@ def upscale_image(
 
 
 def _probe_fps(ffmpeg: str, input_path: str) -> float:
-    """Best-effort frame-rate probe via ffprobe (fallback 25)."""
+    """尽力用 ffprobe 探测源文件帧率，任何失败都回退 25.0。
+
+    Notes:
+        ffprobe 返回的是 ``30000/1001`` 这类分数形式，需要自行做除法换算。
+    """
     ffprobe = shutil.which("ffprobe") or str(Path(ffmpeg).parent / "ffprobe.exe")
     if not ffprobe or not Path(ffprobe).is_file():
         return 25.0
     try:
-        proc = subprocess.run(
-            [ffprobe, "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1",
-             input_path],
-            capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace",
-            creationflags=WIN_SILENT,
+        proc = run_silent(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=r_frame_rate",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                input_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         val = proc.stdout.strip()
         if "/" in val:
@@ -210,7 +222,7 @@ def _probe_fps(ffmpeg: str, input_path: str) -> float:
         if val:
             return float(val)
     except (OSError, ValueError, subprocess.SubprocessError):
-        pass
+        pass  # 静默原因：读取引擎参数失败回退默认 25.0
     return 25.0
 
 
@@ -221,11 +233,23 @@ def upscale_frames(
     scale: int = 4,
     tile: int = 0,
     gpu: str = "auto",
-) -> Tuple[bool, str]:
-    """Upscale an animated GIF or a video via an ffmpeg frame pipeline.
+) -> tuple[bool, str]:
+    """走 ffmpeg 帧管线放大动图 GIF 或视频。
 
-    Extract frames -> upscale the whole folder in one binary call -> recombine
-    the upscaled frames (with audio when present). Returns ``(ok, message)``.
+    流程：抽帧 → 用一次二进制调用整批放大 → 重新合成（有音轨则一并保留）。
+
+    Args:
+        input_path: 源 GIF / 视频路径。
+        output_path: 输出路径，扩展名决定合成方式（``.gif`` 走调色板管线）。
+        model: 模型 id，须已下载到本地。
+        scale: 放大倍率，取值 2/3/4。
+        tile: 分块大小，0 表示自动。
+        gpu: ``auto`` / ``cpu`` / GPU 序号。
+    Returns:
+        ``(是否成功, 失败原因或空串)``
+    Notes:
+        整批放大而不是逐帧调用，是因为每次启动引擎都要重新加载模型与初始化
+        Vulkan，逐帧调用的开销会淹没实际推理时间。
     """
     from .ffmpeg import find_ffmpeg
 
@@ -245,7 +269,7 @@ def upscale_frames(
     frames_in.mkdir(parents=True, exist_ok=True)
     frames_out.mkdir(parents=True, exist_ok=True)
     try:
-        # 1) extract frames
+        # 1) 抽帧
         ok, msg = _run(
             [ffmpeg, "-y", "-i", input_path, str(frames_in / "%06d.png")],
             timeout=600,
@@ -256,14 +280,13 @@ def upscale_frames(
         if not in_frames:
             return False, "未从源文件抽取到任何帧"
 
-        # 2) upscale the whole folder in one invocation
-        ok, msg = upscale_image(
-            str(frames_in), str(frames_out), model, scale, tile, gpu
-        )
+        # 2) 一次调用整批放大整个目录
+        ok, msg = upscale_image(str(frames_in), str(frames_out), model, scale, tile, gpu)
         if not ok:
             return False, f"放大失败: {msg}"
 
-        # 3) renormalise frame names so ffmpeg can recombine sequentially
+        # 3) 重排帧文件名：引擎输出的序号可能不连续，而 ffmpeg 的 %06d 输入
+        #    要求严格连续，否则会在第一个缺口处提前结束合成
         out_frames = sorted(frames_out.glob("*.png"))
         if not out_frames:
             return False, "放大后未生成帧文件"
@@ -274,18 +297,46 @@ def upscale_frames(
 
         fps = _probe_fps(ffmpeg, input_path) or 25.0
 
-        # 4) recombine
+        # 4) 重新合成
         if out_ext == "gif":
             ok, msg = _run(
-                [ffmpeg, "-y", "-framerate", f"{fps:g}", "-i", str(frames_out / "%06d.png"),
-                 "-vf", "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
-                 output_path],
+                [
+                    ffmpeg,
+                    "-y",
+                    "-framerate",
+                    f"{fps:g}",
+                    "-i",
+                    str(frames_out / "%06d.png"),
+                    "-vf",
+                    "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+                    output_path,
+                ],
                 timeout=600,
             )
         else:
-            cmd = [ffmpeg, "-y", "-framerate", f"{fps:g}", "-i", str(frames_out / "%06d.png"),
-                   "-i", input_path, "-map", "0:v:0", "-map", "1:a?", "-c:v", "libx264",
-                   "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", output_path]
+            cmd = [
+                ffmpeg,
+                "-y",
+                "-framerate",
+                f"{fps:g}",
+                "-i",
+                str(frames_out / "%06d.png"),
+                "-i",
+                input_path,
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a?",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "copy",
+                output_path,
+            ]
             ok, msg = _run(cmd, timeout=900)
         if not ok:
             return False, f"合成失败: {msg}"
@@ -301,8 +352,12 @@ def upscale_media(
     scale: int = 4,
     tile: int = 0,
     gpu: str = "auto",
-) -> Tuple[bool, str]:
-    """Upscale any supported input (image / GIF / video)."""
+) -> tuple[bool, str]:
+    """放大任意受支持的输入（静态图 / GIF / 视频），按扩展名自动选管线。
+
+    Returns:
+        ``(是否成功, 失败原因或空串)``；扩展名不受支持时返回 ``(False, 原因)``。
+    """
     ext = Path(input_path).suffix.lower()
     if ext in IMAGE_EXTS:
         return upscale_image(input_path, output_path, model, scale, tile, gpu)
@@ -311,9 +366,7 @@ def upscale_media(
     return False, f"不支持的输入格式: {ext}"
 
 
-# --------------------------------------------------------------------------
-# Engine download (binary + standard ncnn models in one zip)
-# --------------------------------------------------------------------------
+# --- 引擎下载（二进制 + 标准 ncnn 模型打包在同一个 zip 内）---
 ENGINE_REPO = "xinntao/Real-ESRGAN"
 ENGINE_ASSET = "realesrgan-ncnn-vulkan-20220424-windows.zip"
 ENGINE_FALLBACK = (
@@ -324,11 +377,28 @@ ENGINE_PAGE = "https://github.com/xinntao/Real-ESRGAN/releases"
 
 
 class DownloadSignals(QObject):
+    """引擎下载 worker 向 GUI 线程回传状态的信号载体。
+
+    线程约定：``run()`` 在 worker 线程执行，信号跨线程投递到 GUI 线程。
+    信号：
+    - ``started()`` —— 下载开始时发出。
+    - ``finished(bool, str)`` —— 下载结束时发出，参数为 ``(是否成功, 提示语)``。
+    """
+
     started = Signal()
-    finished = Signal(bool, str)  # (ok, message)
+    finished = Signal(bool, str)
 
 
-def _github_latest_asset_url(repo: str, asset_substr: str) -> Optional[str]:
+def _github_latest_asset_url(repo: str, asset_substr: str) -> str | None:
+    """查询 GitHub 最新 release 中名字含 ``asset_substr`` 的附件下载地址。
+
+    Args:
+        repo: ``owner/name`` 形式的仓库标识。
+        asset_substr: 附件名需要包含的子串（大小写不敏感）。
+    Returns:
+        命中的下载地址；网络失败、限流或无匹配时返回 ``None``，由调用方回退到
+        固定地址。
+    """
     api = f"https://api.github.com/repos/{repo}/releases/latest"
     try:
         req = urllib.request.Request(api, headers={"User-Agent": "MomentShift"})
@@ -338,17 +408,24 @@ def _github_latest_asset_url(repo: str, asset_substr: str) -> Optional[str]:
             name = (a.get("name") or "").lower()
             if asset_substr.lower() in name:
                 return a.get("browser_download_url")
-    except Exception as exc:  # network / rate-limit / parse
-        print(f"[upscaler] github resolve failed for {repo}: {exc}")
+    except (OSError, ValueError, KeyError) as exc:
+        # 网络不通 / GitHub 限流 / 返回体不是预期 JSON，都只降级到固定回退地址，
+        # 不该让「解析最新版本」的失败阻断整个下载流程
+        log.warning("解析 %s 的最新 release 失败，回退固定地址：%s", repo, exc)
     return None
 
 
-def download_upscaler(dest_dir: str) -> Tuple[bool, str]:
-    """Download the realesrgan-ncnn-vulkan engine + bundled models into ``dest_dir``.
+def download_upscaler(dest_dir: str) -> tuple[bool, str]:
+    """下载 realesrgan-ncnn-vulkan 引擎与自带模型到 ``dest_dir``。
 
-    The zip is extracted in place, so ``dest_dir/realesrgan-ncnn-vulkan.exe`` and
-    ``dest_dir/models/*.bin`` end up where :func:`find_upscaler` / :func:`model_present`
-    expect them. Returns ``(ok, message)``.
+    Args:
+        dest_dir: 解压目标目录，不存在时自动创建。
+    Returns:
+        ``(是否成功, 提示语或失败原因)``
+    Notes:
+        zip 就地解压，使 ``dest_dir/realesrgan-ncnn-vulkan.exe`` 与
+        ``dest_dir/models/*.bin`` 正好落在 :func:`find_upscaler` 与
+        :func:`model_present` 期望的位置，无需再搬运文件。
     """
     os.makedirs(dest_dir, exist_ok=True)
     url = _github_latest_asset_url(ENGINE_REPO, ENGINE_ASSET) or ENGINE_FALLBACK
@@ -358,14 +435,26 @@ def download_upscaler(dest_dir: str) -> Tuple[bool, str]:
             data = resp.read()
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             zf.extractall(dest_dir)
-        print(f"[upscaler] extracted engine into {dest_dir}")
+        log.info("引擎已解压到 %s", dest_dir)
         return True, "引擎与模型已下载"
-    except Exception as exc:
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        # 下载中断、磁盘写失败、zip 损坏都归一为「失败 + 原因」交给界面提示
+        log.warning("下载放大引擎失败：%s", exc)
         return False, str(exc)
 
 
 class UpscalerDownloadWorker(QRunnable):
-    """Runs :func:`download_upscaler` off the UI thread."""
+    """在 UI 线程之外执行 :func:`download_upscaler` 的下载 worker。
+
+    典型用法::
+
+        worker = UpscalerDownloadWorker(str(realesrgan_dir()))
+        worker.signals.finished.connect(on_done)
+        QThreadPool.globalInstance().start(worker)
+
+    线程约定：``run()`` 在线程池的 worker 线程执行，结果只经 :attr:`signals`
+    回传，禁止在其中直接碰 Qt 控件。
+    """
 
     def __init__(self, dest_dir: str):
         super().__init__()

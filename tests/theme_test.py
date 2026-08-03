@@ -14,21 +14,27 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from unittest.mock import patch
+
 from PyQt6.QtWidgets import QApplication
-from qfluentwidgets import InfoBar, setTheme, Theme, isDarkTheme
+from qfluentwidgets import InfoBar, Theme, isDarkTheme, setTheme
 
 # Neutralise toasts (their paint kills the offscreen sandbox).
 InfoBar.success = staticmethod(lambda *a, **k: None)
 InfoBar.warning = staticmethod(lambda *a, **k: None)
 InfoBar.error = staticmethod(lambda *a, **k: None)
 
-from momentshift.gui.theme import (
-    sub_text, hint_text, muted_text, LIGHT_BG, DARK_BG, map_theme,
-)
-from momentshift.core.queue import ConversionManager
 from momentshift.core.config import cfg
-from momentshift.gui.convert_interface import ConvertInterface
+from momentshift.core.queue import ConversionManager
 from momentshift.gui.base import InterfaceBase
+from momentshift.gui.convert_interface import ConvertInterface
+from momentshift.gui.theme import (
+    DARK_BG,
+    LIGHT_BG,
+    hint_text,
+    map_theme,
+    muted_text,
+    sub_text,
+)
 
 
 def check(cond, msg):
@@ -76,6 +82,7 @@ check(map_theme("bogus") == Theme.AUTO, "map_theme fallback")
 
 # --- retheme() runs through real panels in both themes ----------------
 import tempfile
+
 d = tempfile.mkdtemp()
 cfg.outputMode.value = "same"
 f1 = os.path.join(d, "a.png")
