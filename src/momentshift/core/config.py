@@ -136,7 +136,7 @@ class Config(QConfig):
     # - asrStructured：结构化输出开关（VAD 时间戳 + 说话人标签，默认关）。
     # - asrDevice：推理设备策略；"auto" = 按硬件检测（N 卡+CUDA→cuda，否则 cpu）。
     asrModelId = ConfigItem("Asr", "ModelId", "")
-    asrSegmentSec = RangeConfigItem("Asr", "SegmentSec", 60, RangeValidator(15, 300))
+    asrSegmentSec = RangeConfigItem("Asr", "SegmentSec", 180, RangeValidator(15, 300))
     asrStructured = ConfigItem("Asr", "Structured", False)
     asrDevice = OptionsConfigItem(
         "Asr", "Device", "auto", OptionsValidator(["auto", "cpu", "cuda"])

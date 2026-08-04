@@ -651,5 +651,20 @@
   "asr.model.campplus.desc": "3D-Speaker 说话人嵌入模型（192 维，ONNX 28MB），结构化输出用它给每段标注说话人。",
   "asr.model.hw_reason.nvidia_cuda": "需 NVIDIA CUDA GPU",
   "asr.model.hw_reason.min_ram_gb": "需 ≥{gb}GB 内存",
-  "asr.model.hw_reason.unknown": "本机硬件不满足"
+  "asr.model.hw_reason.unknown": "本机硬件不满足",
+  "asr.queue.title": "转写队列",
+  "asr.queue.start": "开始转写",
+  "asr.queue.stop": "停止",
+  "asr.queue.remove": "移除",
+  "asr.queue.clear": "清空",
+  "asr.queue.status.waiting": "等待中",
+  "asr.queue.status.processing": "转写中",
+  "asr.queue.status.done": "完成",
+  "asr.queue.status.failed": "失败",
+  "asr.settings.output": "输出位置",
+  "asr.model.download_engine": "一键下载引擎与模型",
+  "asr.model.goto": "前往下载",
+  "asr.cmd.saved": "已保存：{path}",
+  "asr.error.save_failed": "保存失败：{msg}",
+  "asr.file.count": "已添加 {n} 个文件"
 }

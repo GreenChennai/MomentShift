@@ -73,12 +73,16 @@ def _download_file(
                 done += len(chunk)
                 if progress_cb is not None:
                     progress_cb(done, total)
-        if expected_size and done != expected_size:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            raise RuntimeError(f"文件大小不符（期望 {expected_size}，实际 {done} 字节）")
+        if expected_size and abs(done - expected_size) > max(256, expected_size * 0.01):
+            # v0.8.6：HF resolve/main 是软链，文件可能更新，清单里的 size 只是参考。
+            # 硬校验会误杀（实测 paraformer config.yaml 差 133、fsmn-vad model_quant 差 2132）。
+            # 改为宽容忍差（±1% 或 256 字节），且不删除已下载文件，只记 warning。
+            log.warning(
+                "文件 %s 大小与清单不符（期望 %s，实际 %s），按实际为准继续",
+                dest_path,
+                expected_size,
+                done,
+            )
         os.replace(tmp, dest_path)
 
 
@@ -129,7 +133,15 @@ def download_model(
             except _DownloadCancelled:
                 return False, "下载已取消"
             except Exception as exc:  # noqa: BLE001 - 单个源失败回退下一个
-                last_err = str(exc)
+                err_text = str(exc)
+                # v0.8.6：urlopen 对异常 URL/代理环境会报 "unknown url type"，给用户
+                # 可行动的提示（代理配置异常或 HuggingFace 不可达），而非裸报错。
+                if "unknown url type" in err_text:
+                    err_text = (
+                        "网络代理配置异常或无法访问 HuggingFace，请检查系统代理/网络设置，"
+                        "或点击「前往下载」在浏览器中手动下载"
+                    )
+                last_err = err_text
                 log.warning("下载 %s 失败（%s）：%s", f["name"], url, exc)
         if last_err:
             return False, f"{f['name']} 下载失败：{last_err}"

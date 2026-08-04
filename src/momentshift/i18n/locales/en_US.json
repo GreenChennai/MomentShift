@@ -651,5 +651,20 @@
   "asr.model.campplus.desc": "3D-Speaker speaker embedding (192-dim, ONNX 28MB); labels each segment with a speaker in structured output.",
   "asr.model.hw_reason.nvidia_cuda": "Requires NVIDIA CUDA GPU",
   "asr.model.hw_reason.min_ram_gb": "Requires ≥{gb}GB RAM",
-  "asr.model.hw_reason.unknown": "Hardware requirement not met"
+  "asr.model.hw_reason.unknown": "Hardware requirement not met",
+  "asr.queue.title": "Transcribe Queue",
+  "asr.queue.start": "Start Transcribing",
+  "asr.queue.stop": "Stop",
+  "asr.queue.remove": "Remove",
+  "asr.queue.clear": "Clear",
+  "asr.queue.status.waiting": "Waiting",
+  "asr.queue.status.processing": "Transcribing",
+  "asr.queue.status.done": "Done",
+  "asr.queue.status.failed": "Failed",
+  "asr.settings.output": "Output Location",
+  "asr.model.download_engine": "One-click Download Engine & Model",
+  "asr.model.goto": "Go to Download",
+  "asr.cmd.saved": "Saved: {path}",
+  "asr.error.save_failed": "Save failed: {msg}",
+  "asr.file.count": "{n} file(s) added"
 }

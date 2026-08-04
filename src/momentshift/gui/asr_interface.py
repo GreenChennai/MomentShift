@@ -26,21 +26,23 @@ from pathlib import Path
 
 from PyQt6.QtGui import QTextCursor, QTextOption
 from PyQt6.QtWidgets import (
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QProgressBar,
     QSizePolicy,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import (
     CaptionLabel,
     ComboBox,
+    EditableComboBox,
+    HyperlinkButton,
     PasswordLineEdit,
     PrimaryPushButton,
     PushButton,
@@ -138,13 +140,18 @@ class _FunasrModelRow(QWidget):
         apply_text(self.descLbl, muted_text(), transparent=True)
         vb.addWidget(self.descLbl)
 
-        # 第三行：按钮（下载 / 打开文件夹）
+        # 第三行：按钮（一键下载引擎与模型 / 前往下载 / 打开文件夹）
         btns = QHBoxLayout()
         btns.setSpacing(8)
-        self.dlBtn = PrimaryPushButton(tr("asr.model.download"), icon=FIF.DOWNLOAD)
+        self.dlBtn = PrimaryPushButton(tr("asr.model.download_engine"), icon=FIF.DOWNLOAD)
         self.dlBtn.setFixedHeight(28)
         self.dlBtn.clicked.connect(self._on_download)
         btns.addWidget(self.dlBtn)
+        # 「前往下载」：打开模型在 HF 的页面（由直链推导，去掉 /resolve/main/<file>）
+        hf_page = self._hf_page_url()
+        self.gotoBtn = HyperlinkButton(hf_page, tr("asr.model.goto"))
+        self.gotoBtn.setFixedHeight(28)
+        btns.addWidget(self.gotoBtn)
         self.folderBtn = PushButton(tr("asr.model.open_folder"), icon=FIF.FOLDER)
         self.folderBtn.setFixedHeight(28)
         self.folderBtn.clicked.connect(
@@ -166,6 +173,15 @@ class _FunasrModelRow(QWidget):
         self.refresh()
 
     # -- 下载 --
+    def _hf_page_url(self) -> str:
+        """从模型直链推导 HF 页面地址（去掉 /resolve/main/<file> 尾部）。"""
+        for f in self.spec.get("files", []):
+            for url in f.get("urls", []):
+                marker = "/resolve/main/"
+                if marker in url:
+                    return url.split(marker)[0]
+        return "https://huggingface.co/"
+
     def _on_download(self):
         if self._downloading:
             return
@@ -233,7 +249,8 @@ class _FunasrModelRow(QWidget):
         self.descLbl.setText(
             f"{tr(self.spec['desc_key'])}  {tr('asr.model.size', size=self.spec['size_mb'])}"
         )
-        self.dlBtn.setText(tr("asr.model.download"))
+        self.dlBtn.setText(tr("asr.model.download_engine"))
+        self.gotoBtn.setText(tr("asr.model.goto"))
         self.folderBtn.setText(tr("asr.model.open_folder"))
         self.refresh()
 
@@ -246,13 +263,14 @@ class AudioTranscribeInterface(InterfaceBase):
 
     def __init__(self, parent=None):
         super().__init__("Asr", tr("nav.asr"), tr("asr.subtitle"), parent)
-        self._input_path = ""
+        self._queue: list[dict] = []  # 转写队列：[{path, status}]，status=waiting/processing/done/failed
+        self._queue_pos = -1  # 当前处理索引；-1 = 未开始
         self._worker: AsrTranscribeWorker | None = None
         self._health_thread: threading.Thread | None = None
         self._healthResult.connect(self._on_health_result)
 
         # =====================================================================
-        # 输入卡片（拖拽区 + 选择文件按钮 + 当前文件）
+        # 1. 添加文件卡片（拖拽区 + 选择文件按钮 + 文件计数）
         # =====================================================================
         card, vb, self.tInput = self._make_card("asr.input.title")
         self.dropArea = DropArea(self)
@@ -272,46 +290,9 @@ class AudioTranscribeInterface(InterfaceBase):
         self.vbox.addWidget(card)
 
         # =====================================================================
-        # 控制卡片（开始/停止 + 服务状态 + 引导提示 + 进度）
+        # 2. 模型管理卡片（v0.8.6：默认折叠，排在 ASR 设置前）
         # =====================================================================
-        ccard, cvb, self.tControl = self._make_card("asr.control.title")
-        ctrl = QHBoxLayout()
-        self.startBtn = primary_btn(tr("asr.start"), icon=FIF.PLAY)
-        self.startBtn.clicked.connect(self._on_start)
-        self.stopBtn = ghost_btn(tr("asr.stop"), icon=FIF.CANCEL)
-        self.stopBtn.clicked.connect(self._on_stop)
-        self.stopBtn.setEnabled(False)
-        ctrl.addWidget(self.startBtn, 1)
-        ctrl.addWidget(self.stopBtn)
-        cvb.addLayout(ctrl)
-
-        # 整体进度
-        self._progressLabel = CaptionLabel(tr("asr.progress.idle"))
-        apply_text(self._progressLabel, text_secondary(), transparent=True)
-        cvb.addWidget(self._progressLabel)
-
-        # 服务状态行：状态标签 + 检测按钮
-        status_row = QHBoxLayout()
-        self._statusLabel = CaptionLabel(tr("asr.status.unknown"))
-        apply_text(self._statusLabel, muted_text(), transparent=True)
-        status_row.addWidget(self._statusLabel, 1)
-        self._checkBtn = TransparentToolButton(FIF.SYNC, self)
-        self._checkBtn.setFixedSize(28, 28)
-        self._checkBtn.clicked.connect(self._check_service)
-        status_row.addWidget(self._checkBtn)
-        cvb.addLayout(status_row)
-
-        # 未配置服务时的引导
-        self._hintLabel = CaptionLabel(tr("asr.status.hint"))
-        self._hintLabel.setWordWrap(True)
-        apply_text(self._hintLabel, muted_text(), transparent=True)
-        cvb.addWidget(self._hintLabel)
-        self.vbox.addWidget(ccard)
-
-        # =====================================================================
-        # 模型管理卡片（本地推理模型：下载 / 状态 / 打开文件夹）
-        # =====================================================================
-        mcard, mvb, self.tModel = self._make_card("asr.model.title")
+        mcard, mvb, self.tModel = self._make_card("asr.model.title", collapsed=True)
         hint = CaptionLabel(tr("asr.model.hint"))
         hint.setWordWrap(True)
         hint.setMinimumWidth(0)
@@ -332,12 +313,43 @@ class AudioTranscribeInterface(InterfaceBase):
         self.vbox.addWidget(mcard)
 
         # =====================================================================
-        # ASR 设置卡片（v0.8.5 功能 1：模型选择 / 分段长度 / 结构化开关 / 设备）
+        # 3. ASR 设置卡片（模型选择 / 分段长度 / 结构化 / 输出位置 / 设备）
         # =====================================================================
         self._build_settings_card()
 
         # =====================================================================
-        # CMD 结果卡片（完整文案，可滚动、绝不截断）
+        # 4. 转写队列卡片（v0.8.6：多文件队列 + 开始/停止/移除/清空 + 进度）
+        # =====================================================================
+        qcard, qvb, self.tQueue = self._make_card("asr.queue.title")
+        self._queueList = QListWidget()
+        self._queueList.setMinimumHeight(110)
+        self._queueList.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self._queueList.itemDoubleClicked.connect(lambda _i: self._remove_selected())
+        qvb.addWidget(self._queueList)
+
+        qctrl = QHBoxLayout()
+        self.startBtn = primary_btn(tr("asr.queue.start"), icon=FIF.PLAY)
+        self.startBtn.clicked.connect(self._on_start)
+        self.stopBtn = ghost_btn(tr("asr.queue.stop"), icon=FIF.CANCEL)
+        self.stopBtn.clicked.connect(self._on_stop)
+        self.stopBtn.setEnabled(False)
+        self.removeBtn = ghost_btn(tr("asr.queue.remove"), icon=FIF.DELETE)
+        self.removeBtn.clicked.connect(self._remove_selected)
+        self.clearBtn = ghost_btn(tr("asr.queue.clear"), icon=FIF.BROOM)
+        self.clearBtn.clicked.connect(self._clear_queue)
+        qctrl.addWidget(self.startBtn, 1)
+        qctrl.addWidget(self.stopBtn)
+        qctrl.addWidget(self.removeBtn)
+        qctrl.addWidget(self.clearBtn)
+        qvb.addLayout(qctrl)
+
+        self._progressLabel = CaptionLabel(tr("asr.progress.idle"))
+        apply_text(self._progressLabel, text_secondary(), transparent=True)
+        qvb.addWidget(self._progressLabel)
+        self.vbox.addWidget(qcard)
+
+        # =====================================================================
+        # 5. 转写结果卡片（CMD 完整文案，v0.8.6：自动保存 txt，无手动保存按钮）
         # =====================================================================
         rcard, rvb, self.tCmd = self._make_card("asr.cmd.title")
         self.cmdEdit = QPlainTextEdit()
@@ -347,24 +359,27 @@ class AudioTranscribeInterface(InterfaceBase):
         self.cmdEdit.setPlaceholderText(tr("asr.cmd.ready"))
         apply_text(self.cmdEdit, text_strong(), transparent=False)
         rvb.addWidget(self.cmdEdit)
-
-        save_row = QHBoxLayout()
-        self.saveBtn = ghost_btn(tr("asr.save"), icon=FIF.SAVE)
-        self.saveBtn.setEnabled(False)
-        self.saveBtn.clicked.connect(self._on_save)
-        save_row.addStretch(1)
-        save_row.addWidget(self.saveBtn)
-        rvb.addLayout(save_row)
         self.vbox.addWidget(rcard)
 
         # =====================================================================
-        # 本地服务模式配置卡片（默认折叠 + 默认关闭，含独立服务日志区）
+        # 6. 服务模式配置卡片（默认折叠 + 默认关闭 + 独立日志区 + 服务状态行）
         # =====================================================================
         scard, svb, self.tService = self._make_card("asr.service.title", collapsed=True)
         self._serviceSwitch = SwitchButton()
         self._serviceSwitch.setChecked(False)
         self._serviceSwitch.checkedChanged.connect(self._on_service_mode)
         svb.addWidget(field_row(tr("asr.service.enable"), self._serviceSwitch, label_width=132))
+
+        # 服务状态行（v0.8.6：随服务模式卡，不再占用队列卡）
+        status_row = QHBoxLayout()
+        self._statusLabel = CaptionLabel(tr("asr.status.unknown"))
+        apply_text(self._statusLabel, muted_text(), transparent=True)
+        status_row.addWidget(self._statusLabel, 1)
+        self._checkBtn = TransparentToolButton(FIF.SYNC, self)
+        self._checkBtn.setFixedSize(28, 28)
+        self._checkBtn.clicked.connect(self._check_service)
+        status_row.addWidget(self._checkBtn)
+        svb.addLayout(status_row)
 
         self._serviceHint = CaptionLabel("")
         self._serviceHint.setWordWrap(True)
@@ -376,9 +391,16 @@ class AudioTranscribeInterface(InterfaceBase):
         self._urlRow = field_row(tr("asr.service.base_url"), self._urlEdit, label_width=132)
         svb.addWidget(self._urlRow)
 
-        self._modelEdit = QLineEdit(cfg.asrModel.value)
-        self._modelEdit.textChanged.connect(lambda t: setattr(cfg.asrModel, "value", t))
-        self._modelRow = field_row(tr("asr.service.model"), self._modelEdit, label_width=132)
+        # 服务模型下拉（v0.8.6：下拉选择 + 可编辑，不再手动填写）
+        self._serviceModelCombo = EditableComboBox()
+        self._serviceModelCombo.setMinimumWidth(200)
+        self._refresh_service_model_combo()
+        self._serviceModelCombo.currentTextChanged.connect(
+            lambda t: setattr(cfg.asrModel, "value", t)
+        )
+        self._modelRow = field_row(
+            tr("asr.service.model"), self._serviceModelCombo, label_width=132
+        )
         svb.addWidget(self._modelRow)
 
         self._keyEdit = PasswordLineEdit()
@@ -399,6 +421,7 @@ class AudioTranscribeInterface(InterfaceBase):
         self.vbox.addWidget(scard)
 
         self._on_service_mode(False)
+        self._refresh_queue_list()
         self._sync_controls()
         self.retheme()
         self.vbox.addStretch(1)
@@ -407,25 +430,39 @@ class AudioTranscribeInterface(InterfaceBase):
     # 文件选取
     # =========================================================================
     def _on_files(self, paths: list[str]):
-        """拖入/选择的文件：过滤出第一个视频或音频文件。"""
-        for p in paths:
-            if Path(p).suffix.lower() in _ASR_EXTS:
-                self._set_input(p)
-                return
+        """拖入/选择的文件：过滤出视频/音频，全部入队（v0.8.6 多文件队列）。"""
+        added = [p for p in paths if Path(p).suffix.lower() in _ASR_EXTS]
+        if added:
+            self._enqueue(added)
 
     def _pick_files(self):
         files = self._ask_open_files(tr("asr.add.file"), _ASR_EXTS)
         if files:
-            self._set_input(files[0])
+            self._enqueue(files)
 
-    def _set_input(self, path: str):
-        self._input_path = path
-        self._fileLabel.setText(tr("asr.file.selected", name=Path(path).name))
+    def _enqueue(self, paths: list[str]):
+        """把文件追加进转写队列（去重 + 更新计数）。"""
+        known = {item["path"] for item in self._queue}
+        for p in paths:
+            if p not in known:
+                self._queue.append({"path": p, "status": "waiting"})
+                known.add(p)
+        self._refresh_queue_list()
         self._sync_controls()
 
     # =========================================================================
     # 服务模式、本地模型状态与健康检查
     # =========================================================================
+    def _refresh_service_model_combo(self) -> None:
+        """服务模式模型下拉（v0.8.6：不再手动填写，下拉选择 + 可编辑）。"""
+        items = [spec["id"] for spec in fe.MODEL_CATALOG]
+        cur = cfg.asrModel.value
+        if cur and cur not in items:
+            items.append(cur)
+        self._serviceModelCombo.clear()
+        self._serviceModelCombo.addItems(items)
+        self._serviceModelCombo.setCurrentText(cur)
+
     def _effective_params(self) -> tuple[str, str, str]:
         """按服务模式开关解析实际使用的 (base_url, model, api_key)。
 
@@ -441,7 +478,6 @@ class AudioTranscribeInterface(InterfaceBase):
             row.setEnabled(checked)
         if checked:
             self._serviceHint.setText(tr("asr.service.enable.hint"))
-            self._hintLabel.setText(tr("asr.status.hint"))
             self._append_service(tr("asr.service.log.enabled"))
         else:
             self._serviceHint.setText(
@@ -472,11 +508,11 @@ class AudioTranscribeInterface(InterfaceBase):
         if model_id is not None:
             self._statusLabel.setText(tr("asr.model.local.ready", model=model_id))
             apply_text(self._statusLabel, tokens.ACCENT, transparent=True)
-            self._hintLabel.setText(tr("asr.model.local.hint"))
+            self._serviceHint.setText(tr("asr.model.local.hint"))
         else:
             self._statusLabel.setText(tr("asr.model.local.missing"))
             apply_text(self._statusLabel, tokens.DANGER_STRONG, transparent=True)
-            self._hintLabel.setText(tr("asr.model.no_model"))
+            self._serviceHint.setText(tr("asr.model.no_model"))
 
     def modelChanged(self, model_id: str, ok: bool, msg: str):
         """模型下载完成/失败后：刷新全部行与状态行，并在 CMD 追加结果。"""
@@ -506,15 +542,30 @@ class AudioTranscribeInterface(InterfaceBase):
         )
         svb.addWidget(self._settingsModelRow)
 
-        # ② 过长音频分段长度（秒，15..300，默认 60）
-        self._segmentSpin = QSpinBox()
-        self._segmentSpin.setRange(15, 300)
-        self._segmentSpin.setSingleStep(15)
-        self._segmentSpin.setSuffix(" s")
-        self._segmentSpin.setValue(int(cfg.asrSegmentSec.value))
-        self._segmentSpin.valueChanged.connect(lambda v: setattr(cfg.asrSegmentSec, "value", v))
+        # ② 过长音频分段长度（秒，v0.8.6：下拉 60/120/180/300 + 可手动输入，默认 180）
+        self._segmentCombo = EditableComboBox()
+        self._segmentCombo.setMinimumWidth(180)
+        for sec in (60, 120, 180, 300):
+            self._segmentCombo.addItem(f"{sec}")
+        cur_seg = str(int(cfg.asrSegmentSec.value))
+        if not any(
+            self._segmentCombo.itemText(i) == cur_seg
+            for i in range(self._segmentCombo.count())
+        ):
+            self._segmentCombo.addItem(cur_seg)
+        self._segmentCombo.setCurrentText(cur_seg)
+
+        def _commit_segment(t: str):
+            try:
+                v = int(float(t))
+                v = max(15, min(300, v))
+            except (TypeError, ValueError):
+                v = 180
+            setattr(cfg.asrSegmentSec, "value", v)
+
+        self._segmentCombo.currentTextChanged.connect(_commit_segment)
         self._settingsSegmentRow = field_row(
-            tr("asr.settings.segment"), self._segmentSpin, label_width=132
+            tr("asr.settings.segment"), self._segmentCombo, label_width=132
         )
         svb.addWidget(self._settingsSegmentRow)
 
@@ -554,9 +605,30 @@ class AudioTranscribeInterface(InterfaceBase):
         apply_text(self._deviceLabel, text_secondary(), transparent=True)
         svb.addWidget(self._deviceLabel)
 
+        # ⑤ 输出位置（v0.8.6：转写结果 .txt 保存目录；为空 = 源文件旁）
+        self._outEdit = QLineEdit(cfg.outputFolder.value)
+        self._outEdit.setReadOnly(True)
+        self._outBrowse = TransparentToolButton(FIF.FOLDER, self)
+        self._outBrowse.setFixedSize(36, 36)
+        self._outBrowse.clicked.connect(self._pick_output_dir)
+        orow = QHBoxLayout()
+        orow.addWidget(self._outEdit, 1)
+        orow.addWidget(self._outBrowse)
+        self._settingsOutputRow = field_row(
+            tr("asr.settings.output"), orow, label_width=132
+        )
+        svb.addWidget(self._settingsOutputRow)
+
         self.vbox.addWidget(scard)
         self._refresh_device_label()
         self._refresh_structured_hint()
+
+    def _pick_output_dir(self):
+        """选择转写结果 .txt 的固定输出目录。"""
+        d = self._ask_directory(tr("asr.settings.output"))
+        if d:
+            cfg.outputFolder.value = d
+            self._outEdit.setText(d)
 
     def _model_combo_mapping(self) -> list[tuple[str, str, bool]]:
         """模型下拉映射：显示「名称（未下载）」→ model_id → 是否就绪（按清单顺序）。"""
@@ -639,26 +711,40 @@ class AudioTranscribeInterface(InterfaceBase):
     # =========================================================================
     # 启动 / 停止
     # =========================================================================
+    def _next_index(self, include_failed: bool) -> int:
+        """返回下一个可处理条目索引；include_failed=True 允许重试失败项。"""
+        for i, item in enumerate(self._queue):
+            if item["status"] == "waiting" or (include_failed and item["status"] == "failed"):
+                return i
+        return -1
+
     def _on_start(self):
+        """从队列取下一个文件启动转写（v0.8.6 队列模式，失败项可手动重试）。"""
         if self._worker is not None:
-            return
-        if not self._input_path:
-            self._append_cmd(tr("asr.error.no_file"))
             return
         if not find_ffmpeg(cfg.ffmpegSource.value):
             self._append_cmd(tr("asr.error.no_ffmpeg"))
             return
+        idx = self._next_index(include_failed=True)
+        if idx < 0:
+            self._append_cmd(tr("asr.error.no_file"))
+            return
+        self._queue_pos = idx
+        self._queue[idx]["status"] = "processing"
+        self._refresh_queue_list()
+        self._launch_worker(self._queue[idx]["path"])
 
+    def _launch_worker(self, path: str):
+        """为单个文件创建并启动 worker。"""
         self.cmdEdit.clear()
-        self._append_cmd(tr("asr.cmd.selected", name=Path(self._input_path).name))
-
+        self._append_cmd(tr("asr.cmd.selected", name=Path(path).name))
         if self._serviceSwitch.isChecked():
             base_url, model, api_key = self._effective_params()
             self._append_cmd(
                 tr("asr.cmd.service", url=base_url, model=model, key="***" if api_key else "-")
             )
             self._worker = AsrTranscribeWorker(
-                self._input_path,
+                path,
                 find_ffmpeg(cfg.ffmpegSource.value) or "",
                 find_ffprobe(),
                 base_url,
@@ -670,11 +756,12 @@ class AudioTranscribeInterface(InterfaceBase):
             model_id = self._resolved_model_id()
             if model_id is None:
                 self._append_cmd(tr("asr.model.no_model"))
+                self._on_worker_finished()  # 复位并尝试下一个
                 return
             provider = fe.resolve_provider(cfg.asrDevice.value)
             self._append_cmd(tr("asr.cmd.local", model=model_id))
             self._worker = AsrTranscribeWorker(
-                self._input_path,
+                path,
                 find_ffmpeg(cfg.ffmpegSource.value) or "",
                 find_ffprobe(),
                 mode="local",
@@ -712,25 +799,96 @@ class AudioTranscribeInterface(InterfaceBase):
         self._append_cmd("")
 
     def _on_succeeded(self, full_text: str):
+        # 记录当前文件状态并自动保存 .txt（v0.8.6，不再手动保存）
+        cur = self._queue[self._queue_pos] if 0 <= self._queue_pos < len(self._queue) else None
         self._append_cmd(tr("asr.cmd.done"))
         self._progressLabel.setText(tr("asr.progress.done"))
-        self.saveBtn.setEnabled(bool(full_text))
+        if cur is not None:
+            cur["status"] = "done"
+            saved = self._auto_save_txt(cur["path"], full_text)
+            if saved:
+                self._append_cmd(tr("asr.cmd.saved", path=saved))
+        self._refresh_queue_list()
+
+    def _auto_save_txt(self, src_path: str, text: str) -> str | None:
+        """转写结果自动保存 .txt：固定输出目录（cfg.outputFolder）或源文件旁。"""
+        if not text.strip():
+            return None
+        try:
+            src = Path(src_path)
+            fixed = cfg.outputFolder.value.strip()
+            out_dir = Path(fixed) if fixed else src.parent
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / f"{src.stem}_transcript.txt"
+            out_path.write_text(text, encoding="utf-8")
+            return str(out_path)
+        except OSError as exc:
+            self._append_cmd(tr("asr.error.save_failed", msg=str(exc)))
+            return None
 
     def _on_failed(self, msg: str):
         self._append_cmd(tr("asr.cmd.failed", msg=msg))
         self._progressLabel.setText(tr("asr.progress.failed"))
+        if 0 <= self._queue_pos < len(self._queue):
+            self._queue[self._queue_pos]["status"] = "failed"
+        self._refresh_queue_list()
 
     def _on_worker_finished(self):
-        """worker 线程退出后释放引用并复位按钮。"""
+        """worker 线程退出后释放引用；队列还有 waiting 项则自动续跑（不自动重试失败项）。"""
         worker, self._worker = self._worker, None
         if worker is not None:
             worker.deleteLater()
+        if self._next_index(include_failed=False) >= 0:
+            self._on_start()
+        else:
+            self._queue_pos = -1
+            self._sync_controls()
+
+    def _refresh_queue_list(self):
+        """把 self._queue 渲染到 QListWidget。"""
+        self._queueList.clear()
+        for item in self._queue:
+            st = item["status"]
+            label = tr(
+                {
+                    "waiting": "asr.queue.status.waiting",
+                    "processing": "asr.queue.status.processing",
+                    "done": "asr.queue.status.done",
+                    "failed": "asr.queue.status.failed",
+                }[st]
+            )
+            self._queueList.addItem(QListWidgetItem(f"{Path(item['path']).name}  —  {label}"))
+        n = len(self._queue)
+        self._fileLabel.setText(tr("asr.file.count", n=n) if n else tr("asr.file.none"))
+
+    def _remove_selected(self):
+        """移除队列中选中的条目（处理中不允许）。"""
+        if self._worker is not None:
+            return
+        rows = sorted(
+            {self._queueList.row(it) for it in self._queueList.selectedItems()}, reverse=True
+        )
+        for r in rows:
+            if 0 <= r < len(self._queue):
+                self._queue.pop(r)
+        self._refresh_queue_list()
+        self._sync_controls()
+
+    def _clear_queue(self):
+        """清空队列（处理中不允许）。"""
+        if self._worker is not None:
+            return
+        self._queue.clear()
+        self._queue_pos = -1
+        self._refresh_queue_list()
         self._sync_controls()
 
     def _sync_controls(self):
         running = self._worker is not None
-        self.startBtn.setEnabled(not running and bool(self._input_path))
+        self.startBtn.setEnabled(not running and self._next_index(include_failed=True) >= 0)
         self.stopBtn.setEnabled(running)
+        self.removeBtn.setEnabled(not running and self._queueList.count() > 0)
+        self.clearBtn.setEnabled(not running and self._queueList.count() > 0)
 
     # =========================================================================
     # CMD / 服务日志追加
@@ -752,22 +910,6 @@ class AudioTranscribeInterface(InterfaceBase):
     # =========================================================================
     # 保存 .txt
     # =========================================================================
-    def _on_save(self):
-        text = self.cmdEdit.toPlainText().strip()
-        if not text:
-            return
-        default_name = f"{Path(self._input_path).stem}_transcript.txt" if self._input_path else "transcript.txt"
-        path, _ = QFileDialog.getSaveFileName(
-            self._dialog_parent(), tr("asr.save"), default_name, "Text (*.txt)"
-        )
-        if not path:
-            return
-        try:
-            Path(path).write_text(text + "\n", encoding="utf-8")
-            self._append_cmd(tr("asr.save.done", path=path))
-        except OSError as exc:
-            self._append_cmd(tr("asr.save.failed", msg=exc))
-
     # =========================================================================
     # 主题 / i18n
     # =========================================================================
@@ -781,7 +923,7 @@ class AudioTranscribeInterface(InterfaceBase):
         self.titleLabel.setText(tr("nav.asr"))
         self.subLabel.setText(tr("asr.subtitle"))
         self.tInput.setText(tr("asr.input.title"))
-        self.tControl.setText(tr("asr.control.title"))
+        self.tQueue.setText(tr("asr.queue.title"))
         self.tModel.setText(tr("asr.model.title"))
         self.tCmd.setText(tr("asr.cmd.title"))
         self.tService.setText(tr("asr.service.title"))
@@ -791,6 +933,7 @@ class AudioTranscribeInterface(InterfaceBase):
             self._settingsSegmentRow.fieldLabel.setText(tr("asr.settings.segment"))
             self._settingsStructuredRow.fieldLabel.setText(tr("asr.settings.structured"))
             self._settingsDeviceRow.fieldLabel.setText(tr("asr.settings.device"))
+            self._settingsOutputRow.fieldLabel.setText(tr("asr.settings.output"))
             self._refresh_structured_hint()
             self._refresh_device_label()
             self._refresh_model_combo()
@@ -799,23 +942,25 @@ class AudioTranscribeInterface(InterfaceBase):
             tr("asr.drop.title"), tr("asr.drop.hint"), tr("asr.drop.formats")
         )
         self.addFileBtn.setText(tr("asr.add.file"))
-        self.startBtn.setText(tr("asr.start"))
-        self.stopBtn.setText(tr("asr.stop"))
-        self.saveBtn.setText(tr("asr.save"))
+        self.startBtn.setText(tr("asr.queue.start"))
+        self.stopBtn.setText(tr("asr.queue.stop"))
+        self.removeBtn.setText(tr("asr.queue.remove"))
+        self.clearBtn.setText(tr("asr.queue.clear"))
         self.cmdEdit.setPlaceholderText(tr("asr.cmd.ready"))
         self._urlRow.fieldLabel.setText(tr("asr.service.base_url"))
         self._modelRow.fieldLabel.setText(tr("asr.service.model"))
         self._keyRow.fieldLabel.setText(tr("asr.service.api_key"))
         self._serviceSwitch.setText(tr("asr.service.enable"))
+        self._refresh_service_model_combo()
         for row in self._model_rows:
             row.retranslateUi()
         if self._serviceSwitch.isChecked():
             self._serviceHint.setText(tr("asr.service.enable.hint"))
-            self._hintLabel.setText(tr("asr.status.hint"))
         else:
             self._serviceHint.setText(
                 tr("asr.service.default", url=DEFAULT_BASE_URL, model=DEFAULT_MODEL)
             )
         self._check_service()
+        self._refresh_queue_list()
         self._sync_controls()
 

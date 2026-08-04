@@ -46,7 +46,7 @@ MODEL_CATALOG: list[dict] = [
         "files": [
             {
                 "name": "config.yaml",
-                "size": 56799,
+                "size": 56666,
                 "urls": [
                     "https://huggingface.co/funasr/Paraformer-large/resolve/main/config.yaml"
                 ],
@@ -165,7 +165,7 @@ MODEL_CATALOG: list[dict] = [
         "files": [
             {
                 "name": "model_quant.onnx",
-                "size": 506744,
+                "size": 508876,
                 "urls": [
                     "https://huggingface.co/funasr/fsmn-vad-onnx/resolve/main/model_quant.onnx"
                 ],
