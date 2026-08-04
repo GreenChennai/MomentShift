@@ -42,6 +42,7 @@ from qfluentwidgets import (
     ComboBox,
     EditableComboBox,
     HyperlinkButton,
+    PasswordLineEdit,
     PrimaryPushButton,
     PushButton,
     StrongBodyLabel,
@@ -259,9 +260,11 @@ class _FunasrModelRow(QWidget):
 
     # -- 状态刷新 --
     def refresh(self) -> None:
-        if not self.spec.get("engine"):
-            # v0.8.9 Bug6：本地推理暂不支持的模型（官方 Model Zoo 扩充项）——
-            # 下载按钮灰显（点了也没用），仍可「前往下载」或「打开文件夹」
+        # v0.8.10 Bug2：engine 检查只针对 asr 主模型——FSMN-VAD（kind=vad）与
+        # CAM++（kind=spk）是 CPU 可用的辅助模型，engine 字段为 False 但必须可下载；
+        # 只有「asr 主模型且无本地推理实现」的（Whisper/Qwen3 等）才灰显
+        engine_ok = bool(self.spec.get("engine")) or self.spec.get("kind") in ("vad", "spk")
+        if not engine_ok:
             self.statusPill.set_status("failed", text=tr("asr.model.engine_unsupported"))
             self.dot.setStyleSheet(tokens.dot_qss(danger_color().name(), 4))
             self.dlBtn.setEnabled(False)
@@ -600,8 +603,21 @@ class AudioTranscribeInterface(InterfaceBase):
         self._portSpin = QSpinBox()
         self._portSpin.setRange(1024, 65535)
         self._portSpin.setValue(int(cfg.asrServerPort.value))
-        self._portSpin.valueChanged.connect(lambda v: setattr(cfg.asrServerPort, "value", v))
+        self._portSpin.valueChanged.connect(self._on_server_port_changed)
         svb.addWidget(field_row(tr("asr.service.port"), self._portSpin, label_width=132))
+
+        # v0.8.10 Bug3-三件套①：服务地址（自动带端口）+ 一键复制
+        url_row = QHBoxLayout()
+        url_row.setSpacing(8)
+        self._baseUrlEdit = QLineEdit()
+        self._baseUrlEdit.setReadOnly(True)
+        self._baseUrlEdit.setText(f"http://127.0.0.1:{cfg.asrServerPort.value}/v1")
+        url_row.addWidget(self._baseUrlEdit, 1)
+        self._copyUrlBtn = TransparentToolButton(FIF.COPY, self)
+        self._copyUrlBtn.setFixedSize(32, 32)
+        self._copyUrlBtn.clicked.connect(self._copy_base_url)
+        url_row.addWidget(self._copyUrlBtn)
+        svb.addWidget(field_row(tr("asr.service.base_url"), url_row, label_width=132))
 
         # 服务端推理模型下拉（engine=True 的 asr 模型）
         self._serverModelCombo = ComboBox()
@@ -609,6 +625,12 @@ class AudioTranscribeInterface(InterfaceBase):
         self._refresh_server_model_combo()
         self._serverModelCombo.currentIndexChanged.connect(self._on_server_model_changed)
         svb.addWidget(field_row(tr("asr.service.model"), self._serverModelCombo, label_width=132))
+
+        # v0.8.10 Bug3-三件套③：可选 api_key（Bearer 鉴权，留空不校验）
+        self._apiKeyEdit = PasswordLineEdit()
+        self._apiKeyEdit.setText(cfg.asrApiKey.value)
+        self._apiKeyEdit.textChanged.connect(lambda t: setattr(cfg.asrApiKey, "value", t))
+        svb.addWidget(field_row(tr("asr.service.api_key"), self._apiKeyEdit, label_width=132))
 
         # 状态行：运行状态 + 监听地址
         self._serverStatusLabel = CaptionLabel(tr("asr.service.stopped"))
@@ -675,6 +697,16 @@ class AudioTranscribeInterface(InterfaceBase):
     def _on_server_model_changed(self, _index: int):
         cfg.asrServerModel.value = self._serverModelCombo.currentText()
 
+    def _on_server_port_changed(self, value: int):
+        """端口变化：写配置 + 联动更新服务地址显示。"""
+        cfg.asrServerPort.value = value
+        self._baseUrlEdit.setText(f"http://127.0.0.1:{value}/v1")
+
+    def _copy_base_url(self):
+        """一键复制服务地址（含端口）到剪贴板。"""
+        QApplication.clipboard().setText(self._baseUrlEdit.text())
+        self._append_cmd(tr("asr.service.url_copied"))
+
     def _refresh_models(self):
         """v0.8.7 Bug7：重新检测模型——先自动归位 tools/funasr/ 裸文件，再刷新全部行。"""
         try:
@@ -701,7 +733,9 @@ class AudioTranscribeInterface(InterfaceBase):
                 apply_text(self._serverStatusLabel, muted_text(), transparent=True)
                 return
             ok, msg = self._server.start(
-                int(cfg.asrServerPort.value), model_id
+                int(cfg.asrServerPort.value),
+                model_id,
+                api_key=cfg.asrApiKey.value,
             )
             if ok:
                 self._serverStatusLabel.setText(tr("asr.service.running", url=self._server.url))
@@ -860,20 +894,21 @@ class AudioTranscribeInterface(InterfaceBase):
             self._outEdit.setText(d)
 
     def _model_combo_mapping(self) -> list[tuple[str, str, bool]]:
-        """模型下拉映射：显示「名称（未下载）」→ model_id → 是否就绪（按清单顺序）。"""
+        """模型下拉映射（v0.8.10 Bug5）：只列**已下载就绪**的 asr 模型。
+
+        没有已装模型时返回空列表，由调用方显示「无模型可用」禁用项。
+        """
         mapping: list[tuple[str, str, bool]] = []
         for spec in fe.MODEL_CATALOG:
             if spec.get("kind", "asr") != "asr" or not spec.get("engine"):
                 continue
-            ready = fe.is_model_ready(spec["id"], spec["quantize"])
-            name = tr(spec["name_key"])
-            if not ready:
-                name = f"{name}（{tr('asr.model.missing')}）"
-            mapping.append((name, spec["id"], ready))
+            if not fe.is_model_ready(spec["id"], spec["quantize"]):
+                continue
+            mapping.append((tr(spec["name_key"]), spec["id"], True))
         return mapping
 
     def _refresh_model_combo(self) -> None:
-        """重建模型下拉：未下载的模型置灰不可选，并尽量保住当前选中值。"""
+        """重建模型下拉（v0.8.10 Bug5）：只显示已装模型；一个都没有显示「无模型可用」。"""
         if not hasattr(self, "_modelCombo"):
             return
         current = cfg.asrModelId.value or ""
@@ -881,13 +916,20 @@ class AudioTranscribeInterface(InterfaceBase):
         combo = self._modelCombo
         combo.blockSignals(True)
         combo.clear()
-        bind_combo_mapping(combo, [(disp, mid) for disp, mid, _ready in mapping])
-        for disp, _mid, ready in mapping:
-            combo.addItem(disp)
-            if not ready:
-                combo.items[-1].isEnabled = False  # 未下载：下拉置灰不可选
-        # 未配置时默认选中「自动」（第一个已就绪模型）
-        select_combo_value(combo, current)
+        if not mapping:
+            combo.addItem(tr("asr.settings.model.none"))
+            combo.items[0].isEnabled = False  # 禁用占位项
+            cfg.asrModelId.value = ""
+        else:
+            bind_combo_mapping(combo, [(disp, mid) for disp, mid, _ready in mapping])
+            for disp, mid, _ready in mapping:
+                combo.addItem(disp)
+            # 当前配置值仍在已装列表里则保住，否则默认第一个
+            if current in [mid for _disp, mid, _ready in mapping]:
+                select_combo_value(combo, current)
+            else:
+                combo.setCurrentIndex(0)
+                cfg.asrModelId.value = mapping[0][1]
         combo.blockSignals(False)
 
     def _on_model_combo_changed(self, _index: int):

@@ -208,7 +208,9 @@ def build_stats_bar(count: int = 3) -> tuple[QWidget, list[CaptionLabel]]:
     labels: list[CaptionLabel] = []
     for _ in range(count):
         lbl = CaptionLabel()
-        apply_text(lbl, tokens.TEXT_BLACK, weight=600)
+        # v0.8.10 Bug4：必须 transparent=True——QLabel 设 color 不给透明背景时
+        # Qt 会铺默认白底，表现为「共 0 项 完成 0 失败 0」文字后一块 #FFFFFF
+        apply_text(lbl, tokens.TEXT_BLACK, weight=600, transparent=True)
         hb.addWidget(lbl)
         labels.append(lbl)
     hb.addStretch(1)

@@ -684,7 +684,7 @@
   "asr.service.running": "Server running: {url}",
   "asr.service.failed": "Failed to start: {msg}",
   "asr.service.no_model": "Server model {model} not downloaded yet. Download it under Model Manager first",
-  "asr.model.engine_unsupported": "Local inference not supported yet (official model, use Go to Download)",
+  "asr.model.engine_unsupported": "HW Not Supported",
   "asr.elapsed.pending": "--:--",
   "asr.elapsed.prefix": "Elapsed",
   "asr.status.transcribing": "Transcribing…",
@@ -705,5 +705,7 @@
   "asr.model.ct_punc.name": "ct-punc",
   "asr.model.ct_punc.desc": "Chinese punctuation restoration (with ASR), 290M params",
   "asr.model.emotion2vec.name": "emotion2vec+large",
-  "asr.model.emotion2vec.desc": "Speech emotion recognition, 300M params"
+  "asr.model.emotion2vec.desc": "Speech emotion recognition, 300M params",
+  "asr.service.url_copied": "Server URL copied to clipboard",
+  "asr.settings.model.none": "No model available"
 }

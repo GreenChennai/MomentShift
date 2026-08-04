@@ -684,7 +684,7 @@
   "asr.service.running": "服務執行中：{url}",
   "asr.service.failed": "啟動失敗：{msg}",
   "asr.service.no_model": "服務模型 {model} 未下載，請先在「模型管理」下載",
-  "asr.model.engine_unsupported": "本地推論暫不支援（官方模型，可前往下載取得）",
+  "asr.model.engine_unsupported": "硬體不支援",
   "asr.elapsed.pending": "--:--",
   "asr.elapsed.prefix": "耗時",
   "asr.status.transcribing": "轉寫中…",
@@ -705,5 +705,7 @@
   "asr.model.ct_punc.name": "ct-punc",
   "asr.model.ct_punc.desc": "中文標點恢復（搭配 ASR），290M 參數",
   "asr.model.emotion2vec.name": "emotion2vec+large",
-  "asr.model.emotion2vec.desc": "語音情感辨識，300M 參數"
+  "asr.model.emotion2vec.desc": "語音情感辨識，300M 參數",
+  "asr.service.url_copied": "服務位址已複製到剪貼簿",
+  "asr.settings.model.none": "無模型可用"
 }

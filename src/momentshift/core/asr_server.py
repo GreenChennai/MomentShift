@@ -79,14 +79,20 @@ def parse_multipart(content_type: str, body: bytes) -> dict:
 
 
 class AsrServer:
-    """本地 ASR HTTP 服务端（后台线程运行，OpenAI 兼容）。"""
+    """本地 ASR HTTP 服务端（后台线程运行，OpenAI 兼容）。
 
-    def __init__(self, log_cb=None):
+    v0.8.10：新增可选 ``api_key`` —— 设置后所有请求必须带
+    ``Authorization: Bearer <api_key>``（对齐用户 C:\\FunASR\\server.py 的
+    ASR_API_KEY 行为）；留空不校验。
+    """
+
+    def __init__(self, log_cb=None, api_key: str = ""):
         self._log_cb = log_cb or (lambda line: None)
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._port = 8000
         self._model = DEFAULT_MODEL_ID
+        self._api_key = api_key or ""
         self._lock = threading.Lock()
 
     # -- 生命周期 -----------------------------------------------------
@@ -98,13 +104,23 @@ class AsrServer:
     def url(self) -> str:
         return f"http://127.0.0.1:{self._port}/v1"
 
-    def start(self, port: int = 8000, model: str = DEFAULT_MODEL_ID) -> tuple[bool, str]:
-        """在后台线程启动 HTTP 服务。返回 (是否成功, 消息)。"""
+    def start(
+        self,
+        port: int = 8000,
+        model: str = DEFAULT_MODEL_ID,
+        api_key: str | None = None,
+    ) -> tuple[bool, str]:
+        """在后台线程启动 HTTP 服务。返回 (是否成功, 消息)。
+
+        ``api_key`` 为 None 时保持构造时值；传字符串（含空串）则更新鉴权密钥。
+        """
         with self._lock:
             if self._httpd is not None:
                 return False, "服务已在运行"
             self._port = int(port)
             self._model = model or DEFAULT_MODEL_ID
+            if api_key is not None:
+                self._api_key = api_key or ""
             try:
                 self._httpd = ThreadingHTTPServer(("127.0.0.1", self._port), self._make_handler())
             except OSError as exc:
@@ -148,7 +164,17 @@ class AsrServer:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _auth_ok(self) -> bool:
+                """可选 Bearer 鉴权（v0.8.10）；未配置 api_key 时放行。"""
+                if not server._api_key:
+                    return True
+                auth = self.headers.get("Authorization", "")
+                return auth == f"Bearer {server._api_key}"
+
             def do_GET(self):
+                if not self._auth_ok():
+                    self._send_json({"error": {"message": "invalid api key"}}, 401)
+                    return
                 if self.path.rstrip("/") == "/health":
                     self._send_json({"status": "ok", "model": server._model})
                 elif self.path.rstrip("/") == "/v1/models":
@@ -168,6 +194,9 @@ class AsrServer:
             def do_POST(self):
                 if self.path.rstrip("/") != "/v1/audio/transcriptions":
                     self._send_json({"error": {"message": "not found"}}, 404)
+                    return
+                if not self._auth_ok():
+                    self._send_json({"error": {"message": "invalid api key"}}, 401)
                     return
                 try:
                     length = int(self.headers.get("Content-Length") or 0)
