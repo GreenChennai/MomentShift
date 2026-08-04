@@ -159,7 +159,7 @@ def upscale_image(
     if not exe:
         return False, "未找到 realesrgan-ncnn-vulkan 引擎，请先下载"
     if not model_present(model):
-        return False, f"模型缺失: {model}（请下载引擎以获取标准模型）"
+        return False, f"模型缺失: {model}（请下载引擎以获取默认模型）"
 
     cmd = [
         exe,
@@ -186,6 +186,92 @@ def upscale_image(
         cmd += ["-f", "jpg" if ext == "jpeg" else ext]
 
     return _run(cmd)
+
+
+def _tile_default() -> int:
+    """realesrgan-ncnn-vulkan 在 ``-t 0``（未传 tile）时的默认分块大小。
+
+    引擎 main.cpp 显式赋值 ``tile_size = 360``；当输入分辨率不能被该值整除
+    时，分块在边缘会因「partial-tile 复制回原位时偏移出错」而出现
+    360×360 拼缝错位（v0.8.2 Bug1 的根因）。
+    """
+    return 360
+
+
+def _tile_pad(width: int, height: int, tile: int) -> tuple[int, int]:
+    """把 ``(width, height)`` 向上取整到 ``tile`` 的整数倍。
+
+    已经是整数倍时返回原值。``tile <= 0`` 时回退为引擎默认 360。
+    """
+    t = tile if tile > 0 else _tile_default()
+    t = max(1, int(t))
+    pad_w = ((int(width) + t - 1) // t) * t
+    pad_h = ((int(height) + t - 1) // t) * t
+    return pad_w, pad_h
+
+
+def _crop_box(
+    width: int, height: int, pad_w: int, pad_h: int, scale: int
+) -> tuple[int, int, int, int]:
+    """放大后把 padded 图像 crop 回 ``scale × (width, height)`` 的偏移矩形。
+
+    Args:
+        width: 原图宽（未 pad 前）。
+        height: 原图高（未 pad 前）。
+        pad_w: pad 后的宽。
+        pad_h: pad 后的高。
+        scale: 放大倍率。
+    Returns:
+        ``(crop_w, crop_h, crop_x, crop_y)``，可直接喂 ffmpeg ``-vf crop=``。
+    """
+    scale = max(1, int(scale))
+    crop_w = int(width) * scale
+    crop_h = int(height) * scale
+    crop_x = (int(pad_w) - int(width)) // 2 * scale
+    crop_y = (int(pad_h) - int(height)) // 2 * scale
+    return crop_w, crop_h, crop_x, crop_y
+
+
+def _probe_video_size(ffmpeg: str, input_path: str) -> tuple[int, int] | None:
+    """尽力用 ffprobe 探测源视频/GIF 的画布尺寸。
+
+    任意失败都返回 ``None``，让调用方降级到「不 pad / 不 crop」的旧路径。
+    """
+    from .ffmpeg import find_ffprobe
+
+    ffprobe = find_ffprobe()
+    if not ffprobe:
+        return None
+    try:
+        proc = run_silent(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=s=x:p=0",
+                input_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    val = (proc.stdout or "").strip()
+    if "x" not in val:
+        return None
+    try:
+        w, h = val.split("x", 1)
+        return int(w), int(h)
+    except ValueError:
+        return None
 
 
 def _probe_fps(ffmpeg: str, input_path: str) -> float:
@@ -269,9 +355,36 @@ def upscale_frames(
     frames_in.mkdir(parents=True, exist_ok=True)
     frames_out.mkdir(parents=True, exist_ok=True)
     try:
-        # 1) 抽帧
+        # ---- v0.8.2 Bug1：探测画布尺寸并 pad 到 tile 整数倍 ----
+        # realesrgan-ncnn-vulkan 默认 tile=360，对不能整除的输入会在边缘块
+        # 产生错位（partial-tile 复制回原位时偏移），结果画面被切成 360×360
+        # 拼缝错块的马赛克。修法：抽帧时 pad 到 tile 整数倍（黑边），合成时
+        # crop 回 scale × 原尺寸。pad/crop 的具体数学见 ``_tile_pad`` 与
+        # ``_crop_box``，单测 ``test_upscaler_tile_pad_crop_math`` 钉死。
+        src_size = _probe_video_size(ffmpeg, input_path)
+        crop_filter = ""
+        if src_size is not None:
+            sw, sh = src_size
+            pw, ph = _tile_pad(sw, sh, tile)
+            if (pw, ph) != (sw, sh):
+                pad_args = [
+                    "-vf",
+                    f"pad={pw}:{ph}:{(pw - sw) // 2}:{(ph - sh) // 2}:color=black",
+                ]
+            else:
+                pad_args = []
+            cw, ch, cx, cy = _crop_box(sw, sh, pw, ph, scale)
+            crop_filter = f"crop={cw}:{ch}:{cx}:{cy}"
+        else:
+            pad_args = []
+            log.warning(
+                "upscale_frames: 无法探测源尺寸，跳过 tile pad/crop（将出现拼缝错位风险）：%s",
+                input_path,
+            )
+
+        # 1) 抽帧（必要时带 pad 滤镜）
         ok, msg = _run(
-            [ffmpeg, "-y", "-i", input_path, str(frames_in / "%06d.png")],
+            [ffmpeg, "-y", "-i", input_path, *pad_args, str(frames_in / "%06d.png")],
             timeout=600,
         )
         if not ok:
@@ -280,7 +393,7 @@ def upscale_frames(
         if not in_frames:
             return False, "未从源文件抽取到任何帧"
 
-        # 2) 一次调用整批放大整个目录
+        # 2) 一次调用整批放大整个目录（源帧已 pad 到 tile 整数倍，避免拼缝错位）
         ok, msg = upscale_image(str(frames_in), str(frames_out), model, scale, tile, gpu)
         if not ok:
             return False, f"放大失败: {msg}"
@@ -297,8 +410,13 @@ def upscale_frames(
 
         fps = _probe_fps(ffmpeg, input_path) or 25.0
 
-        # 4) 重新合成
+        # 4) 重新合成（必要时前置 crop 滤镜；palettegen 必须基于 crop 后尺寸，
+        #    否则黑边会污染调色板）
         if out_ext == "gif":
+            if crop_filter:
+                vf = f"{crop_filter},split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse"
+            else:
+                vf = "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse"
             ok, msg = _run(
                 [
                     ffmpeg,
@@ -308,7 +426,7 @@ def upscale_frames(
                     "-i",
                     str(frames_out / "%06d.png"),
                     "-vf",
-                    "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+                    vf,
                     output_path,
                 ],
                 timeout=600,
@@ -327,6 +445,10 @@ def upscale_frames(
                 "0:v:0",
                 "-map",
                 "1:a?",
+            ]
+            if crop_filter:
+                cmd += ["-vf", crop_filter]
+            cmd += [
                 "-c:v",
                 "libx264",
                 "-crf",

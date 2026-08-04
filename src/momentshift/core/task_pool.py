@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from .fake_progress import FakeProgressDriver, estimate_seconds
 from .logger import get_logger
 from .qt_compat import QObject, QRunnable, QThreadPool, Signal
 
@@ -235,6 +236,14 @@ class TaskPool(QObject):
         self._signals.progress.connect(self._on_worker_progress)
         self._signals.finished.connect(self._on_worker_finished)
 
+        # v0.8.2 Bug3：假进度条驱动。压缩 / 放大任务（没有 ffmpeg 进度元
+        # 数据）真实进度回调稀少，进度长时间停 0% 然后瞬跳 100%。驱动器按
+        # 500ms 节拍发 5%..85% 线性假进度，真实追上时取 ``max(fake, real)``
+        # 自然接管。详见 :mod:`core.fake_progress`。
+        self._fake = FakeProgressDriver(self, interval_ms=500)
+        self._fake.set_lookup(self.item)
+        self._fake.progress_changed.connect(self._on_fake_progress)
+
     # =========================================================================
     # 队列操作
     # =========================================================================
@@ -267,6 +276,8 @@ class TaskPool(QObject):
             event.set()
         # 立刻让出并发坑位：这条任务的结果已经没人要了，不该再占着不放。
         self._active.discard(iid)
+        # v0.8.2 Bug3：清理假进度追踪，避免定时器空转。
+        self._fake.stop(iid)
         self.stateChanged.emit()
         if self._running and not self._paused:
             self._launch_next()
@@ -278,6 +289,9 @@ class TaskPool(QObject):
         """清空队列并停止调度。在跑的任务收到取消信号后自行收尾。"""
         for event in self._cancels.values():
             event.set()
+        # v0.8.2 Bug3：清空时一并停掉所有假进度追踪。
+        for iid in list(self._items):
+            self._fake.stop(iid)
         self._items.clear()
         self._order.clear()
         self._pending.clear()
@@ -301,6 +315,8 @@ class TaskPool(QObject):
         self._cancels.pop(iid, None)
         if iid not in self._pending:
             self._pending.append(iid)
+        # v0.8.2 Bug3：清理残留假进度状态，下一轮 start 时会重新 start。
+        self._fake.stop(iid)
         self.stateChanged.emit()
         if self._running and not self._paused:
             self._launch_next()
@@ -422,6 +438,9 @@ class TaskPool(QObject):
             # 先发 itemStarted 再投递，保证界面把行刷成「运行中」早于任何进度回调。
             self.itemStarted.emit(iid)
             self._pool.start(worker)
+            # v0.8.2 Bug3：启动假进度条。压缩 / 放大无 ffmpeg 进度元数据，
+            # 启动即涨 5%，按估计耗时线性涨到 85% 封顶；真实回调追上后接管。
+            self._fake.start(iid, estimate_seconds(item))
         self.stateChanged.emit()
         self._settle()
 
@@ -430,7 +449,14 @@ class TaskPool(QObject):
         if item is None or item.state is not TaskState.RUNNING:
             # 任务已被移除或已收尾，迟到的进度直接丢弃，别把完成态刷回去。
             return
-        item.progress = pct
+        # v0.8.2 Bug3：交给假进度条合并后发出，避免「半天不动、完成瞬跳」。
+        self._fake.merge(iid, pct)
+
+    def _on_fake_progress(self, iid: str, pct: int) -> None:
+        """假进度条 → 写回条目进度并发出 ``itemProgress``。"""
+        item = self._items.get(iid)
+        if item is not None and item.state is TaskState.RUNNING:
+            item.progress = pct
         self.itemProgress.emit(iid, pct)
 
     def _on_worker_finished(self, iid: str, ok: bool, message: str) -> None:
@@ -461,6 +487,11 @@ class TaskPool(QObject):
         item.message = message
         if state is TaskState.DONE:
             item.progress = 100
+        # v0.8.2 Bug3：成功 → 假进度归 100%；取消 / 失败 → 停止追踪。
+        if state is TaskState.DONE:
+            self._fake.finish(iid)
+        else:
+            self._fake.stop(iid)
         self.itemFinished.emit(iid, state.value, message)
 
         if self._running and not self._paused:

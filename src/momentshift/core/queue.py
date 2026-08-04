@@ -19,6 +19,7 @@ from pathlib import Path
 from . import advanced
 from .config import cfg
 from .converter import run_conversion
+from .fake_progress import FakeProgressDriver, estimate_seconds
 from .ffmpeg import find_ffmpeg
 from .hardware import detect_hw_accel
 from .logger import get_logger
@@ -217,6 +218,7 @@ class ConversionManager(QObject):
     task_started = Signal(str)
     task_finished = Signal(str, bool, str)
     compress_started = Signal(str)
+    compress_progress = Signal(str, int)
     compress_finished = Signal(str)
     queue_changed = Signal()
     state_changed = Signal()
@@ -249,6 +251,17 @@ class ConversionManager(QObject):
             threading.Thread(target=self._detect_hw, daemon=True).start()
         self._running = False
         self._paused = False
+
+        # v0.8.2 Bug3：假进度条驱动。无 ffmpeg ``duration_ms`` 的任务（图片 /
+        # 音频 / 无元数据视频）真实进度回调不触发，进度长时间停 0% 然后瞬跳
+        # 100%；此外压缩阶段会重置进度条造成「涨满又归零」。驱动器按 500ms
+        # 节拍给每条运行中的任务发 5%..85% 的线性假进度，真实进度追上时取
+        # ``max(fake, real)`` 自然接管；任务完成归 100%。详见
+        # :mod:`core.fake_progress`。
+        self._fake = FakeProgressDriver(self, interval_ms=500)
+        self._fake.set_lookup(self.get_task)
+        self._fake.progress_changed.connect(self._on_fake_progress)
+        self._fake.compress_progress_changed.connect(self._on_fake_compress_progress)
 
     def _detect_hw(self) -> None:
         try:
@@ -533,6 +546,8 @@ class ConversionManager(QObject):
         task.status = Task.PENDING
         task.error = ""
         task.progress = 0
+        # v0.8.2 Bug3：清理残留的假进度状态，下一轮 _launch 会重新 start。
+        self._fake.stop(task_id)
         if not self._running:
             self.start()
         else:
@@ -549,6 +564,9 @@ class ConversionManager(QObject):
         """清空整个队列，并给所有在跑任务置取消标志。"""
         for event in self._events.values():
             event.set()
+        # v0.8.2 Bug3：清空时一并停掉所有假进度追踪，避免定时器空转。
+        for task in self.tasks:
+            self._fake.stop(task.id)
         self.tasks.clear()
         self._running = False
         self._paused = False
@@ -563,6 +581,8 @@ class ConversionManager(QObject):
         task = self.get_task(task_id)
         if task and task.status == Task.RUNNING:
             task.status = Task.CANCELED
+        # v0.8.2 Bug3：取消的任务不再上报进度（UI 也不该再更新）。
+        self._fake.stop(task_id)
 
     # --- 内部实现 ---
     def _compute_max_threads(self) -> None:
@@ -613,17 +633,32 @@ class ConversionManager(QObject):
         worker.signals.compress_finished.connect(self.compress_finished)
         self._workers[task.id] = worker  # 持有引用防 GC
         self._pool.start(worker)
+        # v0.8.2 Bug3：启动假进度条。任务刚被派发就开始涨（用户感知的
+        # 「任务开始」），即使 ffmpeg 还没吐出第一个 duration_ms 也不会卡 0%。
+        self._fake.start(task.id, estimate_seconds(task))
 
     def _on_started(self, task_id: str) -> None:
         """worker 报告开始 → 中继 ``task_started``。"""
         self.task_started.emit(task_id)
 
     def _on_progress(self, task_id: str, pct: int) -> None:
-        """worker 报告进度 → 写回任务对象并中继 ``progress_updated``。"""
+        """worker 报告进度 → 交给假进度条合并后发出 ``progress_updated``。
+
+        合并策略：``max(fake_now, real_pct)``。真实进度追上假进度后自然
+        接管显示；两者皆 0 时由假进度条驱动 5%..85% 线性曲线。
+        """
+        self._fake.merge(task_id, pct)
+
+    def _on_fake_progress(self, task_id: str, pct: int) -> None:
+        """假进度条 → 写回任务对象并中继 ``progress_updated``。"""
         task = self.get_task(task_id)
         if task:
             task.progress = pct
         self.progress_updated.emit(task_id, pct)
+
+    def _on_fake_compress_progress(self, task_id: str, pct: int) -> None:
+        """压缩阶段的假进度 → 中继 ``compress_progress``。"""
+        self.compress_progress.emit(task_id, pct)
 
     def _on_finished(self, task_id: str, ok: bool, log: str) -> None:
         """转换阶段结束的回调：更新任务状态、释放 worker、按需转入压缩阶段。
@@ -642,7 +677,6 @@ class ConversionManager(QObject):
         need_compress = bool(task and ok and task.compress_enabled)
 
         if task:
-            task.progress = 100 if ok else task.progress
             task.error = log
             task.status = Task.DONE if ok else Task.FAILED
 
@@ -651,6 +685,14 @@ class ConversionManager(QObject):
         done_worker = self._workers.pop(task_id, None)
         if done_worker is not None:
             self._retired.append(done_worker)
+
+        # v0.8.2 Bug3：转换阶段结束 → 假进度条归 100% 并发出最终进度，
+        # 再发 task_finished 让 UI 切绿胶囊。失败时停追踪但不强制改 progress，
+        # 保留假进度条最后位置（UI 切红胶囊）。
+        if ok:
+            self._fake.finish(task_id)
+        else:
+            self._fake.stop(task_id)
         self.task_finished.emit(task_id, ok, log)
 
         if need_compress:
@@ -661,6 +703,10 @@ class ConversionManager(QObject):
             cw.signals.compress_started.connect(self.compress_started)
             cw.signals.compress_finished.connect(self._on_compress_finished)
             self._compress_pool.start(cw)
+            # v0.8.2 Bug3：启动压缩阶段的假进度（5%..85%→100%），避免
+            # 压缩过程进度条一直停 0%、完成时瞬跳 100%。新通道以「compress」
+            # 标记，与转换阶段的进度通道互不干扰。
+            self._fake.start(task.id, estimate_seconds(task, "compress"), channel="compress")
 
         if not self._paused:
             self._fill_slots()  # 内部会先 _drain_retired
@@ -676,10 +722,13 @@ class ConversionManager(QObject):
 
         不再重复发 ``task_finished``：转换结束时已经发过一次，重复发送会让
         队列 UI 把黄/蓝的压缩状态又刷回绿色。
+
+        v0.8.2 Bug3：归 100% 让压缩阶段假进度条收尾。
         """
         task = self.get_task(task_id)
         if task:
             task.status = Task.DONE
+        self._fake.finish(task_id)
         self.compress_finished.emit(task_id)
         if self._running_count() == 0:
             self._running = False

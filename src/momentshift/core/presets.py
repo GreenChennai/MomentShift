@@ -282,9 +282,12 @@ def build_args(task, hw: dict | None = None) -> list[str]:
         # 视频转 GIF 走两遍调色板（palettegen + paletteuse）：GIF 只有 256 色，
         # 不先统计全局调色板会出现严重色带
         if task.category == "video":
+            # v0.8.2 Bug2：scale=iw:-1 保持原始分辨率。旧实现硬编码 640 宽，
+            # 720×1280 的视频转 GIF 后变成 640×1138，分辨率静默丢失。
+            # fps=15 是动图帧率控制，保持不变。
             args += [
                 "-vf",
-                "fps=15,scale=640:-1:flags=lanczos,"
+                "fps=15,scale=iw:-1:flags=lanczos,"
                 "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
                 "-loop",
                 "0",

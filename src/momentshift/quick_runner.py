@@ -19,7 +19,7 @@ import json
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QCoreApplication, Qt, QTimer
+from PyQt6.QtCore import QCoreApplication, QTimer
 from PyQt6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
 from .app_bootstrap import create_application
@@ -33,48 +33,30 @@ log = get_logger("quick")
 # 持有弹窗引用：局部变量出作用域后弹窗会被 GC，表现为窗口一闪而过
 _KEEP_ALIVE: list = []
 
-# 弹窗顶置的持续时间（毫秒）。v0.8.1 Bug3：只在弹窗**出现**的瞬间顶置，
-# 之后撤销，避免帮助弹层被始终置顶的设置弹窗挡在下面。
-_TOPMOST_HOLD_MS = 500
-
-
-def _release_topmost(dlg) -> None:
-    """撤销设置弹窗的 ``WindowStaysOnTopHint`` 并恢复显示。
-
-    Args:
-        dlg: 设置弹窗（ConvertSetupDialog / QuickCompressDialog / QuickUpscaleDialog）。
-
-    Notes:
-        v0.8.1 Bug3：此前弹窗**始终**置顶（flag 从不撤销），用户点条目里的帮助
-        按钮时，HelpDialog（模态子弹窗、非置顶）层级低于设置弹窗被挡，且因存在
-        帮助窗口主窗口也关不掉，形成死锁。改成只在弹出瞬间顶置约
-        :data:`_TOPMOST_HOLD_MS` 后撤销。
-
-        ``setWindowFlags`` 清除 flag 会让窗口隐式 hide，需要重新 ``show()``；
-        但若用户已把弹窗关掉（isVisible() 为 False），不能擅自再 show 把它复活，
-        所以只对仍可见的弹窗补 show。
-    """
-    try:
-        if not (dlg.windowFlags() & Qt.WindowType.WindowStaysOnTopHint):
-            return
-        was_visible = dlg.isVisible()
-        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
-        if was_visible:
-            dlg.show()
-    except RuntimeError:
-        # 弹窗已被销毁（用户关闭 + GC 清理），撤销动作自然失效，无需处理。
-        log.debug("release topmost: dialog already destroyed")
-
 
 def _show_topmost(dlg) -> None:
-    """显示设置弹窗：短暂顶置后自动撤销（见 :func:`_release_topmost`）。
+    """显示设置弹窗：弹出瞬间抢焦置前，但不设置任何 window flags。
 
     Args:
-        dlg: 待显示的设置弹窗。
+        dlg: 待显示的设置弹窗（ConvertSetupDialog / QuickCompressDialog /
+            QuickUpscaleDialog）。
+
+    Notes:
+        v0.8.2 Bug4：v0.8.1 用 ``setWindowFlags(WindowStaysOnTopHint)`` 顶置再在
+        500ms 后撤销 —— 而 Windows 上**每次** ``setWindowFlags`` 都会销毁重建原生
+        窗口（隐式 hide→show），用户看到的就是弹窗快速闪烁（突然消失又出现）。
+
+        这里完全不碰 window flags：``show()`` 之后 ``raise_() + activateWindow()``
+        只在弹出瞬间把窗口带到最前并抢焦点，不触发窗口重建，零闪烁。原 bug
+        （帮助弹层被始终置顶的设置弹窗挡在下面）的语义也因此天然成立：主窗口
+        不再置顶，模态帮助弹窗自然显示在其上方。
+
+        「已关弹窗不复活」语义：本函数只在首次弹出时调用一次，之后没有任何
+        定时器或撤销逻辑会再次 ``show()`` 已关闭的弹窗。
     """
-    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dlg.show()
-    QTimer.singleShot(_TOPMOST_HOLD_MS, lambda: _release_topmost(dlg))
+    dlg.raise_()
+    dlg.activateWindow()
 
 
 def _setup_app() -> QApplication:
