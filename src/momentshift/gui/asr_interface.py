@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QTextCursor, QTextOption
+from PyQt6.QtGui import QIntValidator, QTextCursor, QTextOption
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -42,6 +42,7 @@ from qfluentwidgets import (
     ComboBox,
     EditableComboBox,
     HyperlinkButton,
+    LineEdit,
     PasswordLineEdit,
     PrimaryPushButton,
     PushButton,
@@ -501,14 +502,10 @@ class AudioTranscribeInterface(InterfaceBase):
         vb.addWidget(self.dropArea)
 
         tools = QHBoxLayout()
-        self.addFileBtn = primary_btn(tr("asr.add.file"), icon=FIF.FOLDER_ADD)
-        self.addFileBtn.clicked.connect(self._pick_files)
+        self.addFileBtn = primary_btn(tr("asr.add.folder"), icon=FIF.FOLDER_ADD)
+        self.addFileBtn.clicked.connect(self._pick_folder)
         tools.addWidget(self.addFileBtn)
         vb.addLayout(tools)
-
-        self._fileLabel = CaptionLabel(tr("asr.file.none"))
-        apply_text(self._fileLabel, muted_text(), transparent=True)
-        vb.addWidget(self._fileLabel)
         self.vbox.addWidget(card)
 
         # =====================================================================
@@ -533,14 +530,33 @@ class AudioTranscribeInterface(InterfaceBase):
 
         self._model_rows: list[_FunasrModelRow] = []
         for spec in fdl.MODEL_CATALOG:
-            row = _FunasrModelRow(spec, self)
-            self._model_rows.append(row)
-            mvb.addWidget(row)
-            sep = QFrame()
-            sep.setFrameShape(QFrame.Shape.HLine)
-            sep.setFixedHeight(1)
-            sep.setStyleSheet(f"QFrame{{ background: {border_color()}; border: none; }}")
-            mvb.addWidget(sep)
+            self._model_rows.append(_FunasrModelRow(spec, self))
+
+        # v0.8.13 #7：按 category 分组（主要模型 / 可选功能模型），组内排序：
+        # 本地就绪或可下载（硬件满足）排前，硬件不支持排后
+        groups: dict[str, list[_FunasrModelRow]] = {"main": [], "optional": []}
+        for row in self._model_rows:
+            cat = row.spec.get("category", "main")
+            if cat not in groups:
+                cat = "main"
+            groups[cat].append(row)
+
+        def _sort_key(r: _FunasrModelRow) -> int:
+            return 0 if r._hw_ok else 1
+
+        for cat in ("main", "optional"):
+            groups[cat].sort(key=_sort_key)
+            header = CaptionLabel(tr(f"asr.model.group.{cat}"))
+            apply_text(header, text_strong(), transparent=True)
+            header.setContentsMargins(0, 6, 0, 2)
+            mvb.addWidget(header)
+            for row in groups[cat]:
+                mvb.addWidget(row)
+                sep = QFrame()
+                sep.setFrameShape(QFrame.Shape.HLine)
+                sep.setFixedHeight(1)
+                sep.setStyleSheet(f"QFrame{{ background: {border_color()}; border: none; }}")
+                mvb.addWidget(sep)
         self.vbox.addWidget(mcard)
 
         # =====================================================================
@@ -574,10 +590,6 @@ class AudioTranscribeInterface(InterfaceBase):
         qctrl.addWidget(self.removeBtn)
         qctrl.addWidget(self.clearBtn)
         qvb.addLayout(qctrl)
-
-        self._progressLabel = CaptionLabel(tr("asr.progress.idle"))
-        apply_text(self._progressLabel, text_secondary(), transparent=True)
-        qvb.addWidget(self._progressLabel)
         self.vbox.addWidget(qcard)
 
         # =====================================================================
@@ -600,14 +612,13 @@ class AudioTranscribeInterface(InterfaceBase):
         svb.addWidget(field_row(tr("asr.service.enable"), self._serviceSwitch, label_width=132))
 
         # 监听端口（默认 8000，对齐用户 C:\FunASR\server.py 习惯）
-        # v0.8.11 Bug3：去掉上下调节按钮，保留数字输入框
-        from PyQt6.QtWidgets import QAbstractSpinBox
-        self._portSpin = QSpinBox()
-        self._portSpin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self._portSpin.setRange(1024, 65535)
-        self._portSpin.setValue(int(cfg.asrServerPort.value))
-        self._portSpin.valueChanged.connect(self._on_server_port_changed)
-        svb.addWidget(field_row(tr("asr.service.port"), self._portSpin, label_width=132))
+        # v0.8.13 #4：用可编辑数字框（QIntValidator 限定 1024~65535），明确提示可改
+        self._portEdit = LineEdit()
+        self._portEdit.setValidator(QIntValidator(1024, 65535))
+        self._portEdit.setFixedWidth(110)
+        self._portEdit.setText(str(int(cfg.asrServerPort.value)))
+        self._portEdit.textChanged.connect(self._on_server_port_changed)
+        svb.addWidget(field_row(tr("asr.service.port"), self._portEdit, label_width=132))
 
         # v0.8.10 Bug3-三件套①：服务地址（自动带端口）+ 一键复制
         url_row = QHBoxLayout()
@@ -668,6 +679,15 @@ class AudioTranscribeInterface(InterfaceBase):
         if files:
             self._enqueue(files)
 
+    def _pick_folder(self):
+        """v0.8.13 #1：添加文件夹——选取目录后递归收集其中的视频/音频文件。"""
+        d = self._ask_directory(tr("asr.add.folder"))
+        if not d:
+            return
+        files = self._expand_paths([d], _ASR_EXTS)
+        if files:
+            self._enqueue(files)
+
     def _enqueue(self, paths: list[str]):
         """把文件追加进转写队列（去重 + 更新计数）。"""
         known = {item["path"] for item in self._queue}
@@ -709,8 +729,13 @@ class AudioTranscribeInterface(InterfaceBase):
     def _on_server_model_changed(self, _index: int):
         cfg.asrServerModel.value = self._serverModelCombo.currentText()
 
-    def _on_server_port_changed(self, value: int):
+    def _on_server_port_changed(self, text: str):
         """端口变化：写配置 + 联动更新服务地址显示。"""
+        try:
+            value = int(text)
+        except (TypeError, ValueError):
+            return
+        value = max(1024, min(65535, value))
         cfg.asrServerPort.value = value
         self._baseUrlEdit.setText(f"http://127.0.0.1:{value}/v1")
 
@@ -730,6 +755,8 @@ class AudioTranscribeInterface(InterfaceBase):
         for row in self._model_rows:
             row.refresh()
         self._refresh_model_combo()
+        self._refresh_structured_hint()
+        self._refresh_punc_hint()
         self._sync_controls()
 
     def _on_service_mode(self, checked: bool):
@@ -768,6 +795,8 @@ class AudioTranscribeInterface(InterfaceBase):
         for row in self._model_rows:
             row.refresh()
         self._refresh_model_combo()
+        self._refresh_structured_hint()
+        self._refresh_punc_hint()
         if ok:
             self._append_cmd(tr("asr.model.download.done"))
         else:
@@ -997,17 +1026,25 @@ class AudioTranscribeInterface(InterfaceBase):
         select_combo_value(self._deviceCombo, current)
 
     def _refresh_structured_hint(self) -> None:
+        """v0.8.13 #9：无 VAD 模型时结构化输出开关灰显禁用，并提示需先下载 VAD。"""
         if not hasattr(self, "_structuredHint"):
             return
-        self._structuredHint.setText(tr("asr.settings.structured.hint"))
+        vad_ready = fe.find_ready_vad_model() is not None
+        self._structuredSwitch.setEnabled(vad_ready)
+        if not vad_ready:
+            self._structuredHint.setText(tr("asr.settings.structured.hint.no_vad"))
+        else:
+            self._structuredHint.setText(tr("asr.settings.structured.hint"))
 
     def _refresh_punc_hint(self) -> None:
-        """v0.8.11：标点恢复提示——按开关状态与 ct-punc 是否就绪显示不同文案。"""
+        """v0.8.13 #9：ct-punc 未就绪时标点恢复开关灰显禁用，并按状态显示文案。"""
         if not hasattr(self, "_puncHint"):
             return
+        punc_ready = fe.is_model_ready("ct-punc", None)
+        self._puncSwitch.setEnabled(punc_ready)
         if not cfg.asrPunc.value:
             self._puncHint.setText(tr("asr.settings.punctuation.hint.off"))
-        elif fe.is_model_ready("ct-punc", None):
+        elif punc_ready:
             self._puncHint.setText(tr("asr.settings.punctuation.hint.on_ready"))
         else:
             self._puncHint.setText(tr("asr.settings.punctuation.hint.on_missing"))
@@ -1083,7 +1120,6 @@ class AudioTranscribeInterface(InterfaceBase):
             self._append_cmd(tr("asr.cmd.stopping"))
 
     def _on_progress(self, pct: int):
-        self._progressLabel.setText(tr("asr.progress.value", pct=pct))
         if 0 <= self._queue_pos < len(self._queue):
             cur = self._queue[self._queue_pos]
             cur["progress"] = int(pct)
@@ -1099,7 +1135,6 @@ class AudioTranscribeInterface(InterfaceBase):
         # 记录当前文件状态并自动保存 .txt（v0.8.6，不再手动保存）
         cur = self._queue[self._queue_pos] if 0 <= self._queue_pos < len(self._queue) else None
         self._append_cmd(tr("asr.cmd.done"))
-        self._progressLabel.setText(tr("asr.progress.done"))
         if cur is not None:
             cur["status"] = "done"
             cur["progress"] = 100
@@ -1128,7 +1163,6 @@ class AudioTranscribeInterface(InterfaceBase):
 
     def _on_failed(self, msg: str):
         self._append_cmd(tr("asr.cmd.failed", msg=msg))
-        self._progressLabel.setText(tr("asr.progress.failed"))
         if 0 <= self._queue_pos < len(self._queue):
             self._queue[self._queue_pos]["status"] = "failed"
             self._queue[self._queue_pos]["error"] = msg
@@ -1168,8 +1202,6 @@ class AudioTranscribeInterface(InterfaceBase):
         for tid in list(self._queueList.items):
             if tid not in live:
                 self._queueList.remove_item(tid)
-        n = len(self._queue)
-        self._fileLabel.setText(tr("asr.file.count", n=n) if n else tr("asr.file.none"))
 
     def _remove_by_id(self, task_id: str):
         """行内删除按钮：从队列数据源与渲染中移除。"""
@@ -1276,7 +1308,7 @@ class AudioTranscribeInterface(InterfaceBase):
         self.dropArea.retranslate(
             tr("asr.drop.title"), tr("asr.drop.hint"), tr("asr.drop.formats")
         )
-        self.addFileBtn.setText(tr("asr.add.file"))
+        self.addFileBtn.setText(tr("asr.add.folder"))
         self.startBtn.setText(tr("asr.queue.start"))
         self.stopBtn.setText(tr("asr.queue.stop"))
         self.removeBtn.setText(tr("asr.queue.remove"))

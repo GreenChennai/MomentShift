@@ -33,7 +33,11 @@ DEFAULT_MODEL_ID = "paraformer-large"
 DEFAULT_THREADS = 8
 
 # 模型清单（单一事实来源，UI / 下载 / 检测共用）。
-# - ``kind``：``"asr"``（可被转写流程选用）/ ``"vad"``（语音分段）/ ``"spk"``（说话人）。
+# - ``kind``：``"asr"``（可被转写流程选用）/ ``"vad"``（语音分段）/ ``"spk"``（说话人）
+#   / ``"punc"``（标点恢复）/ ``"emo"``（情感识别）。
+# - ``category``（v0.8.13）：``"main"`` = 主要模型（负责转写本身的 ASR 模型），
+#   ``"optional"`` = 可选功能模型（分段 / 说话人 / 标点 / 情感等增强能力）。
+#   UI「模型管理」按此分两组展示并排序，见 ``gui.asr_interface``。
 # - ``files`` 里的 ``urls`` 按优先级排列，下载时逐个尝试。
 # - ``hw_req``（可选）：硬件要求，不满足时 UI 禁用下载按钮，见
 #   ``core.hardware.model_hw_satisfied``。
@@ -46,6 +50,7 @@ MODEL_CATALOG: list[dict] = [
         "optional": False,
         "engine": True,
         "kind": "asr",
+        "category": "main",
         "size_mb": 238,
         "files": [
             {
@@ -79,6 +84,7 @@ MODEL_CATALOG: list[dict] = [
         "optional": True,
         "engine": True,
         "kind": "asr",
+        "category": "main",
         "size_mb": 884,
         # 884MB 模型 + 运行时开销：内存不足 4GB 的机器下载意义不大（v0.8.5 门控）
         "hw_req": {"min_ram_gb": 4},
@@ -124,6 +130,7 @@ MODEL_CATALOG: list[dict] = [
         "optional": True,
         "engine": True,
         "kind": "asr",
+        "category": "main",
         "size_mb": 241,
         "files": [
             {
@@ -165,6 +172,7 @@ MODEL_CATALOG: list[dict] = [
         "optional": True,
         "engine": False,
         "kind": "vad",
+        "category": "optional",
         "size_mb": 1,
         "files": [
             {
@@ -196,6 +204,7 @@ MODEL_CATALOG: list[dict] = [
         "optional": True,
         "engine": False,
         "kind": "spk",
+        "category": "optional",
         "size_mb": 28,
         "files": [
             {
@@ -220,6 +229,7 @@ MODEL_CATALOG: list[dict] = [
         "optional": True,
         "engine": False,
         "kind": "asr",
+        "category": "main",
         "size_mb": 800,
         "hw_req": {"nvidia_cuda": True, "min_ram_gb": 8},
         "page_url": "https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-2512",
@@ -233,21 +243,10 @@ MODEL_CATALOG: list[dict] = [
         "optional": True,
         "engine": False,
         "kind": "asr",
+        "category": "main",
         "size_mb": 800,
         "hw_req": {"nvidia_cuda": True, "min_ram_gb": 8},
         "page_url": "https://huggingface.co/FunAudioLLM/Fun-ASR-MLT-Nano-2512",
-        "files": [],
-    },
-    {
-        "id": "paraformer-zh-streaming",
-        "name_key": "asr.model.paraformer_streaming.name",
-        "desc_key": "asr.model.paraformer_streaming.desc",
-        "quantize": False,
-        "optional": True,
-        "engine": False,
-        "kind": "asr",
-        "size_mb": 220,
-        "page_url": "https://huggingface.co/funasr/paraformer-zh-streaming",
         "files": [],
     },
     {
@@ -258,6 +257,7 @@ MODEL_CATALOG: list[dict] = [
         "optional": True,
         "engine": False,
         "kind": "asr",
+        "category": "main",
         "size_mb": 1700,
         "hw_req": {"nvidia_cuda": True, "min_ram_gb": 16},
         "page_url": "https://github.com/modelscope/FunASR/blob/main/examples/industrial_data_pretraining/qwen3_asr",
@@ -271,6 +271,7 @@ MODEL_CATALOG: list[dict] = [
         "optional": True,
         "engine": False,
         "kind": "asr",
+        "category": "main",
         "size_mb": 1500,
         "hw_req": {"nvidia_cuda": True, "min_ram_gb": 16},
         "page_url": "https://github.com/modelscope/FunASR/blob/main/examples/industrial_data_pretraining/glm_asr",
@@ -284,6 +285,7 @@ MODEL_CATALOG: list[dict] = [
         "optional": True,
         "engine": False,
         "kind": "asr",
+        "category": "main",
         "size_mb": 1550,
         "hw_req": {"nvidia_cuda": True, "min_ram_gb": 8},
         "page_url": "https://github.com/modelscope/FunASR/blob/main/examples/industrial_data_pretraining/whisper",
@@ -297,6 +299,7 @@ MODEL_CATALOG: list[dict] = [
         "optional": True,
         "engine": False,
         "kind": "asr",
+        "category": "main",
         "size_mb": 809,
         "hw_req": {"nvidia_cuda": True, "min_ram_gb": 8},
         "page_url": "https://github.com/modelscope/FunASR/blob/main/examples/industrial_data_pretraining/whisper",
@@ -304,6 +307,14 @@ MODEL_CATALOG: list[dict] = [
     },
     {
         # v0.8.11：ct-punc CPU 可用（移植 punc_bin 精简版 + 标点恢复引擎）
+        #
+        # v0.8.13 修复下载 404：原先指向 HF ``funasr/ct-punc``，但该仓库**只有
+        # PyTorch 权重**（model.pt 1.13GB），根本不存在 model_quant.onnx /
+        # model.onnx —— 既下载 404，``CT_Transformer``（纯 ONNX 推理）也永远
+        # 加载不了。改用已验证可下载的 ONNX 导出镜像
+        # ``modelscope.cn/models/botaruibo/punc_ct-onnx``（master 分支）：
+        #   model_quant.onnx 282,752,912 / tokens.json 4,207,480 / config.yaml 810
+        # 该仓库只有量化版（无 fp32 model.onnx），故不再列 fp32 条目。
         "id": "ct-punc",
         "name_key": "asr.model.ct_punc.name",
         "desc_key": "asr.model.ct_punc.desc",
@@ -311,50 +322,86 @@ MODEL_CATALOG: list[dict] = [
         "optional": True,
         "engine": True,
         "kind": "punc",
-        "size_mb": 40,
-        "page_url": "https://huggingface.co/funasr/ct-punc",
+        "category": "optional",
+        "size_mb": 274,
+        "page_url": "https://modelscope.cn/models/botaruibo/punc_ct-onnx",
         "files": [
             {
                 "name": "model_quant.onnx",
-                "size": 40 * 1024 * 1024,
+                "size": 282752912,
                 "urls": [
-                    "https://huggingface.co/funasr/ct-punc/resolve/main/model_quant.onnx"
-                ],
-            },
-            {
-                "name": "model.onnx",
-                "size": 80 * 1024 * 1024,
-                "urls": [
-                    "https://huggingface.co/funasr/ct-punc/resolve/main/model.onnx"
+                    "https://modelscope.cn/models/botaruibo/punc_ct-onnx/resolve/master/model_quant.onnx"
                 ],
             },
             {
                 "name": "config.yaml",
-                "size": 2000,
+                "size": 810,
                 "urls": [
-                    "https://huggingface.co/funasr/ct-punc/resolve/main/config.yaml"
+                    "https://modelscope.cn/models/botaruibo/punc_ct-onnx/resolve/master/config.yaml"
                 ],
             },
             {
                 "name": "tokens.json",
-                "size": 1500,
+                "size": 4207480,
                 "urls": [
-                    "https://huggingface.co/funasr/ct-punc/resolve/main/tokens.json"
+                    "https://modelscope.cn/models/botaruibo/punc_ct-onnx/resolve/master/tokens.json"
                 ],
             },
         ],
     },
     {
+        # v0.8.13：emotion2vec+large（语音情感识别）。
+        #
+        # 官方只发布 PyTorch 权重（model.pt 1.86GB），推理走 ``funasr.AutoModel``
+        # → 需要 torch + 完整 funasr 包，且实测只在 NVIDIA CUDA 上可用；本软件
+        # 内置的是纯 ONNX 精简推理栈，**不捆绑 torch**。
+        # 处理方式（用户要求「留有相关调用设置」）：
+        #   - 保留完整下载配置（engine=True → 满足硬件时可正常一键下载）；
+        #   - hw_req 门控 NVIDIA CUDA，非 N 卡平台下载按钮灰显并说明原因；
+        #   - 调用入口见 ``transcribe_emotion()``，运行时按 FunASR 官方用法
+        #     AutoModel(model=...).generate(granularity="utterance") 调用，
+        #     缺依赖时抛出可读错误而不是崩溃。
         "id": "emotion2vec-large",
         "name_key": "asr.model.emotion2vec.name",
         "desc_key": "asr.model.emotion2vec.desc",
         "quantize": False,
         "optional": True,
-        "engine": False,
+        "engine": True,
         "kind": "emo",
-        "size_mb": 300,
+        "category": "optional",
+        "size_mb": 1856,
+        "hw_req": {"nvidia_cuda": True, "min_ram_gb": 8},
         "page_url": "https://huggingface.co/emotion2vec/emotion2vec_plus_large",
-        "files": [],
+        "files": [
+            {
+                "name": "model.pt",
+                "size": 1945790254,
+                "urls": [
+                    "https://huggingface.co/emotion2vec/emotion2vec_plus_large/resolve/main/model.pt"
+                ],
+            },
+            {
+                "name": "config.yaml",
+                "size": 5552,
+                "urls": [
+                    "https://huggingface.co/emotion2vec/emotion2vec_plus_large/resolve/main/config.yaml"
+                ],
+            },
+            {
+                "name": "configuration.json",
+                "size": 343,
+                "urls": [
+                    "https://huggingface.co/emotion2vec/emotion2vec_plus_large/resolve/main/configuration.json"
+                ],
+            },
+            {
+                "name": "tokens.txt",
+                "size": 119,
+                "urls": [
+                    "https://huggingface.co/emotion2vec/emotion2vec_plus_large/resolve/main/tokens.txt"
+                ],
+            },
+        ],
     },
 ]
 
@@ -399,8 +446,14 @@ def find_spec(model_id: str) -> dict | None:
 
 
 def _spec_primary_onnx(spec: dict, quantize: bool) -> str:
-    """返回该模型就绪检测用的主 ONNX 文件名。"""
-    if spec.get("kind") == "spk":
+    """返回该模型就绪检测用的主权重文件名。
+
+    v0.8.13：``emo``（emotion2vec）是 PyTorch 权重 ``model.pt``，不是 ONNX。
+    """
+    kind = spec.get("kind")
+    if kind == "emo":
+        return "model.pt"
+    if kind == "spk":
         # CAM++ 是单文件模型，文件名固定
         for f in spec["files"]:
             if f["name"].endswith(".onnx"):
@@ -409,20 +462,32 @@ def _spec_primary_onnx(spec: dict, quantize: bool) -> str:
 
 
 def spec_is_ready(spec: dict, quantize: bool | None = None) -> bool:
-    """按清单条目检查模型是否已下载完整（含 ONNX + 必需附属文件）。"""
+    """按清单条目检查模型是否已下载完整（主权重 + 必需附属文件）。
+
+    v0.8.13 修复：原实现对所有非 spk 模型一律要求 CMVN（``am.mvn``/``vad.mvn``），
+    但 ``punc``（ct-punc）与 ``emo``（emotion2vec）根本没有 CMVN 文件 ——
+    导致这两类模型即使下载完整也永远判定为「未下载」。现按 kind 分别判定。
+    """
     if quantize is None:
         quantize = bool(spec.get("quantize", False))
     d = model_dir(spec["id"])
-    onnx = d / _spec_primary_onnx(spec, quantize)
-    if not onnx.is_file():
+    primary = d / _spec_primary_onnx(spec, quantize)
+    if not primary.is_file():
         return False
-    if spec.get("kind") == "spk":
+    kind = spec.get("kind", "asr")
+    if kind == "spk":
         # CAM++ 单文件模型：onnx 就绪即就绪
         return True
+    if kind == "punc":
+        # CT-Transformer：ONNX + config.yaml + tokens.json（无 CMVN）
+        return (d / "config.yaml").is_file() and (d / "tokens.json").is_file()
+    if kind == "emo":
+        # emotion2vec：model.pt + config.yaml（无 CMVN、无 ONNX）
+        return (d / "config.yaml").is_file()
     config_ok = any((d / name).is_file() for name in ("config.yaml", "asr.yaml", "vad.yaml"))
     cmvn_ok = any((d / name).is_file() for name in ("am.mvn", "vad.mvn"))
     vocab_ok = True
-    if spec.get("kind") == "asr" and spec["id"] == "sensevoice-small":
+    if kind == "asr" and spec["id"] == "sensevoice-small":
         # SenseVoice 解码需要 tokens.json（sentencepiece 词表）
         vocab_ok = (d / "tokens.json").is_file()
     return config_ok and cmvn_ok and vocab_ok
@@ -495,9 +560,13 @@ def relocate_loose_model_files() -> int:
 
 
 def find_ready_model() -> str | None:
-    """返回第一个可用于转写的已就绪模型 id（按清单顺序）；没有则 None。"""
+    """返回第一个可用于转写的已就绪**ASR**模型 id（按清单顺序）；没有则 None。
+
+    v0.8.13 修复：ct-punc（punc）与 emotion2vec（emo）现在也是 ``engine=True``，
+    若不限定 ``kind == "asr"``，自动选模会把标点/情感模型当成转写模型返回。
+    """
     for spec in MODEL_CATALOG:
-        if not spec.get("engine", False):
+        if spec.get("kind", "asr") != "asr" or not spec.get("engine", False):
             continue
         if is_model_ready(spec["id"], spec["quantize"]):
             return spec["id"]
@@ -682,6 +751,127 @@ def transcribe_with_punc(text: str, model_id: str = "ct-punc") -> str:
     except Exception as exc:  # noqa: BLE001 - 标点失败不影响转写结果
         log.warning("标点恢复失败（保留原文）：%s", exc)
         return text
+
+
+# ---------------------------------------------------------------------------
+# 语音情感识别（v0.8.13，可选：emotion2vec+large，需 NVIDIA CUDA + 完整 funasr）
+# ---------------------------------------------------------------------------
+_emo_cache: dict = {}  # {model_id: funasr.AutoModel 实例}
+_emo_lock = threading.Lock()
+
+# emotion2vec_plus_large 的标签表（官方 tokens.txt 顺序，中文/英文双语标签）
+EMOTION_LABELS = (
+    "生气/angry",
+    "厌恶/disgusted",
+    "恐惧/fearful",
+    "开心/happy",
+    "中立/neutral",
+    "其他/other",
+    "难过/sad",
+    "吃惊/surprised",
+    "<unk>",
+)
+
+
+def emotion_available(model_id: str = "emotion2vec-large") -> tuple[bool, str]:
+    """检查情感识别是否可用（不加载模型，供 UI 灰显/提示用）。
+
+    Returns:
+        ``(可用, 原因键)``；原因键为 ``""`` / ``"no_model"``（未下载）/
+        ``"nvidia_cuda"``（非 N 卡平台）/ ``"no_funasr"``（缺完整 funasr+torch）。
+    """
+    spec = find_spec(model_id)
+    if spec is None or spec.get("kind") != "emo":
+        return False, "no_model"
+    if not is_model_ready(model_id, spec.get("quantize")):
+        return False, "no_model"
+    if cached_asr_device() != "cuda":
+        return False, "nvidia_cuda"
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("funasr") is None:
+            return False, "no_funasr"
+    except (ImportError, ValueError):
+        return False, "no_funasr"
+    return True, ""
+
+
+def _get_emotion_model(model_id: str = "emotion2vec-large"):
+    """懒加载 + 进程内单例缓存情感识别模型（``funasr.AutoModel``）。
+
+    与其余推理器不同：emotion2vec 官方只发布 PyTorch 权重，必须依赖**外部**
+    完整 funasr 包（含 torch）。本软件内置的是纯 ONNX 精简栈，不捆绑 torch，
+    因此这里显式检查依赖并抛出可读错误，绝不让 ImportError 冒到 UI。
+    """
+    ok, reason = emotion_available(model_id)
+    if not ok:
+        raise FunasrEngineError(
+            {
+                "no_model": f"情感识别模型 {model_id} 未下载",
+                "nvidia_cuda": "情感识别需要 NVIDIA CUDA 环境，当前平台不支持",
+                "no_funasr": "情感识别需要完整 funasr 包（含 PyTorch），请先安装：pip install funasr torch",
+            }.get(reason, f"情感识别不可用：{reason}")
+        )
+    with _emo_lock:
+        cached = _emo_cache.get(model_id)
+        if cached is not None:
+            return cached
+        try:
+            from funasr import AutoModel  # 外部完整 funasr（非内置精简栈）
+        except ImportError as exc:  # pragma: no cover - 依赖缺失路径
+            raise FunasrEngineError(
+                "情感识别需要完整 funasr 包（含 PyTorch），请先安装：pip install funasr torch"
+            ) from exc
+        try:
+            model = AutoModel(model=str(model_dir(model_id)), disable_update=True)
+        except Exception as exc:  # noqa: BLE001 - 第三方库异常类型不可控
+            raise FunasrEngineError(f"情感识别模型加载失败：{exc}") from exc
+        _emo_cache[model_id] = model
+        return model
+
+
+def transcribe_emotion(
+    wav_path: str,
+    model_id: str = "emotion2vec-large",
+    top_k: int = 3,
+) -> list[tuple[str, float]]:
+    """识别一段 16k wav 的说话人情感（emotion2vec+large）。
+
+    按 FunASR 官方用法调用::
+
+        AutoModel(model=...).generate(wav, granularity="utterance",
+                                      extract_embedding=False)
+
+    Args:
+        wav_path: 16k 单声道 wav 路径。
+        model_id: 情感模型 id（默认 ``emotion2vec-large``）。
+        top_k: 返回置信度最高的前 k 个标签。
+
+    Returns:
+        ``[(标签, 分数), ...]``，按分数降序；识别不出内容时返回空列表。
+
+    Raises:
+        FunasrEngineError: 模型未下载 / 平台不支持 / 缺依赖 / 推理失败，
+            ``message`` 可直接展示给用户。
+    """
+    model = _get_emotion_model(model_id)
+    try:
+        res = model.generate(
+            wav_path,
+            granularity="utterance",
+            extract_embedding=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - 第三方库异常类型不可控
+        raise FunasrEngineError(f"情感识别失败：{exc}") from exc
+    if not res:
+        return []
+    item = res[0] if isinstance(res, list) else res
+    labels = list(item.get("labels") or EMOTION_LABELS)
+    scores = list(item.get("scores") or [])
+    pairs = [(str(lab), float(sc)) for lab, sc in zip(labels, scores)]
+    pairs.sort(key=lambda kv: kv[1], reverse=True)
+    return pairs[: max(1, int(top_k))]
 
 
 def transcribe_local(
