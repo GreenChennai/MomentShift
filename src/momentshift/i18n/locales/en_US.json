@@ -707,5 +707,9 @@
   "asr.model.emotion2vec.name": "emotion2vec+large",
   "asr.model.emotion2vec.desc": "Speech emotion recognition, 300M params",
   "asr.service.url_copied": "Server URL copied to clipboard",
-  "asr.settings.model.none": "No model available"
+  "asr.settings.model.none": "No model available",
+  "asr.settings.punctuation": "Punctuation (CPU)",
+  "asr.settings.punctuation.hint.off": "When enabled, transcription results will be punctuated automatically (requires downloading ct-punc model, CPU-friendly).",
+  "asr.settings.punctuation.hint.on_ready": "Enabled. Using ct-punc to punctuate transcription.",
+  "asr.settings.punctuation.hint.on_missing": "Enabled but ct-punc model is not downloaded yet. Download it under Model Manager."
 }

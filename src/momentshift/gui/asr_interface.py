@@ -600,7 +600,10 @@ class AudioTranscribeInterface(InterfaceBase):
         svb.addWidget(field_row(tr("asr.service.enable"), self._serviceSwitch, label_width=132))
 
         # 监听端口（默认 8000，对齐用户 C:\FunASR\server.py 习惯）
+        # v0.8.11 Bug3：去掉上下调节按钮，保留数字输入框
+        from PyQt6.QtWidgets import QAbstractSpinBox
         self._portSpin = QSpinBox()
+        self._portSpin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self._portSpin.setRange(1024, 65535)
         self._portSpin.setValue(int(cfg.asrServerPort.value))
         self._portSpin.valueChanged.connect(self._on_server_port_changed)
@@ -679,20 +682,29 @@ class AudioTranscribeInterface(InterfaceBase):
     # 本地服务端模式（v0.8.9：本软件作为服务器，供其他应用调用）
     # =========================================================================
     def _refresh_server_model_combo(self) -> None:
-        """服务端推理模型下拉：engine=True 的 asr 模型（本地推理可用）。"""
-        items = [
+        """v0.8.11 Bug4：服务模型下拉只列**已下载就绪**的 asr 模型，无则「无模型可用」禁用占位。
+
+        与 ASR 设置「推理模型」下拉策略一致——列出可用的，不显示未装的也不写死。
+        """
+        combo = self._serverModelCombo
+        ready_items = [
             spec["id"]
             for spec in fe.MODEL_CATALOG
-            if spec.get("kind", "asr") == "asr" and spec.get("engine")
+            if spec.get("kind", "asr") == "asr"
+            and spec.get("engine")
+            and fe.is_model_ready(spec["id"], spec["quantize"])
         ]
-        if not items:
-            items = [fe.DEFAULT_MODEL_ID]
+        combo.clear()
+        if not ready_items:
+            combo.addItem(tr("asr.settings.model.none"))
+            combo.items[0].isEnabled = False
+            cfg.asrServerModel.value = ""
+            return
         cur = cfg.asrServerModel.value
-        self._serverModelCombo.clear()
-        for mid in items:
-            self._serverModelCombo.addItem(mid)
-        self._serverModelCombo.setCurrentText(cur if cur in items else items[0])
-        cfg.asrServerModel.value = self._serverModelCombo.currentText()
+        for mid in ready_items:
+            combo.addItem(mid)
+        combo.setCurrentText(cur if cur in ready_items else ready_items[0])
+        cfg.asrServerModel.value = combo.currentText()
 
     def _on_server_model_changed(self, _index: int):
         cfg.asrServerModel.value = self._serverModelCombo.currentText()
@@ -827,6 +839,28 @@ class AudioTranscribeInterface(InterfaceBase):
         apply_text(self._structuredHint, muted_text(), transparent=True)
         svb.addWidget(self._structuredHint)
 
+        # v0.8.11：标点恢复开关（CPU 可用，Paraformer 转写无标点 → 加上）
+        self._puncSwitch = SwitchButton()
+        self._puncSwitch.setChecked(bool(cfg.asrPunc.value))
+        self._puncSwitch.checkedChanged.connect(
+            lambda checked: setattr(cfg.asrPunc, "value", bool(checked))
+        )
+        self._settingsPuncRow = field_row(
+            tr("asr.settings.punctuation"),
+            self._puncSwitch,
+            label_width=132,
+            label_wrap=True,
+        )
+        svb.addWidget(self._settingsPuncRow)
+        self._puncHint = CaptionLabel("")
+        self._puncHint.setWordWrap(True)
+        self._puncHint.setMinimumWidth(0)
+        self._puncHint.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        apply_text(self._puncHint, muted_text(), transparent=True)
+        svb.addWidget(self._puncHint)
+
         # ④ 推理设备：策略下拉（auto/cpu/cuda）+ 检测结果显示
         self._deviceCombo = ComboBox()
         self._deviceCombo.setMinimumWidth(180)
@@ -872,6 +906,7 @@ class AudioTranscribeInterface(InterfaceBase):
         self.vbox.addWidget(scard)
         self._refresh_device_label()
         self._refresh_structured_hint()
+        self._refresh_punc_hint()
 
     def _on_output_mode(self, checked: bool):
         """输出位置开关：on=保存在源文件旁(same)，off=固定目录(fixed)。"""
@@ -965,6 +1000,17 @@ class AudioTranscribeInterface(InterfaceBase):
         if not hasattr(self, "_structuredHint"):
             return
         self._structuredHint.setText(tr("asr.settings.structured.hint"))
+
+    def _refresh_punc_hint(self) -> None:
+        """v0.8.11：标点恢复提示——按开关状态与 ct-punc 是否就绪显示不同文案。"""
+        if not hasattr(self, "_puncHint"):
+            return
+        if not cfg.asrPunc.value:
+            self._puncHint.setText(tr("asr.settings.punctuation.hint.off"))
+        elif fe.is_model_ready("ct-punc", None):
+            self._puncHint.setText(tr("asr.settings.punctuation.hint.on_ready"))
+        else:
+            self._puncHint.setText(tr("asr.settings.punctuation.hint.on_missing"))
 
     def _resolved_model_id(self) -> str | None:
         """按设置解析实际推理模型：cfg.asrModelId 空 → 自动（第一个已就绪）。"""
@@ -1217,10 +1263,12 @@ class AudioTranscribeInterface(InterfaceBase):
             self._settingsModelRow.fieldLabel.setText(tr("asr.settings.model"))
             self._settingsSegmentRow.fieldLabel.setText(tr("asr.settings.segment"))
             self._settingsStructuredRow.fieldLabel.setText(tr("asr.settings.structured"))
+            self._settingsPuncRow.fieldLabel.setText(tr("asr.settings.punctuation"))
             self._settingsDeviceRow.fieldLabel.setText(tr("asr.settings.device"))
             self._settingsOutputModeRow.fieldLabel.setText(tr("asr.settings.output"))
             self._settingsOutputRow.fieldLabel.setText(tr("asr.settings.output.folder"))
             self._refresh_structured_hint()
+            self._refresh_punc_hint()
             self._refresh_device_label()
             self._refresh_model_combo()
             self._refresh_device_combo()

@@ -707,5 +707,9 @@
   "asr.model.emotion2vec.name": "emotion2vec+large",
   "asr.model.emotion2vec.desc": "语音情感识别，300M 参数",
   "asr.service.url_copied": "服务地址已复制到剪贴板",
-  "asr.settings.model.none": "无模型可用"
+  "asr.settings.model.none": "无模型可用",
+  "asr.settings.punctuation": "标点恢复（CPU）",
+  "asr.settings.punctuation.hint.off": "开启后对转写结果自动加标点（需要先下载 ct-punc 模型，CPU 可用）。",
+  "asr.settings.punctuation.hint.on_ready": "已启用，正在使用 ct-punc 模型为转写结果加标点。",
+  "asr.settings.punctuation.hint.on_missing": "已启用但 ct-punc 模型未下载，请在「模型管理」中下载后生效。"
 }

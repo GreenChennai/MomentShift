@@ -247,8 +247,15 @@ class ThemedCard(CardWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setBorderRadius(RADIUS)
+        # v0.8.11 Bug4：选择器增加后代匹配（"ThemedCard QWidget"）—— Qt 的后代
+        # combinator 匹配所有层级。直接子选择器 ">" 漏掉孙子（中间隔 QVBoxLayout
+        # 的 statsBar/listWidget 等），默认白底穿透到屏幕。
         self.setStyleSheet(
-            tokens.transparent_children_qss("ThemedCard > QWidget", "FluentLabelBase, QLabel")
+            tokens.transparent_children_qss(
+                "ThemedCard > QWidget",
+                "ThemedCard QWidget",
+                "FluentLabelBase, QLabel",
+            )
         )
 
     def _normalBackgroundColor(self):
@@ -294,7 +301,9 @@ class CollapsibleCard(ThemedCard):
 
         self.setStyleSheet(
             tokens.transparent_children_qss(
+                # v0.8.11 Bug4：增加后代选择器覆盖孙子（直接子 ">" 漏孙子层白底）
                 "CollapsibleCard > QWidget",
+                "CollapsibleCard QWidget",
                 "QLabel, FluentLabelBase, BodyLabel, CaptionLabel, StrongBodyLabel,"
                 " TitleLabel, SubtitleLabel",
             )

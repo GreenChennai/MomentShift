@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 
 from .asr_client import AsrError, transcribe
+from .config import cfg
 from .funasr.utils.wav_io import wav_needs_normalization
 from .funasr_engine import (
     DEFAULT_THREADS,
@@ -33,6 +34,7 @@ from .funasr_engine import (
     is_model_ready,
     transcribe_local,
     transcribe_structured,
+    transcribe_with_punc,
 )
 from .platform import popen_silent, run_silent
 from .presets import guess_category
@@ -415,6 +417,9 @@ class AsrTranscribeWorker(QThread):
 
             # ⑤ 全部完成
             full_text = "\n".join(texts).strip()
+            # v0.8.11：标点恢复（可选；需 ct-punc 模型已下载；失败保留原文）
+            if cfg.asrPunc.value and full_text:
+                full_text = transcribe_with_punc(full_text)
             self.succeeded.emit(full_text)
         except AsrCancelled:
             self.failed.emit("已取消")

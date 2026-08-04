@@ -141,6 +141,8 @@ class Config(QConfig):
     asrDevice = OptionsConfigItem(
         "Asr", "Device", "auto", OptionsValidator(["auto", "cpu", "cuda"])
     )
+    # v0.8.11：标点恢复（需下载 ct-punc 模型；启用后对转写结果加标点，CPU 可用）
+    asrPunc = ConfigItem("Asr", "Punc", False)
 
     # v0.8.9：本地服务端模式（本软件作为服务器供其他应用调用）
     # - asrServerPort：监听端口，默认 8000（对齐用户 C:\FunASR\server.py 习惯）。

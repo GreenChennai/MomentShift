@@ -303,16 +303,46 @@ MODEL_CATALOG: list[dict] = [
         "files": [],
     },
     {
+        # v0.8.11：ct-punc CPU 可用（移植 punc_bin 精简版 + 标点恢复引擎）
         "id": "ct-punc",
         "name_key": "asr.model.ct_punc.name",
         "desc_key": "asr.model.ct_punc.desc",
-        "quantize": False,
+        "quantize": True,
         "optional": True,
-        "engine": False,
+        "engine": True,
         "kind": "punc",
-        "size_mb": 290,
+        "size_mb": 40,
         "page_url": "https://huggingface.co/funasr/ct-punc",
-        "files": [],
+        "files": [
+            {
+                "name": "model_quant.onnx",
+                "size": 40 * 1024 * 1024,
+                "urls": [
+                    "https://huggingface.co/funasr/ct-punc/resolve/main/model_quant.onnx"
+                ],
+            },
+            {
+                "name": "model.onnx",
+                "size": 80 * 1024 * 1024,
+                "urls": [
+                    "https://huggingface.co/funasr/ct-punc/resolve/main/model.onnx"
+                ],
+            },
+            {
+                "name": "config.yaml",
+                "size": 2000,
+                "urls": [
+                    "https://huggingface.co/funasr/ct-punc/resolve/main/config.yaml"
+                ],
+            },
+            {
+                "name": "tokens.json",
+                "size": 1500,
+                "urls": [
+                    "https://huggingface.co/funasr/ct-punc/resolve/main/tokens.json"
+                ],
+            },
+        ],
     },
     {
         "id": "emotion2vec-large",
@@ -599,6 +629,59 @@ def _postprocess_text(text: str, model_id: str) -> str:
     if model_id == "sensevoice-small":
         text = rich_transcription_postprocess(text)
     return clean_cjk_spaces(text)
+
+
+# ---------------------------------------------------------------------------
+# 标点恢复（v0.8.11，可选：CT-Transformer ct-punc，CPU 可用）
+# ---------------------------------------------------------------------------
+_punc_cache: dict = {}  # {model_id: CT_Transformer 实例}（类型注解避开 ruff F821）
+_punc_lock = threading.Lock()
+
+
+def _get_punc_model(model_id: str = "ct-punc"):
+    """懒加载 + 进程内单例缓存标点模型。"""
+    from .funasr.punc_bin import CT_Transformer
+
+    with _punc_lock:
+        cached = _punc_cache.get(model_id)
+        if cached is not None:
+            return cached
+        spec = find_spec(model_id)
+        if spec is None or spec.get("kind") != "punc":
+            raise FunasrEngineError(f"标点模型不可用：{model_id}")
+        if not is_model_ready(model_id, spec.get("quantize")):
+            raise FunasrEngineError(f"标点模型 {model_id} 未下载")
+        model = CT_Transformer(
+            model_dir=str(model_dir(model_id)),
+            intra_op_num_threads=DEFAULT_THREADS,
+        )
+        _punc_cache[model_id] = model
+        return model
+
+
+def transcribe_with_punc(text: str, model_id: str = "ct-punc") -> str:
+    """对转写结果加标点。
+
+    Args:
+        text: ASR 输出的纯文本（已 ``clean_cjk_spaces``）。
+        model_id: 标点模型 id（默认 ``ct-punc``，CPU 可用）。
+
+    Returns:
+        加标点后的文本；失败时返回原文（不抛异常给 worker）。
+    """
+    text = (text or "").strip()
+    if not text:
+        return text
+    try:
+        model = _get_punc_model(model_id)
+        result, _punc_ids = model(text)
+        return result or text
+    except FunasrEngineError as exc:
+        log.warning("标点恢复跳过：%s", exc)
+        return text
+    except Exception as exc:  # noqa: BLE001 - 标点失败不影响转写结果
+        log.warning("标点恢复失败（保留原文）：%s", exc)
+        return text
 
 
 def transcribe_local(
