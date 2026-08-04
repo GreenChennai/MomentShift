@@ -666,5 +666,10 @@
   "asr.model.goto": "前往下载",
   "asr.cmd.saved": "已保存：{path}",
   "asr.error.save_failed": "保存失败：{msg}",
-  "asr.file.count": "已添加 {n} 个文件"
+  "asr.file.count": "已添加 {n} 个文件",
+  "asr.settings.output.same": "保存在源文件旁",
+  "asr.settings.output.fixed": "保存在固定目录",
+  "asr.settings.output.folder": "输出文件夹",
+  "asr.model.refresh": "刷新模型",
+  "asr.model.relocated": "已自动归位 {n} 个模型文件"
 }

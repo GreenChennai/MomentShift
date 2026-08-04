@@ -666,5 +666,10 @@
   "asr.model.goto": "Go to Download",
   "asr.cmd.saved": "Saved: {path}",
   "asr.error.save_failed": "Save failed: {msg}",
-  "asr.file.count": "{n} file(s) added"
+  "asr.file.count": "{n} file(s) added",
+  "asr.settings.output.same": "Save Next to Source",
+  "asr.settings.output.fixed": "Save to Fixed Folder",
+  "asr.settings.output.folder": "Output Folder",
+  "asr.model.refresh": "Refresh Models",
+  "asr.model.relocated": "Relocated {n} model file(s)"
 }

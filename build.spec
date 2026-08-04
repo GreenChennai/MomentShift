@@ -75,6 +75,17 @@ hiddenimports = [
     "onnxruntime",          # v0.8.4 内置 FunASR：引擎在函数内延迟 import，显式声明防漏
     "onnxruntime.capi",
     "jieba",
+    # v0.8.7：PyInstaller 打包后 urllib.urlopen 报 "unknown url type: https" 的
+    # 经典根因是 urllib/ssl/http.client 收集不全（用户实测网络正常却下载失败）。
+    # 显式收集整套 HTTP(S) 栈。
+    "urllib.request",
+    "urllib.error",
+    "urllib.parse",
+    "http.client",
+    "ssl",
+    "email",
+    "email.mime",
+    "email.mime.multipart",
     "PIL",
     "PIL.Image",
     "momentshift.gui",

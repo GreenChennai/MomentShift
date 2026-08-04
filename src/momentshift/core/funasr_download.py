@@ -1,4 +1,4 @@
-"""FunASR 模型下载（HF 直链，纯标准库 urllib）。
+"""FunASR 模型下载（HF 直链，urllib + 双通道 opener）。
 
 职责边界：
 - 做：按模型清单把文件下载到 ``tools/funasr/<model-id>/``，带进度回调与
@@ -6,7 +6,15 @@
 - 不做：不加载模型（``core/funasr_engine``）；不弹界面（``gui/asr_interface``）。
 
 模型源：HuggingFace 直链（``User-Agent: MomentShift``），每个文件可配多个
-备选 URL 逐个尝试。模型均来自官方 funasr 组织或经核对的镜像仓库。
+备选 URL 逐个尝试。
+
+v0.8.7 下载健壮性：
+- **双通道 opener**：先直连（绕过代理，避开 urllib 代理 handler 在部分环境的
+  ``unknown url type`` 问题），失败再回退系统代理。用户浏览器能下载 HF 的
+  场景下，直连与系统代理总有一路可达。
+- **构建产物修复**：PyInstaller 打包后 urlopen 报 ``unknown url type`` 的经典
+  原因是 urllib/ssl/http.client 收集不全——build.spec hiddenimports 已补齐
+  （见 v0.8.7 提交），此处保留友好错误提示兜底。
 """
 
 from __future__ import annotations
@@ -40,6 +48,21 @@ def find_spec(model_id: str) -> dict | None:
     return None
 
 
+def _open_url(url: str):
+    """打开 URL：先直连（绕过代理），失败回退系统代理。
+
+    Returns:
+        ``http.client.HTTPResponse``（调用方负责 close）。
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        return opener.open(req, timeout=_TIMEOUT)
+    except Exception:  # noqa: BLE001 - 直连失败，回退系统代理
+        opener2 = urllib.request.build_opener()
+        return opener2.open(req, timeout=_TIMEOUT)
+
+
 def _download_file(
     url: str,
     dest_path: str,
@@ -52,16 +75,17 @@ def _download_file(
     Args:
         url: 直链地址。
         dest_path: 目标文件路径。
-        expected_size: 期望字节数；下载完成后校验，不符则删除并报错。
+        expected_size: 期望字节数（仅参考，宽容忍差校验）。
         progress_cb: ``cb(done_bytes, total_bytes)``，在下载线程同步回调。
         cancel: 置位后中止下载并抛 :class:`_DownloadCancelled`。
     """
-    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+    resp = _open_url(url)
+    try:
         total = int(resp.headers.get("Content-Length") or 0) or expected_size or 0
         done = 0
         tmp = dest_path + ".part"
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        parent = os.path.dirname(dest_path)
+        os.makedirs(parent or ".", exist_ok=True)
         with open(tmp, "wb") as fh:
             while True:
                 if cancel is not None and cancel.is_set():
@@ -73,17 +97,26 @@ def _download_file(
                 done += len(chunk)
                 if progress_cb is not None:
                     progress_cb(done, total)
-        if expected_size and abs(done - expected_size) > max(256, expected_size * 0.01):
-            # v0.8.6：HF resolve/main 是软链，文件可能更新，清单里的 size 只是参考。
-            # 硬校验会误杀（实测 paraformer config.yaml 差 133、fsmn-vad model_quant 差 2132）。
-            # 改为宽容忍差（±1% 或 256 字节），且不删除已下载文件，只记 warning。
-            log.warning(
-                "文件 %s 大小与清单不符（期望 %s，实际 %s），按实际为准继续",
-                dest_path,
-                expected_size,
-                done,
-            )
-        os.replace(tmp, dest_path)
+    finally:
+        resp.close()
+    if expected_size and abs(done - expected_size) > max(256, expected_size * 0.01):
+        # v0.8.6：HF resolve/main 是软链，文件可能更新，清单里的 size 只是参考。
+        # 硬校验会误杀（实测 paraformer config.yaml 差 133、fsmn-vad model_quant 差 2132）。
+        # 改为宽容忍差（±1% 或 256 字节），且不删除已下载文件，只记 warning。
+        log.warning(
+            "文件 %s 大小与清单不符（期望 %s，实际 %s），按实际为准继续",
+            dest_path,
+            expected_size,
+            done,
+        )
+    os.replace(tmp, dest_path)
+
+
+def _safe_remove(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 def download_model(

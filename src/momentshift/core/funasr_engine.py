@@ -16,6 +16,7 @@ ONNX 模型。
 
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 
@@ -23,7 +24,10 @@ from .asr_client import clean_cjk_spaces
 from .funasr.utils.postprocess_utils import rich_transcription_postprocess
 from .funasr.utils.wav_io import load_wav
 from .hardware import cached_asr_device
+from .logger import get_logger
 from .platform import tools_dir
+
+log = get_logger("funasr_engine")
 
 DEFAULT_MODEL_ID = "paraformer-large"
 DEFAULT_THREADS = 8
@@ -269,6 +273,59 @@ def is_model_ready(model_id: str, quantize: bool | None = None) -> bool:
     if spec is None:
         return False
     return spec_is_ready(spec, quantize)
+
+
+# v0.8.7 Bug6：手动放置模型不被识别的自动归位。
+# 用户可能把 model_quant.onnx / config.yaml 等直接放进 ``tools/funasr/`` 根目录
+# （没建 ``tools/funasr/<id>/`` 二级目录），软件默认按 <id>/ 检测不到。
+# 这里扫描根目录裸文件，按「文件名归属」自动移入对应模型子目录，幂等。
+_LOOSE_ASR_FILES = {"model_quant.onnx", "model.onnx", "config.yaml", "asr.yaml", "am.mvn", "tokens.json"}
+_LOOSE_VAD_FILES = {"model_quant.onnx", "vad.mvn", "vad.yaml"}
+
+
+def relocate_loose_model_files() -> int:
+    """把 ``tools/funasr/`` 根目录的裸模型文件自动归位到对应 ``<id>/`` 子目录。
+
+    Returns:
+        成功归位的文件数（幂等：已就位/已存在的跳过）。
+    """
+    root = models_dir()
+    if not root.is_dir():
+        return 0
+    loose = [p for p in root.iterdir() if p.is_file()]
+    if not loose:
+        return 0
+    names = {p.name for p in loose}
+    moved = 0
+
+    def _move_group(target_id: str, files: list) -> None:
+        nonlocal moved
+        target = model_dir(target_id)
+        target.mkdir(parents=True, exist_ok=True)
+        for f in files:
+            dst = target / f.name
+            if dst.exists():
+                continue  # 目标已存在不覆盖
+            try:
+                os.replace(str(f), str(dst))
+                moved += 1
+            except OSError as exc:
+                log.warning("模型文件归位失败：%s（%s）", f, exc)
+
+    # 归属判定（根目录文件组来自同一模型时按特征归位）：
+    # - vad.mvn / vad.yaml → fsmn-vad
+    # - campplus*.onnx → cam++
+    # - 其余 ASR 文件 → 有 tokens.json 归 sensevoice-small，否则 paraformer-large
+    if "vad.mvn" in names or "vad.yaml" in names:
+        _move_group("fsmn-vad", [p for p in loose if p.name in _LOOSE_VAD_FILES])
+    campplus = [p for p in loose if p.name.startswith("campplus") and p.name.endswith(".onnx")]
+    if campplus:
+        _move_group("cam++", campplus)
+    asr_files = [p for p in loose if p.name in _LOOSE_ASR_FILES]
+    if asr_files:
+        target_id = "sensevoice-small" if "tokens.json" in names else "paraformer-large"
+        _move_group(target_id, asr_files)
+    return moved
 
 
 def find_ready_model() -> str | None:
