@@ -331,9 +331,12 @@ def model_hw_satisfied(
         if device == "cuda":
             return True, None
         return False, "nvidia_cuda"
-    if isinstance(hw_req, dict) and hw_req.get("min_ram_gb"):
-        need = float(hw_req["min_ram_gb"])
-        if ram_gb is None or ram_gb < need:
+    if isinstance(hw_req, dict):
+        # v0.8.9：支持组合条件 {"nvidia_cuda": True, "min_ram_gb": N}
+        if hw_req.get("nvidia_cuda") and device != "cuda":
+            return False, "nvidia_cuda"
+        need = float(hw_req.get("min_ram_gb") or 0)
+        if need > 0 and (ram_gb is None or ram_gb < need):
             return False, "min_ram_gb"
         return True, None
     # 未知硬件要求：保守放行
