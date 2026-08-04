@@ -61,3 +61,7 @@ config.json
 # ---- Runtime logs (written next to the executable) ----
 logs/
 dist_v020/
+
+# ---- v0.8.2 推送策略：仓库只保留软件本体（开发工具与测试脚本本地保留，不推送）----
+tests/
+tools/

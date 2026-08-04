@@ -77,8 +77,7 @@ TARGET_GROUPS: dict[str, list[str]] = {
 
 # 每个预设含：输出扩展名、逻辑分类、CPU 编码参数。
 # 视频类预设在运行时可能被升级为 GPU 参数（见 build_args）。
-PROFILES: dict[str, dict] = {
-    # ----- 图片 -----
+PROFILES: dict[str, dict] = {    # ----- 图片 -----
     # -q:v 是反向刻度，1 最好 31 最差，取 2 已接近「视觉无损」
     "jpg": {"ext": ".jpg", "category": "image", "params": ["-q:v", "2"]},
     "png": {"ext": ".png", "category": "image", "params": ["-compression_level", "9"]},  # 无损
@@ -168,6 +167,23 @@ PROFILES: dict[str, dict] = {
         "params": ["-c:v", "mpeg4", "-q:v", "3", "-c:a", "libmp3lame", "-q:a", "2"],
     },
 }
+
+# v0.8.3「仅提取音频」的音频编码器映射（键为 advanced.AUDIO_FORMATS 里的格式）。
+# 与 PROFILES 里的音频预设保持一致：m4a 容器同样用 aac 编码。
+EXTRACT_AUDIO_ENCODERS: dict[str, list[str]] = {
+    "mp3": ["-c:a", "libmp3lame"],
+    "wav": ["-c:a", "pcm_s16le"],
+    "flac": ["-c:a", "flac"],
+    "aac": ["-c:a", "aac"],
+    "m4a": ["-c:a", "aac"],
+    "ogg": ["-c:a", "libvorbis"],
+}
+
+
+def extract_audio_encoder(audio_format: str) -> list[str]:
+    """返回「仅提取音频」的音频编码参数；未知格式回退 mp3。"""
+    fmt = (audio_format or "mp3").lower().lstrip(".")
+    return list(EXTRACT_AUDIO_ENCODERS.get(fmt, EXTRACT_AUDIO_ENCODERS["mp3"]))
 
 
 # --- 公开辅助函数 ---
@@ -269,11 +285,29 @@ def build_args(task, hw: dict | None = None) -> list[str]:
     profile = PROFILES[task.target_format]
     target = task.target_format
 
+    # Q3：正常链路上 Task.adv 一定是入队时的快照；这条兜底只在手工构造
+    # Task（测试 / 老调用方）时走到，此时才回退到实时快照。
+    opt = task.adv if task.adv else adv_snapshot(task.category)
+
+    # --- v0.8.3 仅提取音频：优先级最高，完全走音频提取分支 ---
+    # 启用后不再转换视频格式：丢弃全部视频参数（-c:v / -vf / 分辨率 / 帧率 /
+    # 码率 / GPU 编码器），只输出所选格式的音频流（-vn + 音频编码器）。
+    if task.category == "video" and opt and opt.get("extract_audio"):
+        return [
+            "-hide_banner",
+            "-nostats",
+            "-progress",
+            "pipe:1",
+            "-y",
+            "-i",
+            task.input_path,
+            "-vn",
+            *extract_audio_encoder(opt.get("audio_format", "mp3")),
+            task.output_path,
+        ]
+
     # --- 多文件合并为单一输出 ---
     if getattr(task, "merge", False) and getattr(task, "input_paths", None):
-        # Q3：正常链路上 Task.adv 一定是入队时的快照；这条兜底只在
-        # 手工构造 Task（测试 / 老调用方）时走到，此时才回退到实时快照。
-        opt = task.adv if task.adv else adv_snapshot(task.category)
         return build_merge_args(task.category, task.input_paths, task.output_path, opt)
 
     args = ["-hide_banner", "-nostats", "-progress", "pipe:1", "-y", "-i", task.input_path]
@@ -304,8 +338,6 @@ def build_args(task, hw: dict | None = None) -> list[str]:
         args += profile["params"]
 
     # --- 分类级高级参数微调 ---
-    # Q3：同上，优先用入队快照，兜底才读实时值。
-    opt = task.adv if task.adv else adv_snapshot(task.category)
     if opt:
         args += build_advanced_args(task.category, target, opt)
 

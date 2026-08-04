@@ -42,6 +42,7 @@ class MainWindow(FluentWindow):
         self.convertInterface = None
         self.compressInterface = None
         self.upscaleInterface = None
+        self.asrInterface = None
         self.quickLaunchInterface = None
         self.settingInterface = None
         self.aboutInterface = None
@@ -56,6 +57,15 @@ class MainWindow(FluentWindow):
                 None,
             ),
             ("upscale", "upscale_interface", "UpscaleInterface", FIF.ZOOM, "nav.upscale", None),
+            # v0.8.3：音频转文字（ASR）——「放大」与「快速调用」之间
+            (
+                "asr",
+                "asr_interface",
+                "AudioTranscribeInterface",
+                FIF.MICROPHONE,
+                "nav.asr",
+                None,
+            ),
             (
                 "quickLaunch",
                 "quick_launch_interface",
@@ -147,6 +157,7 @@ class MainWindow(FluentWindow):
             "convertInterface",
             "compressInterface",
             "upscaleInterface",
+            "asrInterface",
             "quickLaunchInterface",
             "settingInterface",
             "aboutInterface",
@@ -169,6 +180,7 @@ class MainWindow(FluentWindow):
                 "Convert": tr("nav.convert"),
                 "Compress": tr("nav.compress"),
                 "Upscale": tr("nav.upscale"),
+                "Asr": tr("nav.asr"),
                 "QuickLaunch": tr("quicklaunch.title"),
                 "Settings": tr("nav.settings"),
                 "About": tr("nav.about"),

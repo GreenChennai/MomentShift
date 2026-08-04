@@ -549,19 +549,22 @@ class AdvancedPanel(QWidget):
             lambda v: adv.__setitem__("resolution", v),
         )
         self._res_combo = res  # 保存引用供 set_video_context 动态更新
-        self.vbox.addWidget(field_row(tr("advanced.resolution"), res, label_width=80))
+        res_row = field_row(tr("advanced.resolution"), res, label_width=80)
+        self.vbox.addWidget(res_row)
         fps = _combo(
             _opt_list(advanced.FPS_OPTIONS),
             adv.get("fps", "original"),
             lambda v: adv.__setitem__("fps", v),
         )
-        self.vbox.addWidget(field_row(tr("advanced.fps"), fps, label_width=80))
+        fps_row = field_row(tr("advanced.fps"), fps, label_width=80)
+        self.vbox.addWidget(fps_row)
         br = _combo(
             _opt_list(advanced.VIDEO_BITRATES),
             adv.get("bitrate", "original"),
             lambda v: adv.__setitem__("bitrate", v),
         )
-        self.vbox.addWidget(field_row(tr("advanced.bitrate"), br, label_width=80))
+        br_row = field_row(tr("advanced.bitrate"), br, label_width=80)
+        self.vbox.addWidget(br_row)
         codec = _combo(
             [
                 (tr("advanced.original"), "original"),
@@ -572,12 +575,57 @@ class AdvancedPanel(QWidget):
             adv.get("codec", "original"),
             lambda v: adv.__setitem__("codec", v),
         )
-        self.vbox.addWidget(field_row(tr("advanced.codec"), codec, label_width=80))
+        codec_row = field_row(tr("advanced.codec"), codec, label_width=80)
+        self.vbox.addWidget(codec_row)
         merge = SwitchButton()
         merge.setChecked(bool(adv.get("merge", False)))
         merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
         # label_width 需容纳 7 个汉字，否则「合并为单个文件」显示不全
-        self.vbox.addWidget(field_row(tr("advanced.merge"), merge, label_width=132))
+        merge_row = field_row(tr("advanced.merge"), merge, label_width=132)
+        self.vbox.addWidget(merge_row)
+
+        # --- v0.8.3 仅提取音频：开关 + 提示 + 音频格式下拉 ---
+        # 启用后不再转换视频画面，只输出所选格式的音频（见 presets.build_args）。
+        extract = SwitchButton()
+        extract.setChecked(bool(adv.get("extract_audio", False)))
+        extract.checkedChanged.connect(
+            lambda b: (adv.__setitem__("extract_audio", b), self._sync_extract_audio())
+        )
+        self._extract_switch = extract
+        extract_row = field_row(tr("advanced.video.extract_audio"), extract, label_width=132)
+        self.vbox.addWidget(extract_row)
+
+        hint = CaptionLabel(tr("advanced.video.extract_audio.hint"))
+        hint.setWordWrap(True)
+        apply_text(hint, muted_text(), transparent=True)
+        self.vbox.addWidget(hint)
+        self._extract_hint = hint
+
+        fmt = _combo(
+            [(f.upper(), f) for f in advanced.AUDIO_FORMATS],  # MP3 排第一（产品要求）
+            adv.get("audio_format", "mp3"),
+            lambda v: adv.__setitem__("audio_format", v),
+        )
+        self._audio_fmt_combo = fmt
+        fmt_row = field_row(tr("advanced.video.audio_format"), fmt, label_width=132)
+        self.vbox.addWidget(fmt_row)
+        self._audio_fmt_row = fmt_row
+
+        # 提取音频时视频参数（分辨率/帧率/码率/编码器）不再生效，整行禁用
+        self._video_param_rows = [res_row, fps_row, br_row, codec_row]
+        self._sync_extract_audio()
+
+    def _sync_extract_audio(self):
+        """v0.8.3：同步「仅提取音频」开关与相关行的可用/可见状态。"""
+        adv = advanced.adv["video"]
+        enabled = bool(adv.get("extract_audio", False))
+        if hasattr(self, "_audio_fmt_row"):
+            self._audio_fmt_row.setEnabled(enabled)
+        if hasattr(self, "_extract_hint"):
+            self._extract_hint.setVisible(enabled)
+        for row in getattr(self, "_video_param_rows", []):
+            if row is not None:
+                row.setEnabled(not enabled)
 
     def _add_audio(self):
         """v0.4.2：音频参数直接展开。"""

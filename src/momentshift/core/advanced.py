@@ -52,6 +52,9 @@ CODECS = ["original", "H.264", "H.265", "copy"]
 SAMPLE_RATES = ["original", "48000", "44100"]
 CHANNELS = ["original", "stereo", "mono"]
 
+# 「仅提取音频」的可选音频格式（v0.8.3）。MP3 必须排第一（产品要求）。
+AUDIO_FORMATS = ["mp3", "wav", "flac", "aac", "m4a", "ogg"]
+
 
 def probe_video_size(path: str) -> tuple[int, int] | None:
     """用 ffprobe 探测视频分辨率。
@@ -154,6 +157,9 @@ def default_options() -> dict:
             "codec": "original",
             "crf": 18,
             "merge": False,
+            # v0.8.3：「仅提取音频」——启用后不再转换视频画面，只输出音频。
+            "extract_audio": False,
+            "audio_format": "mp3",
         },
         "audio": {
             "bitrate": "original",
@@ -219,6 +225,17 @@ def snapshot(category: str) -> dict:
 def is_merge_enabled(category: str) -> bool:
     with _LOCK:
         return bool(adv.get(category, {}).get("merge", False))
+
+
+def is_extract_audio_enabled(category: str) -> bool:
+    """v0.8.3：视频分类是否启用了「仅提取音频」。
+
+    该开关只对视频分类有意义；其他分类一律返回 False。
+    """
+    if category != "video":
+        return False
+    with _LOCK:
+        return bool(adv.get("video", {}).get("extract_audio", False))
 
 
 def build_advanced_args(category: str, target: str, options: dict | None = None) -> list[str]:

@@ -367,8 +367,23 @@ class ConversionManager(QObject):
             return added, skipped
         category = guess_category(existing[0])
 
+        # v0.8.3「仅提取音频」：把目标格式改写为所选音频格式（mp3/wav/...）。
+        # 输出扩展名、use_gpu、队列展示的目标格式全部随 PROFILES 自动对齐。
+        if category and advanced.is_extract_audio_enabled(category):
+            audio_fmt = str(
+                advanced.get("video").get("audio_format", "mp3") or "mp3"
+            ).lower().lstrip(".")
+            if audio_fmt in PROFILES:
+                target_format = audio_fmt
+
         # --- 合并模式：只产出一个合并任务 ---
-        if category and advanced.is_merge_enabled(category) and len(existing) > 1:
+        # 仅提取音频时跳过合并（音频提取是逐文件独立输出，concat 语义不适用）。
+        if (
+            category
+            and advanced.is_merge_enabled(category)
+            and len(existing) > 1
+            and not advanced.is_extract_audio_enabled(category)
+        ):
             profile = PROFILES[target_format]
             if output_mode == "same":
                 out_dir = Path(existing[0]).parent

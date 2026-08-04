@@ -26,6 +26,8 @@ from qfluentwidgets import (
     qconfig,
 )
 
+from .asr_client import DEFAULT_BASE_URL as _DEFAULT_ASR_BASE_URL
+from .asr_client import DEFAULT_MODEL as _DEFAULT_ASR_MODEL
 from .platform import app_base_dir, config_file
 
 # 目录解析统一下沉到 core.platform。这里保留 ``app_base_dir`` /
@@ -119,6 +121,13 @@ class Config(QConfig):
     # 快速调用通知开关（开始 / 完成 两个独立开关，默认都开）
     quickNotifyStart = ConfigItem("QuickLaunch", "NotifyStart", True)
     quickNotifyDone = ConfigItem("QuickLaunch", "NotifyDone", True)
+
+    # 音频转文字（ASR）：FunASR OpenAI 兼容 HTTP 服务的三件套（v0.8.3）
+    # 默认值即「零配置连本地已部署的服务」；界面上另有「启用服务模式」开关，
+    # 关闭时使用内置默认地址/模型，开启后使用下面这三项。
+    asrBaseUrl = ConfigItem("Asr", "BaseUrl", _DEFAULT_ASR_BASE_URL)
+    asrModel = ConfigItem("Asr", "Model", _DEFAULT_ASR_MODEL)
+    asrApiKey = ConfigItem("Asr", "ApiKey", "")
 
 
 cfg = Config()
