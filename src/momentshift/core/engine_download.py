@@ -31,12 +31,17 @@ class EngineDownloadSignals(QObject):
 # --------------------------------------------------------------------------
 # 源解析
 # --------------------------------------------------------------------------
-def _github_latest_asset_url(repo: str, asset_substr: str) -> str | None:
-    """解析 GitHub 最新 Release 中名字含 ``asset_substr`` 的资源下载地址。
+def _github_asset_url(repo: str, asset_substr: str, tag: str | None = None) -> str | None:
+    """解析 GitHub Release 中名字含 ``asset_substr`` 的资源下载地址。
 
+    ``tag`` 给定时固定取该 tag 对应的 release（用于规避「最新 release 无可用附件」
+    的仓库，例如 Real-ESRGAN），否则取最新 release。
     无法访问（限流 / 离线）时返回 ``None``，调用方回退到下一个源。
     """
-    api = f"https://api.github.com/repos/{repo}/releases/latest"
+    if tag:
+        api = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+    else:
+        api = f"https://api.github.com/repos/{repo}/releases/latest"
     try:
         req = urllib.request.Request(api, headers={"User-Agent": "MomentShift"})
         with urllib.request.urlopen(req, timeout=60) as resp:
@@ -51,10 +56,20 @@ def _github_latest_asset_url(repo: str, asset_substr: str) -> str | None:
 
 
 def _resolve_source(kind: str, value: str) -> str | None:
-    """把一条 (kind, value) 源解析成具体下载 URL。"""
+    """把一条 (kind, value) 源解析成具体下载 URL。
+
+    ``gh`` 的 value 格式为 ``repo|tag?|asset子串``：
+    - ``repo|asset子串``       → 取最新 release 中匹配附件
+    - ``repo|tag|asset子串``   → 固定取 tag 对应 release（最新 release 无附件时用）
+    """
     if kind == "gh":
-        repo, _, substr = value.partition("|")
-        return _github_latest_asset_url(repo, substr or "")
+        parts = value.split("|")
+        repo = parts[0]
+        if len(parts) >= 3:
+            tag, substr = parts[1], parts[2]
+        else:
+            tag, substr = None, parts[-1]
+        return _github_asset_url(repo, substr, tag=tag)
     if kind in ("hf", "url"):
         return value
     return None

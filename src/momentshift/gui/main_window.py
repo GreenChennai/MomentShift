@@ -24,6 +24,7 @@ from qfluentwidgets import (
     SplashScreen,
 )
 
+from ..core import quick_launch
 from ..core.config import cfg, connect_autosave
 from ..core.logger import get_logger
 from ..core.qt_compat import QSize
@@ -119,6 +120,9 @@ class MainWindow(FluentWindow):
         self.convertInterface.retranslateUi()
         self.splashScreen.finish()
         for i, spec in enumerate(self._lazy):
+            # 快速调用（Windows 右键菜单）仅 Windows 可用，其他平台不加载该页面
+            if spec[0] == "quickLaunch" and not quick_launch.supported():
+                continue
             QTimer.singleShot(20 * (i + 1), lambda s=spec: self._build_lazy(*s))
 
     def _build_lazy(self, name, mod, clsname, icon, title_key, position):

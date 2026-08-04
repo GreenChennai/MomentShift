@@ -25,9 +25,18 @@ import subprocess
 import sys
 
 from .logger import get_logger
-from .platform import run_silent
+from .platform import IS_WINDOWS, run_silent
 
 log = get_logger("quick_launch")
+
+
+def supported() -> bool:
+    """快速调用（Windows 右键菜单）是否在本平台可用。
+
+    注册表集成仅 Windows 支持；Linux / macOS 无对应机制，调用方应隐藏入口
+    （界面显示占位说明，设置页不加载）。
+    """
+    return IS_WINDOWS
 
 # 注册表根键（HKEY_CURRENT_USER，无需管理员权限）
 _REG_ROOT = r"HKCU\Software\Classes"
@@ -88,6 +97,9 @@ def register_context_menu(task: str) -> bool:
         log.warning("quick_launch: unknown task %s", task)
         return False
 
+    if not supported():
+        return False
+
     info = _TASKS[task]
     try:
         # 1. 创建菜单项（显示名）
@@ -126,6 +138,9 @@ def unregister_context_menu(task: str) -> bool:
     if task not in _TASKS:
         return False
 
+    if not supported():
+        return True
+
     info = _TASKS[task]
     try:
         key = f"{_REG_ROOT}\\*\\shell\\{info['name']}"
@@ -153,6 +168,8 @@ def is_context_menu_registered(task: str) -> bool:
     """
     if task not in _TASKS:
         return False
+    if not supported():
+        return False
     info = _TASKS[task]
     key = f"{_REG_ROOT}\\*\\shell\\{info['name']}"
     result = run_silent(["reg", "query", key], capture_output=True, text=True)
@@ -170,6 +187,8 @@ def apply_all(enabled: bool, tasks_on: dict[str, bool]) -> dict[str, bool]:
         实际变更后的注册状态，如 {"convert": True, "compress": False}
     """
     result: dict[str, bool] = {}
+    if not supported():
+        return {t: False for t in _TASKS}
     for task in _TASKS:
         should_be_on = enabled and tasks_on.get(task, False)
         if should_be_on:

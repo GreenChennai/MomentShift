@@ -31,7 +31,7 @@ from pathlib import Path
 
 from .config import tools_dir
 from .logger import get_logger
-from .platform import run_silent
+from .platform import binary_name, run_silent
 from .qt_compat import QObject, QRunnable, Signal
 
 log = get_logger("upscaler")
@@ -46,8 +46,8 @@ def realesrgan_dir() -> Path:
 
 
 def engine_exe() -> Path:
-    """返回 realesrgan-ncnn-vulkan 可执行文件的绝对路径。"""
-    return realesrgan_dir() / "realesrgan-ncnn-vulkan.exe"
+    """返回 realesrgan-ncnn-vulkan 可执行文件的绝对路径（按平台带后缀）。"""
+    return realesrgan_dir() / binary_name("realesrgan-ncnn-vulkan")
 
 
 def models_dir() -> Path:
@@ -280,7 +280,7 @@ def _probe_fps(ffmpeg: str, input_path: str) -> float:
     Notes:
         ffprobe 返回的是 ``30000/1001`` 这类分数形式，需要自行做除法换算。
     """
-    ffprobe = shutil.which("ffprobe") or str(Path(ffmpeg).parent / "ffprobe.exe")
+    ffprobe = shutil.which("ffprobe") or str(Path(ffmpeg).parent / binary_name("ffprobe"))
     if not ffprobe or not Path(ffprobe).is_file():
         return 25.0
     try:

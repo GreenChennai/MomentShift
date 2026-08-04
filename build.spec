@@ -11,6 +11,7 @@ is exactly where :mod:`momentshift.core.ffmpeg` looks for them.
 """
 
 import os
+import sys
 
 APP_NAME = "MomentShift"
 # PyInstaller executes this spec via exec() and defines SPECPATH (the directory
@@ -28,13 +29,18 @@ binaries = []
 datas = [
     (os.path.join(SRC_DIR, "momentshift", "resources", "icons"), "momentshift/resources/icons"),
     (os.path.join(SRC_DIR, "momentshift", "i18n", "locales"), "momentshift/i18n/locales"),
-    (os.path.join(SRC_DIR, "momentshift", "resources", "oxipng.exe"), "momentshift/resources"),
-    (os.path.join(SRC_DIR, "momentshift", "resources", "jpegoptim.exe"), "momentshift/resources"),
-    (os.path.join(SRC_DIR, "momentshift", "resources", "gifsicle.exe"), "momentshift/resources"),  # v0.7.30
     # v0.8.1：随包字体（load_app_fonts 从 src/momentshift/resources/ 查找）
     (os.path.join(SRC_DIR, "momentshift", "resources", "HarmonyOS_Sans_SC_Regular.ttf"), "momentshift/resources"),
     (os.path.join(SRC_DIR, "momentshift", "resources", "FiraCode-Regular.ttf"), "momentshift/resources"),
 ]
+
+# 压缩工具二进制：Windows 随包 ``*.exe``；Linux / macOS 若有同名无后缀二进制也一并打包。
+# 仅当文件实际存在才打包（不同平台构建时按平台放入对应二进制，缺失则跳过，不报错）。
+for _stem in ("oxipng", "jpegoptim", "gifsicle"):
+    _fname = f"{_stem}.exe" if sys.platform == "win32" else _stem
+    _src = os.path.join(SRC_DIR, "momentshift", "resources", _fname)
+    if os.path.isfile(_src):
+        datas.append((_src, "momentshift/resources"))
 
 hiddenimports = [
     "momentshift",

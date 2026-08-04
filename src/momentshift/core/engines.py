@@ -31,13 +31,13 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .config import tools_dir
 from .logger import get_logger
-from .platform import popen_silent, run_silent
+from .platform import binary_name, platform_tag, popen_silent, run_silent
 
 log = get_logger("engines")
 
@@ -92,7 +92,10 @@ class Engine:
     cli: bool = True  # False = 无命令行，仅提示（如 RTX VSR）
     interp_count_flag: str = "-n"  # 插帧：目标帧数开关
     downloadable: bool = False  # 是否支持「一键下载引擎与模型」
-    download_sources: tuple[tuple[str, str], ...] = ()  # 优先级下载源 (kind, value)
+    # 按平台键控的优先级下载源：``{"win": (...), "linux": (...), "mac": (...)}``，
+    # 每条源是 (kind, value)。kind 为 "gh"（GitHub release，value=``repo|tag?|asset子串``，
+    # 带 tag 时固定取该 tag 的附件而非最新）、"hf"/"url"（直链）。
+    download_sources: dict[str, tuple[tuple[str, str], ...]] = field(default_factory=dict)
     download_reason_key: str = ""  # 不可下载时的原因 i18n 键
 
     @property
@@ -201,7 +204,17 @@ ENGINES: tuple[Engine, ...] = (
         homepage="https://github.com/xinntao/Real-ESRGAN/releases",
         legacy_dirs=("realesrgan",),
         downloadable=True,
-        download_sources=(("gh", "xinntao/Real-ESRGAN|windows.zip"),),
+        download_sources={
+            "win": (
+                ("gh", "xinntao/Real-ESRGAN|v0.2.5.0|realesrgan-ncnn-vulkan-20220424-windows.zip"),
+            ),
+            "linux": (
+                ("gh", "xinntao/Real-ESRGAN|v0.2.5.0|realesrgan-ncnn-vulkan-20220424-ubuntu.zip"),
+            ),
+            "mac": (
+                ("gh", "xinntao/Real-ESRGAN|v0.2.5.0|realesrgan-ncnn-vulkan-20220424-macos.zip"),
+            ),
+        },
         model_flag="-n",
         model_style="name",
         models_root="models",
@@ -232,7 +245,11 @@ ENGINES: tuple[Engine, ...] = (
         exe_names=("waifu2x-ncnn-vulkan.exe", "waifu2x-ncnn-vulkan"),
         homepage="https://github.com/nihui/waifu2x-ncnn-vulkan/releases",
         downloadable=True,
-        download_sources=(("gh", "nihui/waifu2x-ncnn-vulkan|windows.zip"),),
+        download_sources={
+            "win": (("gh", "nihui/waifu2x-ncnn-vulkan|windows.zip"),),
+            "linux": (("gh", "nihui/waifu2x-ncnn-vulkan|linux.zip"),),
+            "mac": (("gh", "nihui/waifu2x-ncnn-vulkan|macos.zip"),),
+        },
         model_flag="-m",
         model_style="dir",
         params=(
@@ -263,7 +280,7 @@ ENGINES: tuple[Engine, ...] = (
         exe_names=("waifu2x-caffe-cui.exe", "waifu2x-caffe.exe"),
         homepage="https://github.com/lltcggie/waifu2x-caffe/releases",
         downloadable=True,
-        download_sources=(("gh", "lltcggie/waifu2x-caffe|waifu2x-caffe"),),
+        download_sources={"win": (("gh", "lltcggie/waifu2x-caffe|waifu2x-caffe"),)},
         model_flag="--model_dir",
         model_style="dir",
         params=(
@@ -323,7 +340,7 @@ ENGINES: tuple[Engine, ...] = (
         ),
         homepage="https://github.com/DeadSix27/waifu2x-converter-cpp/releases",
         downloadable=True,
-        download_sources=(("gh", "DeadSix27/waifu2x-converter-cpp|windows"),),
+        download_sources={"win": (("gh", "DeadSix27/waifu2x-converter-cpp|windows"),)},
         model_flag="--model-dir",
         model_style="dir",
         params=(
@@ -364,7 +381,11 @@ ENGINES: tuple[Engine, ...] = (
         exe_names=("srmd-ncnn-vulkan.exe", "srmd-ncnn-vulkan"),
         homepage="https://github.com/nihui/srmd-ncnn-vulkan/releases",
         downloadable=True,
-        download_sources=(("gh", "nihui/srmd-ncnn-vulkan|windows.zip"),),
+        download_sources={
+            "win": (("gh", "nihui/srmd-ncnn-vulkan|windows.zip"),),
+            "linux": (("gh", "nihui/srmd-ncnn-vulkan|linux.zip"),),
+            "mac": (("gh", "nihui/srmd-ncnn-vulkan|macos.zip"),),
+        },
         model_flag="-m",
         model_style="dir",
         params=(
@@ -419,7 +440,11 @@ ENGINES: tuple[Engine, ...] = (
         exe_names=("realsr-ncnn-vulkan.exe", "realsr-ncnn-vulkan"),
         homepage="https://github.com/nihui/realsr-ncnn-vulkan/releases",
         downloadable=True,
-        download_sources=(("gh", "nihui/realsr-ncnn-vulkan|windows.zip"),),
+        download_sources={
+            "win": (("gh", "nihui/realsr-ncnn-vulkan|windows.zip"),),
+            "linux": (("gh", "nihui/realsr-ncnn-vulkan|linux.zip"),),
+            "mac": (("gh", "nihui/realsr-ncnn-vulkan|macos.zip"),),
+        },
         model_flag="-m",
         model_style="dir",
         params=(
@@ -448,7 +473,11 @@ ENGINES: tuple[Engine, ...] = (
         exe_names=("realcugan-ncnn-vulkan.exe", "realcugan-ncnn-vulkan"),
         homepage="https://github.com/nihui/realcugan-ncnn-vulkan/releases",
         downloadable=True,
-        download_sources=(("gh", "nihui/realcugan-ncnn-vulkan|windows.zip"),),
+        download_sources={
+            "win": (("gh", "nihui/realcugan-ncnn-vulkan|windows.zip"),),
+            "linux": (("gh", "nihui/realcugan-ncnn-vulkan|linux.zip"),),
+            "mac": (("gh", "nihui/realcugan-ncnn-vulkan|macos.zip"),),
+        },
         model_flag="-m",
         model_style="dir",
         params=(
@@ -486,7 +515,7 @@ ENGINES: tuple[Engine, ...] = (
         exe_names=("Anime4KCPP_CLI.exe", "ac_cli.exe", "Anime4KCPP_CLI"),
         homepage="https://github.com/TianZerL/Anime4KCPP/releases",
         downloadable=True,
-        download_sources=(("gh", "TianZerL/Anime4KCPP|Windows"),),
+        download_sources={"win": (("gh", "TianZerL/Anime4KCPP|Windows"),)},
         params=(
             Param("acnet", "bool", True, "-C", style="switch"),
             Param(
@@ -528,7 +557,11 @@ ENGINES: tuple[Engine, ...] = (
         exe_names=("rife-ncnn-vulkan.exe", "rife-ncnn-vulkan"),
         homepage="https://github.com/nihui/rife-ncnn-vulkan/releases",
         downloadable=True,
-        download_sources=(("gh", "nihui/rife-ncnn-vulkan|windows.zip"),),
+        download_sources={
+            "win": (("gh", "nihui/rife-ncnn-vulkan|windows.zip"),),
+            "linux": (("gh", "nihui/rife-ncnn-vulkan|linux.zip"),),
+            "mac": (("gh", "nihui/rife-ncnn-vulkan|macos.zip"),),
+        },
         model_flag="-m",
         model_style="dir",
         params=(
@@ -562,7 +595,11 @@ ENGINES: tuple[Engine, ...] = (
         exe_names=("cain-ncnn-vulkan.exe", "cain-ncnn-vulkan"),
         homepage="https://github.com/nihui/cain-ncnn-vulkan/releases",
         downloadable=True,
-        download_sources=(("gh", "nihui/cain-ncnn-vulkan|windows.zip"),),
+        download_sources={
+            "win": (("gh", "nihui/cain-ncnn-vulkan|windows.zip"),),
+            "linux": (("gh", "nihui/cain-ncnn-vulkan|linux.zip"),),
+            "mac": (("gh", "nihui/cain-ncnn-vulkan|macos.zip"),),
+        },
         model_flag="-m",
         model_style="dir",
         params=(
@@ -580,7 +617,11 @@ ENGINES: tuple[Engine, ...] = (
         exe_names=("dain-ncnn-vulkan.exe", "dain-ncnn-vulkan"),
         homepage="https://github.com/nihui/dain-ncnn-vulkan/releases",
         downloadable=True,
-        download_sources=(("gh", "nihui/dain-ncnn-vulkan|windows.zip"),),
+        download_sources={
+            "win": (("gh", "nihui/dain-ncnn-vulkan|windows.zip"),),
+            "linux": (("gh", "nihui/dain-ncnn-vulkan|linux.zip"),),
+            "mac": (("gh", "nihui/dain-ncnn-vulkan|macos.zip"),),
+        },
         model_flag="-m",
         model_style="dir",
         params=(
@@ -599,7 +640,11 @@ ENGINES: tuple[Engine, ...] = (
         exe_names=("ifrnet-ncnn-vulkan.exe", "ifrnet-ncnn-vulkan"),
         homepage="https://github.com/nihui/ifrnet-ncnn-vulkan/releases",
         downloadable=True,
-        download_sources=(("gh", "nihui/ifrnet-ncnn-vulkan|windows.zip"),),
+        download_sources={
+            "win": (("gh", "nihui/ifrnet-ncnn-vulkan|windows.zip"),),
+            "linux": (("gh", "nihui/ifrnet-ncnn-vulkan|linux.zip"),),
+            "mac": (("gh", "nihui/ifrnet-ncnn-vulkan|macos.zip"),),
+        },
         model_flag="-m",
         model_style="dir",
         params=(
@@ -625,6 +670,20 @@ ENGINES: tuple[Engine, ...] = (
 )
 
 ENGINE_BY_ID: dict[str, Engine] = {e.eid: e for e in ENGINES}
+
+
+def download_sources_for(eid: str, platform: str | None = None) -> list[tuple[str, str]]:
+    """返回当前（或指定）平台下该引擎的下载源列表，无源返回 ``[]``。
+
+    Args:
+        eid: 引擎 id。
+        platform: ``"win"`` / ``"linux"`` / ``"mac"``；省略时取当前运行平台。
+    """
+    eng = ENGINE_BY_ID.get(eid)
+    if not eng or not eng.download_sources:
+        return []
+    key = platform or platform_tag()
+    return list(eng.download_sources.get(key, ()))
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 ANIM_EXTS = {".gif"}
@@ -910,7 +969,7 @@ def run_image(
 
 
 def _probe_fps(ffmpeg: str, src: str) -> float:
-    ffprobe = shutil.which("ffprobe") or str(Path(ffmpeg).parent / "ffprobe.exe")
+    ffprobe = shutil.which("ffprobe") or str(Path(ffmpeg).parent / binary_name("ffprobe"))
     if not ffprobe or not Path(ffprobe).is_file():
         return 25.0
     try:

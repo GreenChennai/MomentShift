@@ -21,6 +21,46 @@ from pathlib import Path
 # Windows 下抑制子进程控制台窗口；其他平台该常量不存在，取 0 表示"无额外标志"。
 WIN_SILENT: int = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+# 当前平台标识（多平台兼容的唯一事实源，core/ 与 gui/ 一律从这里取，
+# 不再散落 sys.platform 判断）。v0.8.x 起支持从源码在 Linux / macOS 直接运行。
+IS_WINDOWS: bool = sys.platform == "win32"
+IS_MACOS: bool = sys.platform == "darwin"
+IS_LINUX: bool = sys.platform.startswith("linux")
+
+
+def platform_tag() -> str:
+    """返回当前平台的简短标签：``"win"`` / ``"mac"`` / ``"linux"``。
+
+    用于下载源按平台筛选、i18n 文案分支等场景。
+    """
+    if IS_WINDOWS:
+        return "win"
+    if IS_MACOS:
+        return "mac"
+    return "linux"
+
+
+def binary_name(stem: str) -> str:
+    """返回带平台正确后缀的可执行文件名。
+
+    Windows 上可执行文件带 ``.exe`` 后缀；Linux / macOS 上没有后缀。
+
+    Args:
+        stem: 二进制名干，例如 ``"oxipng"``。
+    Returns:
+        Windows 返回 ``"oxipng.exe"``，其他平台返回 ``"oxipng"``。
+    """
+    return f"{stem}.exe" if IS_WINDOWS else stem
+
+
+def strip_exe_suffix(name: str) -> str:
+    """去掉文件名末尾的 ``.exe``（大小写不敏感），无后缀则原样返回。
+
+    用于把 ``"oxipng.exe"`` 与 ``"oxipng"`` 统一成同一个 stem 再按平台拼回。
+    """
+    return name[:-4] if name.lower().endswith(".exe") else name
+
+
 # 本文件位于 src/momentshift/core/platform.py，开发态下仓库根在第 3 层父目录。
 _DEV_REPO_ROOT_DEPTH = 3
 

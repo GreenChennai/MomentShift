@@ -16,12 +16,11 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import threading
 
 from .ffmpeg import get_encoders
 from .logger import get_logger
-from .platform import run_silent
+from .platform import IS_LINUX, IS_MACOS, IS_WINDOWS, run_silent
 
 log = get_logger("hardware")
 
@@ -35,10 +34,19 @@ _PROBE_LOCK = threading.Lock()
 
 
 def _nvidia_runtime_available() -> bool:
-    """True 表示 NVENC 运行时可用（Windows: nvcuda.dll 存在）。"""
-    if sys.platform == "win32":
+    """True 表示 NVENC/CUDA 运行时可用。
+
+    - Windows: ``nvcuda.dll`` 存在于 System32。
+    - Linux:   ``libcuda.so`` 在标准库路径可定位（CUDA 驱动已装）。
+    - macOS:   CUDA 不支持，返回 ``False``。
+    """
+    if IS_WINDOWS:
         root = os.environ.get("SystemRoot") or r"C:\Windows"
         return os.path.exists(os.path.join(root, "System32", "nvcuda.dll"))
+    if IS_LINUX:
+        import ctypes.util
+
+        return ctypes.util.find_library("cuda") is not None
     return False
 
 
@@ -234,7 +242,7 @@ def asr_inference_device(providers: list[str] | None = None, nvidia_ok: bool | N
 
     Args:
         providers: onnxruntime 可用 provider 列表；None 时实时探测。
-        nvidia_ok: NVIDIA 运行时是否可用（Windows 查 nvcuda.dll）；None 时实时探测。
+        nvidia_ok: NVIDIA 运行时是否可用（Windows 查 nvcuda.dll / Linux 查 libcuda.so）；None 时实时探测。
 
     Returns:
         ``"cuda"`` 仅当 NVIDIA 驱动可用且 providers 含 ``CUDAExecutionProvider``；
@@ -273,37 +281,64 @@ def asr_device_label(device: str) -> str:
 
 
 def detect_ram_gb() -> float | None:
-    """返回物理内存大小（GB）；探测失败返回 None（Windows 读 GlobalMemoryStatusEx）。
+    """返回物理内存大小（GB）；探测失败返回 None。
+
+    - Windows: ``GlobalMemoryStatusEx``。
+    - Linux:   ``/proc/meminfo`` 的 ``MemTotal``。
+    - macOS:   ``sysctl hw.memsize``。
 
     Returns:
         内存 GB 数（浮点）；无法探测时 None。
     """
-    if sys.platform != "win32":
-        return None
-    try:
-        import ctypes
+    if IS_WINDOWS:
+        try:
+            import ctypes
 
-        class _MemoryStatus(ctypes.Structure):
-            _fields_ = [
-                ("dwLength", ctypes.c_ulong),
-                ("dwMemoryLoad", ctypes.c_ulong),
-                ("ullTotalPhys", ctypes.c_ulonglong),
-                ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong),
-                ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong),
-                ("ullAvailVirtual", ctypes.c_ulonglong),
-                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-            ]
+            class _MemoryStatus(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
 
-        stat = _MemoryStatus()
-        stat.dwLength = ctypes.sizeof(_MemoryStatus)
-        ok = ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
-        if not ok:
+            stat = _MemoryStatus()
+            stat.dwLength = ctypes.sizeof(_MemoryStatus)
+            ok = ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            if not ok:
+                return None
+            return stat.ullTotalPhys / (1024.0**3)
+        except Exception:  # noqa: BLE001 - 探测失败按未知处理
             return None
-        return stat.ullTotalPhys / (1024.0**3)
-    except Exception:  # noqa: BLE001 - 探测失败按未知处理
+    if IS_LINUX:
+        try:
+            with open("/proc/meminfo") as fh:
+                for line in fh:
+                    if line.startswith("MemTotal:"):
+                        kb = int(line.split()[1])
+                        return kb / (1024.0**3)
+        except Exception:  # noqa: BLE001 - /proc/meminfo 不可读按未知处理
+            return None
         return None
+    if IS_MACOS:
+        try:
+            proc = run_silent(
+                ["sysctl", "-n", "hw.memsize"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if proc.returncode == 0:
+                return int(proc.stdout.strip()) / (1024.0**3)
+        except Exception:  # noqa: BLE001 - sysctl 不可用按未知处理
+            return None
+        return None
+    return None
 
 
 # 模型硬件要求的可读原因（i18n key 前缀 ``asr.model.hw_reason`` 由界面拼装）。

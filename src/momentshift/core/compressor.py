@@ -40,7 +40,7 @@ from pathlib import Path
 
 from .formatting import human_size
 from .logger import get_logger
-from .platform import resources_dir, run_silent, tools_dir
+from .platform import binary_name, resources_dir, run_silent, strip_exe_suffix, tools_dir
 
 log = get_logger("compressor")
 
@@ -323,15 +323,15 @@ def _bundled(exe_name: str) -> str | None:
 
 
 def _bundled_oxipng() -> str | None:
-    return _bundled("oxipng.exe")
+    return _bundled(binary_name("oxipng"))
 
 
 def _bundled_jpegoptim() -> str | None:
-    return _bundled("jpegoptim.exe")
+    return _bundled(binary_name("jpegoptim"))
 
 
 def _bundled_gifsicle() -> str | None:
-    return _bundled("gifsicle.exe")
+    return _bundled(binary_name("gifsicle"))
 
 
 def find_tool(name: str) -> str | None:
@@ -339,8 +339,8 @@ def find_tool(name: str) -> str | None:
 
     ``name`` 可带或不带 ``.exe``。找不到返回 ``None``。
     """
-    stem = name[:-4] if name.lower().endswith(".exe") else name
-    exe = f"{stem}.exe"
+    stem = strip_exe_suffix(name)
+    exe = binary_name(stem)
 
     p = _bundled(exe)
     if p:
@@ -377,7 +377,8 @@ def _gifsicle_bin_exe() -> str | None:
         dist = _md.distribution("gifsicle-bin")
         for f in dist.files or []:
             name = (f.name or "").lower()
-            if name.endswith("gifsicle.exe") or name.endswith("gifsicle-bin.exe"):
+            stem = name[:-4] if name.endswith(".exe") else name
+            if "gifsicle" in stem:
                 base = dist.locate_file(f)
                 if os.path.isfile(str(base)):
                     return str(base)

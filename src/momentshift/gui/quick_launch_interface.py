@@ -132,6 +132,19 @@ class QuickLaunchInterface(InterfaceBase):
     def __init__(self, parent=None):
         super().__init__("QuickLaunch", tr("quicklaunch.title"), tr("quicklaunch.subtitle"), parent)
 
+        # Linux / macOS 无右键菜单机制：只显示说明占位，不渲染注册表相关控件。
+        if not quick_launch.supported():
+            ph = ThemedCard(self)
+            pvb = QVBoxLayout(ph)
+            pvb.setContentsMargins(CARD_MARGIN, 16, CARD_MARGIN, 16)
+            pvb.setSpacing(6)
+            pvb.addWidget(StrongBodyLabel(tr("quicklaunch.unsupported.title")))
+            psub = BodyLabel(tr("quicklaunch.unsupported.hint"))
+            psub.setWordWrap(True)
+            pvb.addWidget(psub)
+            self.vbox.addWidget(ph)
+            return
+
         # =====================================================================
         # 总开关组
         # =====================================================================

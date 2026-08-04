@@ -145,13 +145,16 @@ class EngineRow(QWidget):
         btns.addWidget(self.folderBtn)
         self.dlBtn = None
         self.reasonLbl = None
-        if engine.downloadable:
+        # 一键下载按钮仅在「本平台有可用下载源」时显示；否则（如 Windows-only 引擎
+        # 在 Linux/macOS 上）显示原因说明，引导用户手动前往官网下载。
+        if engine.downloadable and eng_mod.download_sources_for(engine.eid):
             self.dlBtn = PrimaryPushButton(tr("engine.download.oneclick"), icon=FIF.DOWNLOAD)
             self.dlBtn.setFixedHeight(28)
             self.dlBtn.clicked.connect(self._one_click)
             btns.addWidget(self.dlBtn)
         else:
-            self.reasonLbl = CaptionLabel(tr(engine.download_reason_key))
+            reason_key = engine.download_reason_key or "engine.reason.platform"
+            self.reasonLbl = CaptionLabel(tr(reason_key))
             self.reasonLbl.setWordWrap(True)
             apply_text(self.reasonLbl, muted_text(), size=tokens.FONT_CAPTION, transparent=True)
             btns.addWidget(self.reasonLbl)
@@ -181,15 +184,18 @@ class EngineRow(QWidget):
 
         self.refresh()
 
-    # -- 一键下载（：按引擎注册表的下载源，HF→GitHub→官方）--
+    # -- 一键下载：按引擎注册表中「当前平台」的下载源，HF→GitHub→官方 --
     def _one_click(self):
+        sources = eng_mod.download_sources_for(self.engine.eid)
+        if not sources:
+            return
         if self.dlBtn:
             self.dlBtn.setEnabled(False)
         self.prog.show()
         worker = dl_mod.EngineDownloadWorker(
             self.engine.eid,
             str(eng_mod.engine_dir(self.engine.eid)),
-            list(self.engine.download_sources),
+            sources,
         )
         worker.signals.finished.connect(self._on_dl_done)
         QThreadPool.globalInstance().start(worker)
