@@ -129,6 +129,19 @@ class Config(QConfig):
     asrModel = ConfigItem("Asr", "Model", _DEFAULT_ASR_MODEL)
     asrApiKey = ConfigItem("Asr", "ApiKey", "")
 
+    # 音频转文字（ASR）本地推理参数（v0.8.5「ASR 设置」卡片）
+    # - asrModelId：用于推理的本地模型清单 id；空串 = 自动（第一个已就绪模型，
+    #   与 v0.8.4 的 find_ready_model() 语义一致）。
+    # - asrSegmentSec：过长音频每段长度（秒），15..300，默认 60。
+    # - asrStructured：结构化输出开关（VAD 时间戳 + 说话人标签，默认关）。
+    # - asrDevice：推理设备策略；"auto" = 按硬件检测（N 卡+CUDA→cuda，否则 cpu）。
+    asrModelId = ConfigItem("Asr", "ModelId", "")
+    asrSegmentSec = RangeConfigItem("Asr", "SegmentSec", 60, RangeValidator(15, 300))
+    asrStructured = ConfigItem("Asr", "Structured", False)
+    asrDevice = OptionsConfigItem(
+        "Asr", "Device", "auto", OptionsValidator(["auto", "cpu", "cuda"])
+    )
+
 
 cfg = Config()
 

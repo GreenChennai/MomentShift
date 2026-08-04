@@ -26,7 +26,14 @@ import time
 from pathlib import Path
 
 from .asr_client import AsrError, transcribe
-from .funasr_engine import FunasrEngineError, transcribe_local
+from .funasr.utils.wav_io import wav_needs_normalization
+from .funasr_engine import (
+    DEFAULT_THREADS,
+    FunasrEngineError,
+    is_model_ready,
+    transcribe_local,
+    transcribe_structured,
+)
 from .platform import popen_silent, run_silent
 from .presets import guess_category
 from .qt_compat import QThread, Signal
@@ -84,6 +91,18 @@ def format_segment_marker(start: float, end: float) -> str:
     if end > start:
         return f"[{format_timestamp(start)}-{format_timestamp(end)}]"
     return f"[{format_timestamp(start)}-…]"
+
+
+def format_structured_prefix(start_sec: float, spk: int) -> str:
+    """结构化输出行前缀：``[12.3s] 说话人0:``；spk<0（无说话人）→ ``[12.3s]``。"""
+    if spk is None or spk < 0:
+        return f"[{start_sec:.1f}s]"
+    return f"[{start_sec:.1f}s] 说话人{spk}:"
+
+
+def format_structured_line(start_sec: float, spk: int, text: str) -> str:
+    """结构化输出完整行：``[12.3s] 说话人0: 欢迎大家…``。"""
+    return f"{format_structured_prefix(start_sec, spk)} {text}".strip()
 
 
 def build_extract_audio_cmd(ffmpeg_path: str, input_path: str, output_wav: str) -> list[str]:
@@ -213,15 +232,18 @@ def is_video_media(path: str) -> bool:
 
 
 def needs_audio_normalization(path: str) -> bool:
-    """是否需要先重编码成 16k 单声道 wav。
+    """是否需要先重编码成 16k 单声道 wav（v0.8.5 功能 3：音频格式放宽）。
 
     - 视频：必须提取音频 → True
-    - 非 wav 音频：重编码归一化更稳（mp3/flac/m4a 交给 ffmpeg 解码）→ True
-    - wav 音频：直接转写（尊重「拖音频直接转写」的语义）→ False
+    - 非 wav 音频（mp3/flac/m4a/ogg…）：交给 ffmpeg 解码重编码 → True
+    - wav 音频：读 RIFF 头确认规格——16k 单声道 PCM16/float32 直接转写 → False；
+      其它采样率 / 多声道 / 非标准编码 → True（自动归一化）
     """
     if is_video_media(path):
         return True
-    return Path(path).suffix.lower() != ".wav"
+    if Path(path).suffix.lower() != ".wav":
+        return True
+    return wav_needs_normalization(path)
 
 
 # =============================================================================
@@ -244,12 +266,19 @@ class AsrTranscribeWorker(QThread):
         model_id: 本地模型清单里的 id（local 模式）。
         api_key: 可选鉴权 key（HTTP 模式）；为空则不带头。
         segment_sec: 分段长度（秒）。
+        structured: 结构化输出开关（仅 local 模式生效）：VAD 分段 + 时间戳 +
+            可选说话人标签 + SenseVoice 标点。
+        vad_model_id: 结构化模式下 VAD 模型 id（缺省用引擎默认）。
+        spk_model_id: 结构化模式下说话人模型 id；空表示不启用说话人标签。
+        use_itn: SenseVoice 逆文本归一化（标点/数字规整）开关。
+        provider: 推理 provider（"cpu"/"cuda"/None=自动）。
 
     信号（全部从 worker 线程发出，GUI 线程接收）：
     - ``logMessage(str)`` —— 主 CMD 面板的状态行。
     - ``serviceLog(str)`` —— 服务模式 / 本地推理日志（请求/响应/错误）。
     - ``progressChanged(int)`` —— 0..100 整体进度。
     - ``segmentReady(int, int, str, str)`` —— ``(第几段, 总段数, 段标记, 该段文案)``。
+      结构化模式下 marker 为空、text 为完整行 ``[12.3s] 说话人0: …``。
     - ``succeeded(str)`` —— 全部完成的完整文案。
     - ``failed(str)`` —— 错误消息（含用户取消）。
 
@@ -274,6 +303,11 @@ class AsrTranscribeWorker(QThread):
         segment_sec: float = DEFAULT_SEGMENT_SEC,
         mode: str = "http",
         model_id: str = "",
+        structured: bool = False,
+        vad_model_id: str = "",
+        spk_model_id: str = "",
+        use_itn: bool = True,
+        provider: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -286,6 +320,11 @@ class AsrTranscribeWorker(QThread):
         self._mode = mode if mode == "local" else "http"
         self._model_id = model_id
         self._segment_sec = float(segment_sec)
+        self._structured = bool(structured) and self._mode == "local"
+        self._vad_model_id = vad_model_id
+        self._spk_model_id = spk_model_id
+        self._use_itn = bool(use_itn)
+        self._provider = provider
         self._cancel = threading.Event()
 
     # -- 外部控制 --
@@ -303,14 +342,24 @@ class AsrTranscribeWorker(QThread):
             if not src.is_file():
                 raise AsrError(f"文件不存在：{self._input_path}")
 
-            # ① 准备 16k 单声道 wav：视频提取音频；非 wav 音频重编码归一化；
-            #    wav 音频直接使用（尊重「拖音频直接转写」语义）。
+            # ① 准备 16k 单声道 wav：视频提取音频；非 16k/多声道/非 wav 音频
+            #    统一重编码归一化（v0.8.5 功能 3：mp3/flac/m4a/ogg 直接拖入）。
             wav_path = str(src)
             if needs_audio_normalization(str(src)):
                 out_wav = str(tmp / "audio.wav")
                 self.logMessage.emit("正在提取音频…")
                 self._extract_audio(out_wav)
                 wav_path = out_wav
+
+            if self._structured:
+                vad_id = self._vad_model_id or "fsmn-vad"
+                if is_model_ready(vad_id):
+                    self._run_structured(wav_path, vad_id)
+                    return
+                # VAD 未下载：结构化不可用，回退普通分段（不中断转写）
+                self.logMessage.emit(
+                    f"FSMN-VAD（{vad_id}）未下载，结构化输出不可用，回退普通分段"
+                )
 
             # ② 探测时长
             duration = resolve_duration(self._ffmpeg_path, self._ffprobe_path, wav_path)
@@ -346,7 +395,9 @@ class AsrTranscribeWorker(QThread):
                 t0 = time.monotonic()
                 try:
                     if self._mode == "local":
-                        text = transcribe_local(seg_wav, self._model_id)
+                        text = transcribe_local(
+                            seg_wav, self._model_id, provider=self._provider
+                        )
                     else:
                         text = transcribe(
                             self._base_url, self._model, self._api_key, seg_wav
@@ -379,6 +430,40 @@ class AsrTranscribeWorker(QThread):
     def _check_cancel(self) -> None:
         if self._cancel.is_set():
             raise AsrCancelled()
+
+    def _run_structured(self, wav_path: str, vad_id: str) -> None:
+        """结构化输出主流程（仅 local 模式）：VAD 分段 + 逐段转写 + 说话人。"""
+        spk_id = self._spk_model_id or ""
+        self.logMessage.emit(f"结构化输出：VAD 分段（{vad_id}）→ 转写（{self._model_id}）")
+        if spk_id:
+            self.logMessage.emit(f"说话人分离：{spk_id}")
+        else:
+            self.logMessage.emit("说话人分离未启用（cam++ 未下载）；仅输出时间戳与标点")
+        t0 = time.monotonic()
+        segments = transcribe_structured(
+            wav_path,
+            model_id=self._model_id,
+            vad_model_id=vad_id,
+            spk_model_id=spk_id,
+            threads=DEFAULT_THREADS,
+            provider=self._provider,
+            use_itn=self._use_itn,
+        )
+        total = len(segments)
+        lines: list[str] = []
+        for index, seg in enumerate(segments, start=1):
+            self._check_cancel()
+            line = format_structured_line(seg["start"], seg["spk"], seg["text"])
+            lines.append(line)
+            self.segmentReady.emit(index, total, "", line)
+            self.serviceLog.emit(
+                f"→ [{seg['start']:.1f}s-{seg['end']:.1f}s] 说话人{seg['spk'] if seg['spk'] >= 0 else '-'}"
+            )
+            self.progressChanged.emit(35 + int(65 * index / total))
+        elapsed = time.monotonic() - t0
+        self.serviceLog.emit(f"← 结构化转写完成（{elapsed:.1f}s，{total} 段）")
+        full_text = "\n".join(lines).strip()
+        self.succeeded.emit(full_text)
 
     def _stop_ffmpeg(self, proc: subprocess.Popen) -> None:
         """尽快结束 ffmpeg 子进程（terminate → 宽限 → kill），不抛异常。"""

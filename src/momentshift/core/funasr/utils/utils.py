@@ -144,12 +144,18 @@ class ONNXRuntimeError(Exception):
 
 
 class OrtInferSession:
-    """ONNX Runtime 推理会话（CPU 优先，与 funasr_onnx 一致）。"""
+    """ONNX Runtime 推理会话（CPU 优先，与 funasr_onnx 一致）。
 
-    def __init__(self, model_file, device_id=-1, intra_op_num_threads=4):
+    v0.8.5 新增 ``provider`` 参数：显式指定推理后端（``"cpu"`` / ``"cuda"`` /
+    ``None``）。None 沿用旧逻辑（device_id != -1 且环境是 GPU 才尝试 CUDA）；
+    显式 ``"cuda"`` 时若 CUDAExecutionProvider 不可用则自动回退 CPU（策略由
+    调用方用 ``core.hardware.asr_inference_device`` 保证，这里只是兜底）。
+    GPU 会话不设 intra_op_num_threads（交给 CUDA 流调度），CPU 会话照常设置。
+    """
+
+    def __init__(self, model_file, device_id=-1, intra_op_num_threads=4, provider=None):
         device_id = str(device_id)
         sess_opt = SessionOptions()
-        sess_opt.intra_op_num_threads = intra_op_num_threads
         sess_opt.log_severity_level = 4
         sess_opt.enable_cpu_mem_arena = False
         sess_opt.graph_optimization_level = GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -166,15 +172,34 @@ class OrtInferSession:
             "arena_extend_strategy": "kSameAsRequested",
         }
 
-        ep_list = []
-        if device_id != "-1" and get_device() == "GPU" and cuda_ep in get_available_providers():
-            ep_list = [(cuda_ep, cuda_provider_options)]
+        if provider == "cuda":
+            # 显式 GPU：可用才用，不可用回退 CPU（不抛错，推理照常）
+            if cuda_ep in get_available_providers():
+                ep_list = [(cuda_ep, cuda_provider_options)]
+            else:
+                ep_list = []
+                warnings.warn(
+                    f"{cuda_ep} is not avaiable for current env, the inference part is "
+                    f"automatically shifted to be executed under {cpu_ep}.\n",
+                    RuntimeWarning,
+                )
+        elif provider == "cpu":
+            ep_list = []
+        else:
+            # 旧行为：device_id != -1 且 onnxruntime 自报 GPU 才尝试 CUDA
+            ep_list = []
+            if device_id != "-1" and get_device() == "GPU" and cuda_ep in get_available_providers():
+                ep_list = [(cuda_ep, cuda_provider_options)]
+
+        # CPU 会话设置线程数；CUDA 会话不设（避免与 GPU 流调度冲突）
+        if not ep_list or ep_list[0][0] != cuda_ep:
+            sess_opt.intra_op_num_threads = intra_op_num_threads
         ep_list.append((cpu_ep, cpu_provider_options))
 
         self._verify_model(model_file)
         self.session = InferenceSession(model_file, sess_options=sess_opt, providers=ep_list)
 
-        if device_id != "-1" and cuda_ep not in self.session.get_providers():
+        if provider == "cuda" and cuda_ep not in self.session.get_providers():
             warnings.warn(
                 f"{cuda_ep} is not avaiable for current env, the inference part is "
                 f"automatically shifted to be executed under {cpu_ep}.\n",

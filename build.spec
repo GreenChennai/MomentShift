@@ -61,12 +61,17 @@ hiddenimports = [
     "momentshift.core.funasr_download",
     "momentshift.core.funasr",
     "momentshift.core.funasr.paraformer_bin",
+    "momentshift.core.funasr.sensevoice_bin",  # v0.8.5 结构化输出：SenseVoiceSmall（引擎内延迟 import，显式声明）
+    "momentshift.core.funasr.vad_bin",         # v0.8.5 结构化输出：FSMN-VAD
+    "momentshift.core.funasr.spk_bin",         # v0.8.5 结构化输出：CAM++ 说话人嵌入
     "momentshift.core.funasr.utils",
     "momentshift.core.funasr.utils.frontend",
     "momentshift.core.funasr.utils.utils",
     "momentshift.core.funasr.utils.postprocess_utils",
     "momentshift.core.funasr.utils.yaml_light",
     "momentshift.core.funasr.utils.wav_io",
+    "momentshift.core.funasr.utils.e2e_vad",   # v0.8.5：VAD 后处理（纯 numpy 复刻）
+    "momentshift.core.funasr.utils.sentencepiece_decode",  # v0.8.5：纯 Python BPE 解码（tokens.json）
     "onnxruntime",          # v0.8.4 内置 FunASR：引擎在函数内延迟 import，显式声明防漏
     "onnxruntime.capi",
     "jieba",
@@ -88,6 +93,7 @@ hiddenimports = [
     "momentshift.gui.setting_interface",
     "momentshift.gui.about_interface",
     "momentshift.gui.main_window",
+    "momentshift.gui.asr_interface",  # v0.8.5：main_window 用 importlib 动态 import 界面，PyInstaller 静态分析看不到，必须显式 hiddenimports（v0.8.3/0.8.4 漏列导致 ASR 组件在构建产物中缺失）
     "PyQt6.QtNetwork",   # v0.7.16：QLocalServer/QLocalSocket 单实例 IPC
     "momentshift.gui.theme",
     "momentshift.gui.quick_launch_interface",

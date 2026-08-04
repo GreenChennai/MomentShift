@@ -204,3 +204,137 @@ def best_available(ffmpeg_path: str | None) -> str:
     if not found:
         return "CPU"
     return "GPU (" + ", ".join(sorted(found)) + ")"
+
+
+# =============================================================================
+# ASR 推理设备探测（v0.8.5，功能 4/5）
+# =============================================================================
+# 官方语义：只有「NVIDIA 显卡 + CUDA 驱动 + onnxruntime 提供 CUDAExecutionProvider」
+# 才用 GPU，其余（AMD/Intel/无卡/仅 CPU 版 onnxruntime）一律 CPU。
+#
+# 当前发布版打包的是 CPU 版 onnxruntime（``onnxruntime.get_available_providers()``
+# 不含 CUDAExecutionProvider），所以实际都走 CPU；但策略代码必须正确——用户将来
+# 换成 onnxruntime-gpu 即自动生效。检测结果按进程缓存（硬件在运行期不变）。
+_ASR_DEVICE_CACHE: str | None = None
+_ASR_DEVICE_LOCK = threading.Lock()
+
+# 供测试注入的默认 provider 探测函数（默认取 onnxruntime.get_available_providers）。
+def _default_ort_providers() -> list[str]:
+    """返回当前 onnxruntime 可用的 provider 列表；导入失败返回空列表。"""
+    try:
+        from onnxruntime import get_available_providers  # 延迟导入，应用启动不拉 onnxruntime
+
+        return list(get_available_providers())
+    except Exception:  # noqa: BLE001 - 探测失败一律视为仅 CPU，安全回退
+        return []
+
+
+def asr_inference_device(providers: list[str] | None = None, nvidia_ok: bool | None = None) -> str:
+    """纯函数：按硬件 + onnxruntime 能力决定 ASR 推理设备。
+
+    Args:
+        providers: onnxruntime 可用 provider 列表；None 时实时探测。
+        nvidia_ok: NVIDIA 运行时是否可用（Windows 查 nvcuda.dll）；None 时实时探测。
+
+    Returns:
+        ``"cuda"`` 仅当 NVIDIA 驱动可用且 providers 含 ``CUDAExecutionProvider``；
+        其余一律 ``"cpu"``。
+    """
+    if nvidia_ok is None:
+        nvidia_ok = _nvidia_runtime_available()
+    if not nvidia_ok:
+        return "cpu"
+    if providers is None:
+        providers = _default_ort_providers()
+    return "cuda" if "CUDAExecutionProvider" in providers else "cpu"
+
+
+def cached_asr_device() -> str:
+    """带进程级缓存的 ASR 推理设备（一次检测多次用）。"""
+    global _ASR_DEVICE_CACHE
+    with _ASR_DEVICE_LOCK:
+        if _ASR_DEVICE_CACHE is None:
+            _ASR_DEVICE_CACHE = asr_inference_device()
+        return _ASR_DEVICE_CACHE
+
+
+def clear_asr_device_cache() -> None:
+    """清空 ASR 设备缓存（测试 / 换 onnxruntime 后重探）。"""
+    global _ASR_DEVICE_CACHE
+    with _ASR_DEVICE_LOCK:
+        _ASR_DEVICE_CACHE = None
+
+
+def asr_device_label(device: str) -> str:
+    """设备逻辑值 → 界面可读标签（与 i18n 无关，纯枚举）。"""
+    if device == "cuda":
+        return "NVIDIA CUDA"
+    return "CPU"
+
+
+def detect_ram_gb() -> float | None:
+    """返回物理内存大小（GB）；探测失败返回 None（Windows 读 GlobalMemoryStatusEx）。
+
+    Returns:
+        内存 GB 数（浮点）；无法探测时 None。
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        class _MemoryStatus(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        stat = _MemoryStatus()
+        stat.dwLength = ctypes.sizeof(_MemoryStatus)
+        ok = ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+        if not ok:
+            return None
+        return stat.ullTotalPhys / (1024.0**3)
+    except Exception:  # noqa: BLE001 - 探测失败按未知处理
+        return None
+
+
+# 模型硬件要求的可读原因（i18n key 前缀 ``asr.model.hw_reason`` 由界面拼装）。
+def model_hw_satisfied(
+    spec: dict,
+    device: str = "cpu",
+    ram_gb: float | None = None,
+) -> tuple[bool, str | None]:
+    """判断模型清单条目是否满足本机硬件要求。
+
+    Args:
+        spec: 模型清单条目（``hw_req`` 字段为 ``"nvidia_cuda"`` 或
+            ``{"min_ram_gb": N}``；缺省表示无要求）。
+        device: 当前 ASR 推理设备（``"cuda"`` / ``"cpu"``）。
+        ram_gb: 物理内存 GB；None 表示未知（按不满足 min_ram 处理）。
+
+    Returns:
+        ``(是否满足, 不满足原因或 None)``。原因用于界面展示，键值见
+        ``asr.model.hw_reason.*``。
+    """
+    hw_req = spec.get("hw_req")
+    if not hw_req:
+        return True, None
+    if isinstance(hw_req, str) and hw_req == "nvidia_cuda":
+        if device == "cuda":
+            return True, None
+        return False, "nvidia_cuda"
+    if isinstance(hw_req, dict) and hw_req.get("min_ram_gb"):
+        need = float(hw_req["min_ram_gb"])
+        if ram_gb is None or ram_gb < need:
+            return False, "min_ram_gb"
+        return True, None
+    # 未知硬件要求：保守放行
+    return True, None

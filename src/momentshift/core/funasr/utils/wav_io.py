@@ -53,6 +53,51 @@ def _parse_chunks(data: bytes) -> tuple[tuple[int, int, int, int], bytes]:
     return fmt, pcm
 
 
+def _probe_header(path: str) -> tuple[int, int, int, int] | None:
+    """只读 RIFF 头（前 44+ 字节），返回 ``(audio_format, channels, rate, bits)``。
+
+    返回 None 表示「无法确认是 16k 单声道 PCM16/float32 wav」（文件缺失 / 非
+    wav / 头损坏 / 编码非 16bit-PCM 或 32bit-float 等）。
+    """
+    p = Path(path)
+    if not p.is_file():
+        return None
+    try:
+        with open(p, "rb") as fh:
+            head = fh.read(4096)
+    except OSError:
+        return None
+    if len(head) < 44 or head[:4] != b"RIFF" or head[8:12] != b"WAVE":
+        return None
+    try:
+        (audio_format, num_channels, sample_rate, bits), _ = _parse_chunks(head)
+    except WavError:
+        return None
+    return audio_format, num_channels, sample_rate, bits
+
+
+def wav_needs_normalization(path: str) -> bool:
+    """该 wav 是否需要先归一化成 16k 单声道 PCM16（v0.8.5 功能 3）。
+
+    - 16k 单声道 PCM16 / float32 → False（直接读取）
+    - 其它采样率 / 多声道 / 非 PCM 编码 / 无法确认 → True（交给 ffmpeg 重编码）
+
+    Returns:
+        True 表示需要先经 ffmpeg 归一化；False 表示可直接 ``load_wav``。
+    """
+    probe = _probe_header(path)
+    if probe is None:
+        return True
+    audio_format, num_channels, sample_rate, bits = probe
+    if sample_rate != EXPECTED_SAMPLE_RATE:
+        return True
+    if num_channels != 1:
+        return True
+    if not ((audio_format == 1 and bits == 16) or (audio_format == 3 and bits == 32)):
+        return True
+    return False
+
+
 def load_wav(path: str) -> np.ndarray:
     """读取 16k 音频并归一为单声道 float32 ``[-1, 1]``。
 

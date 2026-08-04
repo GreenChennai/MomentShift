@@ -4,6 +4,10 @@
 # 裁剪说明（MomentShift v0.8.4 内置版）：只保留 Paraformer 字级中文模型需要的
 # ``sentence_postprocess``；移除 SenseVoice 相关的 emoji/事件/语言标签处理与
 # sentencepiece 后处理（paraformer-large-zh 是字符级输出，不走 BPE）。
+#
+# v0.8.5 增补：重新加入 SenseVoice 需要的 ``sentence_postprocess_sentencepiece``
+# 与 ``rich_transcription_postprocess``（源码逐行取自 funasr_onnx 0.4.2 的
+# ``utils/postprocess_utils.py``），供结构化输出管线（SenseVoiceSmall）使用。
 
 from typing import Any
 
@@ -242,3 +246,177 @@ def sentence_postprocess(words: list[Any], time_stamp: list[list] = None):
             real_word_lists.append(ch)
     sentence = "".join(word_lists).strip()
     return sentence, real_word_lists
+
+
+def sentence_postprocess_sentencepiece(words):
+    """把 SenseVoice 的 BPE token 序列整理成句子（与 funasr_onnx 逐行一致）。"""
+    middle_lists = []
+    word_lists = []
+    word_item = ""
+
+    # wash words lists
+    for i in words:
+        word = ""
+        if isinstance(i, str):
+            word = i
+        else:
+            word = i.decode("utf-8")
+
+        if word in ["<s>", "</s>", "<unk>", "<OOV>"]:
+            continue
+        else:
+            middle_lists.append(word)
+
+    # all alpha characters
+    for i, ch in enumerate(middle_lists):
+        word = ""
+        if "\u2581" in ch and i == 0:
+            word_item = ""
+            word = ch.replace("\u2581", "")
+            word_item += word
+        elif "\u2581" in ch and i != 0:
+            word_lists.append(word_item)
+            word_lists.append(" ")
+            word_item = ""
+            word = ch.replace("\u2581", "")
+            word_item += word
+        else:
+            word_item += ch
+    if word_item is not None:
+        word_lists.append(word_item)
+    real_word_lists = []
+    for ch in word_lists:
+        if ch != " ":
+            if ch == "i":
+                ch = ch.replace("i", "I")
+            elif ch == "i'm":
+                ch = ch.replace("i'm", "I'm")
+            elif ch == "i've":
+                ch = ch.replace("i've", "I've")
+            elif ch == "i'll":
+                ch = ch.replace("i'll", "I'll")
+            real_word_lists.append(ch)
+    sentence = "".join(word_lists)
+    return sentence, real_word_lists
+
+
+emo_dict = {
+    "<|HAPPY|>": "😊",
+    "<|SAD|>": "😔",
+    "<|ANGRY|>": "😡",
+    "<|NEUTRAL|>": "",
+    "<|FEARFUL|>": "😰",
+    "<|DISGUSTED|>": "🤢",
+    "<|SURPRISED|>": "😮",
+}
+
+event_dict = {
+    "<|BGM|>": "🎼",
+    "<|Speech|>": "",
+    "<|Applause|>": "👏",
+    "<|Laughter|>": "😀",
+    "<|Cry|>": "😭",
+    "<|Sneeze|>": "🤧",
+    "<|Breath|>": "",
+    "<|Cough|>": "🤧",
+}
+
+lang_dict = {
+    "<|zh|>": "<|lang|>",
+    "<|en|>": "<|lang|>",
+    "<|yue|>": "<|lang|>",
+    "<|ja|>": "<|lang|>",
+    "<|ko|>": "<|lang|>",
+    "<|nospeech|>": "<|lang|>",
+}
+
+emoji_dict = {
+    "<|nospeech|><|Event_UNK|>": "❓",
+    "<|zh|>": "",
+    "<|en|>": "",
+    "<|yue|>": "",
+    "<|ja|>": "",
+    "<|ko|>": "",
+    "<|nospeech|>": "",
+    "<|HAPPY|>": "😊",
+    "<|SAD|>": "😔",
+    "<|ANGRY|>": "😡",
+    "<|NEUTRAL|>": "",
+    "<|BGM|>": "🎼",
+    "<|Speech|>": "",
+    "<|Applause|>": "👏",
+    "<|Laughter|>": "😀",
+    "<|FEARFUL|>": "😰",
+    "<|DISGUSTED|>": "🤢",
+    "<|SURPRISED|>": "😮",
+    "<|Cry|>": "😭",
+    "<|EMO_UNKNOWN|>": "",
+    "<|Sneeze|>": "🤧",
+    "<|Breath|>": "",
+    "<|Cough|>": "😷",
+    "<|Sing|>": "",
+    "<|Speech_Noise|>": "",
+    "<|withitn|>": "",
+    "<|woitn|>": "",
+    "<|GBG|>": "",
+    "<|Event_UNK|>": "",
+}
+
+emo_set = {"😊", "😔", "😡", "😰", "🤢", "😮"}
+event_set = {
+    "🎼",
+    "👏",
+    "😀",
+    "😭",
+    "🤧",
+    "😷",
+}
+
+
+def format_str_v2(s):
+    sptk_dict = {}
+    for sptk in emoji_dict:
+        sptk_dict[sptk] = s.count(sptk)
+        s = s.replace(sptk, "")
+    emo = "<|NEUTRAL|>"
+    for e in emo_dict:
+        if sptk_dict[e] > sptk_dict[emo]:
+            emo = e
+    for e in event_dict:
+        if sptk_dict[e] > 0:
+            s = event_dict[e] + s
+    s = s + emo_dict[emo]
+
+    for emoji in emo_set.union(event_set):
+        s = s.replace(" " + emoji, emoji)
+        s = s.replace(emoji + " ", emoji)
+    return s.strip()
+
+
+def rich_transcription_postprocess(s):
+    """SenseVoice 富文本后处理：语言/情绪/事件标签 → emoji / 清空（funasr_onnx 原版）。"""
+
+    def get_emo(s):
+        return s[-1] if s[-1] in emo_set else None
+
+    def get_event(s):
+        return s[0] if s[0] in event_set else None
+
+    s = s.replace("<|nospeech|><|Event_UNK|>", "❓")
+    for lang in lang_dict:
+        s = s.replace(lang, "<|lang|>")
+    s_list = [format_str_v2(s_i).strip(" ") for s_i in s.split("<|lang|>")]
+    new_s = " " + s_list[0]
+    cur_ent_event = get_event(new_s)
+    for i in range(1, len(s_list)):
+        if len(s_list[i]) == 0:
+            continue
+        if get_event(s_list[i]) == cur_ent_event and get_event(s_list[i]) != None:
+            s_list[i] = s_list[i][1:]
+        # else:
+        cur_ent_event = get_event(s_list[i])
+        if get_emo(s_list[i]) != None and get_emo(s_list[i]) == get_emo(new_s):
+            new_s = new_s[:-1]
+        new_s += s_list[i].strip().lstrip()
+    new_s = new_s.replace("The.", " ")
+    return new_s.strip()

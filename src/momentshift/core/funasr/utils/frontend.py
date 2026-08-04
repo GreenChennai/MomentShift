@@ -101,10 +101,17 @@ def compute_fbank(
         return np.zeros((0, n_mels), dtype=np.float32)
     num_frames = 1 + (wave.size - frame_length) // frame_shift
 
-    # Hamming 窗（与 knf GetWindow 一致：a = 2π/(frame_length-1)）
+    # 窗函数（与 knf GetWindow 一致）：hamming / hanning / povey
     a = 2.0 * np.pi / (frame_length - 1)
+    idx = np.arange(frame_length)
     win = np.zeros(padded, dtype=np.float64)
-    win[:frame_length] = 0.54 - 0.46 * np.cos(a * np.arange(frame_length))
+    if window_type == "povey":
+        # 0.85 次幂的升余弦窗（kaldi 默认，CAM++ 说话人模型训练用）
+        win[:frame_length] = np.power(0.5 - 0.5 * np.cos(a * idx), 0.85)
+    elif window_type == "hanning":
+        win[:frame_length] = 0.5 - 0.5 * np.cos(a * idx)
+    else:  # hamming（默认，与 WavFrontend/ASR 模型一致）
+        win[:frame_length] = 0.54 - 0.46 * np.cos(a * idx)
 
     mel = _mel_filterbank(fs, padded, n_mels, low_freq, high_freq)
     eps = np.finfo(np.float32).eps

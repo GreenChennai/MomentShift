@@ -34,11 +34,13 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QSizePolicy,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import (
     CaptionLabel,
+    ComboBox,
     PasswordLineEdit,
     PrimaryPushButton,
     PushButton,
@@ -56,11 +58,17 @@ from ..core.asr_client import DEFAULT_BASE_URL, DEFAULT_MODEL, asr_health
 from ..core.asr_worker import AsrTranscribeWorker
 from ..core.config import cfg
 from ..core.ffmpeg import find_ffmpeg, find_ffprobe
+from ..core.hardware import (
+    asr_device_label,
+    cached_asr_device,
+    detect_ram_gb,
+    model_hw_satisfied,
+)
 from ..core.presets import AUDIO_EXTS, VIDEO_EXTS
 from ..core.qt_compat import QThreadPool, Signal
 from ..i18n.translator import tr
 from . import tokens
-from .base import InterfaceBase
+from .base import InterfaceBase, bind_combo_mapping, combo_value, select_combo_value
 from .drop_area import DropArea
 from .engine_card import open_folder
 from .queue_widget import StatusPill
@@ -96,6 +104,11 @@ class _FunasrModelRow(QWidget):
         from .theme import apply_transparent
 
         apply_transparent(self)
+
+        # v0.8.5 功能 5：模型硬件要求门控（如 paraformer-large-fp32 需 ≥4GB 内存）
+        self._hw_ok, self._hw_reason = model_hw_satisfied(
+            spec, cached_asr_device(), detect_ram_gb()
+        )
 
         vb = QVBoxLayout(self)
         vb.setContentsMargins(0, 0, 0, 0)
@@ -181,6 +194,15 @@ class _FunasrModelRow(QWidget):
 
     # -- 状态刷新 --
     def refresh(self) -> None:
+        if not self._hw_ok:
+            # 硬件不满足：禁用下载按钮并显示原因
+            self.statusPill.set_status("failed", text=self._hw_reason_text())
+            self.dot.setStyleSheet(tokens.dot_qss(danger_color().name(), 4))
+            self.dlBtn.setEnabled(False)
+            self.dlBtn.show()
+            self.folderBtn.hide()
+            return
+        self.dlBtn.setEnabled(True)
         ready = fe.is_model_ready(self.spec["id"], self.spec["quantize"])
         if ready:
             self.statusPill.set_status("done", text=tr("asr.model.ready"))
@@ -196,6 +218,15 @@ class _FunasrModelRow(QWidget):
             # 下载中文案由进度信号实时刷新，这里不打断
             self.statusPill.set_status("compressing", text=tr("asr.model.downloading", pct=self.prog.value()))
             self.dlBtn.hide()
+
+    def _hw_reason_text(self) -> str:
+        """硬件不满足时的可读原因（i18n）。"""
+        if self._hw_reason == "nvidia_cuda":
+            return tr("asr.model.hw_reason.nvidia_cuda")
+        if self._hw_reason == "min_ram_gb":
+            need = self.spec.get("hw_req", {}).get("min_ram_gb", 0)
+            return tr("asr.model.hw_reason.min_ram_gb", gb=int(need))
+        return tr("asr.model.hw_reason.unknown")
 
     def retranslateUi(self) -> None:
         self.nameLbl.setText(tr(self.spec["name_key"]))
@@ -299,6 +330,11 @@ class AudioTranscribeInterface(InterfaceBase):
             sep.setStyleSheet(f"QFrame{{ background: {border_color()}; border: none; }}")
             mvb.addWidget(sep)
         self.vbox.addWidget(mcard)
+
+        # =====================================================================
+        # ASR 设置卡片（v0.8.5 功能 1：模型选择 / 分段长度 / 结构化开关 / 设备）
+        # =====================================================================
+        self._build_settings_card()
 
         # =====================================================================
         # CMD 结果卡片（完整文案，可滚动、绝不截断）
@@ -432,7 +468,7 @@ class AudioTranscribeInterface(InterfaceBase):
 
     def _refresh_local_status(self):
         """默认（未启用服务模式）时的状态行：显示本地模型就绪情况。"""
-        model_id = fe.find_ready_model()
+        model_id = self._resolved_model_id() or fe.find_ready_model()
         if model_id is not None:
             self._statusLabel.setText(tr("asr.model.local.ready", model=model_id))
             apply_text(self._statusLabel, tokens.ACCENT, transparent=True)
@@ -446,11 +482,150 @@ class AudioTranscribeInterface(InterfaceBase):
         """模型下载完成/失败后：刷新全部行与状态行，并在 CMD 追加结果。"""
         for row in self._model_rows:
             row.refresh()
+        self._refresh_model_combo()
+        self._check_service()
         if ok:
             self._append_cmd(tr("asr.model.download.done"))
-            self._check_service()
         else:
             self._append_cmd(tr("asr.model.download.failed", msg=msg))
+
+    # =========================================================================
+    # ASR 设置卡片（v0.8.5 功能 1）
+    # =========================================================================
+    def _build_settings_card(self) -> None:
+        """「ASR 设置」折叠卡：模型 / 分段 / 结构化 / 设备。"""
+        scard, svb, self.tSettings = self._make_card("asr.settings.title", collapsed=True)
+
+        # ① 推理模型下拉：列出全部 asr 模型，已下载可选，未下载置灰（标「未下载」）
+        self._modelCombo = ComboBox()
+        self._modelCombo.setMinimumWidth(220)
+        self._refresh_model_combo()
+        self._modelCombo.currentIndexChanged.connect(self._on_model_combo_changed)
+        self._settingsModelRow = field_row(
+            tr("asr.settings.model"), self._modelCombo, label_width=132
+        )
+        svb.addWidget(self._settingsModelRow)
+
+        # ② 过长音频分段长度（秒，15..300，默认 60）
+        self._segmentSpin = QSpinBox()
+        self._segmentSpin.setRange(15, 300)
+        self._segmentSpin.setSingleStep(15)
+        self._segmentSpin.setSuffix(" s")
+        self._segmentSpin.setValue(int(cfg.asrSegmentSec.value))
+        self._segmentSpin.valueChanged.connect(lambda v: setattr(cfg.asrSegmentSec, "value", v))
+        self._settingsSegmentRow = field_row(
+            tr("asr.settings.segment"), self._segmentSpin, label_width=132
+        )
+        svb.addWidget(self._settingsSegmentRow)
+
+        # ③ 结构化输出开关（VAD 时间戳 + 说话人标签 + SenseVoice 标点）
+        self._structuredSwitch = SwitchButton()
+        self._structuredSwitch.setChecked(bool(cfg.asrStructured.value))
+        self._structuredSwitch.checkedChanged.connect(
+            lambda checked: setattr(cfg.asrStructured, "value", bool(checked))
+        )
+        self._settingsStructuredRow = field_row(
+            tr("asr.settings.structured"), self._structuredSwitch, label_width=132
+        )
+        svb.addWidget(self._settingsStructuredRow)
+        self._structuredHint = CaptionLabel("")
+        self._structuredHint.setWordWrap(True)
+        apply_text(self._structuredHint, muted_text(), transparent=True)
+        svb.addWidget(self._structuredHint)
+
+        # ④ 推理设备：策略下拉（auto/cpu/cuda）+ 检测结果显示
+        self._deviceCombo = ComboBox()
+        self._deviceCombo.setMinimumWidth(180)
+        device_mapping = [
+            (tr("asr.settings.device.auto"), "auto"),
+            (tr("asr.settings.device.cpu"), "cpu"),
+            (tr("asr.settings.device.cuda"), "cuda"),
+        ]
+        bind_combo_mapping(self._deviceCombo, device_mapping)
+        for disp, _val in device_mapping:
+            self._deviceCombo.addItem(disp)
+        select_combo_value(self._deviceCombo, cfg.asrDevice.value)
+        self._deviceCombo.currentIndexChanged.connect(self._on_device_combo_changed)
+        self._settingsDeviceRow = field_row(
+            tr("asr.settings.device"), self._deviceCombo, label_width=132
+        )
+        svb.addWidget(self._settingsDeviceRow)
+        self._deviceLabel = CaptionLabel("")
+        apply_text(self._deviceLabel, text_secondary(), transparent=True)
+        svb.addWidget(self._deviceLabel)
+
+        self.vbox.addWidget(scard)
+        self._refresh_device_label()
+        self._refresh_structured_hint()
+
+    def _model_combo_mapping(self) -> list[tuple[str, str, bool]]:
+        """模型下拉映射：显示「名称（未下载）」→ model_id → 是否就绪（按清单顺序）。"""
+        mapping: list[tuple[str, str, bool]] = []
+        for spec in fe.MODEL_CATALOG:
+            if spec.get("kind", "asr") != "asr":
+                continue
+            ready = fe.is_model_ready(spec["id"], spec["quantize"])
+            name = tr(spec["name_key"])
+            if not ready:
+                name = f"{name}（{tr('asr.model.missing')}）"
+            mapping.append((name, spec["id"], ready))
+        return mapping
+
+    def _refresh_model_combo(self) -> None:
+        """重建模型下拉：未下载的模型置灰不可选，并尽量保住当前选中值。"""
+        if not hasattr(self, "_modelCombo"):
+            return
+        current = cfg.asrModelId.value or ""
+        mapping = self._model_combo_mapping()
+        combo = self._modelCombo
+        combo.blockSignals(True)
+        combo.clear()
+        bind_combo_mapping(combo, [(disp, mid) for disp, mid, _ready in mapping])
+        for disp, _mid, ready in mapping:
+            combo.addItem(disp)
+            if not ready:
+                combo.items[-1].isEnabled = False  # 未下载：下拉置灰不可选
+        # 未配置时默认选中「自动」（第一个已就绪模型）
+        select_combo_value(combo, current)
+        combo.blockSignals(False)
+
+    def _on_model_combo_changed(self, _index: int):
+        setattr(cfg.asrModelId, "value", combo_value(self._modelCombo))
+
+    def _on_device_combo_changed(self, _index: int):
+        setattr(cfg.asrDevice, "value", combo_value(self._deviceCombo))
+        self._refresh_device_label()
+
+    def _refresh_device_label(self) -> None:
+        """显示当前检测到的推理设备（策略 auto 时按硬件探测结果）。"""
+        if not hasattr(self, "_deviceLabel"):
+            return
+        detected = cached_asr_device()
+        self._deviceLabel.setText(
+            tr("asr.settings.device.detected", device=asr_device_label(detected))
+        )
+
+    def _refresh_device_combo(self) -> None:
+        """重建设备下拉（语言切换后候选文案也要翻译）并保住当前值。"""
+        if not hasattr(self, "_deviceCombo"):
+            return
+        current = combo_value(self._deviceCombo) or cfg.asrDevice.value
+        mapping = [
+            (tr("asr.settings.device.auto"), "auto"),
+            (tr("asr.settings.device.cpu"), "cpu"),
+            (tr("asr.settings.device.cuda"), "cuda"),
+        ]
+        self._repopulate_combo(self._deviceCombo, mapping)
+        select_combo_value(self._deviceCombo, current)
+
+    def _refresh_structured_hint(self) -> None:
+        if not hasattr(self, "_structuredHint"):
+            return
+        self._structuredHint.setText(tr("asr.settings.structured.hint"))
+
+    def _resolved_model_id(self) -> str | None:
+        """按设置解析实际推理模型：cfg.asrModelId 空 → 自动（第一个已就绪）。"""
+        return fe.resolve_model_id(cfg.asrModelId.value)
 
     def _on_health_result(self, ok: bool, msg: str):
         base_url, model, _key = self._effective_params()
@@ -492,10 +667,11 @@ class AudioTranscribeInterface(InterfaceBase):
                 mode="http",
             )
         else:
-            model_id = fe.find_ready_model()
+            model_id = self._resolved_model_id()
             if model_id is None:
                 self._append_cmd(tr("asr.model.no_model"))
                 return
+            provider = fe.resolve_provider(cfg.asrDevice.value)
             self._append_cmd(tr("asr.cmd.local", model=model_id))
             self._worker = AsrTranscribeWorker(
                 self._input_path,
@@ -503,6 +679,12 @@ class AudioTranscribeInterface(InterfaceBase):
                 find_ffprobe(),
                 mode="local",
                 model_id=model_id,
+                segment_sec=float(cfg.asrSegmentSec.value),
+                structured=bool(cfg.asrStructured.value),
+                vad_model_id=fe.find_ready_vad_model() or "fsmn-vad",
+                spk_model_id=fe.find_ready_spk_model() or "",
+                use_itn=True,
+                provider=provider,
             )
         self._worker.logMessage.connect(self._append_cmd)
         self._worker.serviceLog.connect(self._append_service)
@@ -524,7 +706,8 @@ class AudioTranscribeInterface(InterfaceBase):
         self._progressLabel.setText(tr("asr.progress.value", pct=pct))
 
     def _on_segment_ready(self, index: int, total: int, marker: str, text: str):
-        self._append_cmd(marker)
+        if marker:
+            self._append_cmd(marker)
         self._append_cmd(text if text else tr("asr.cmd.segment_empty"))
         self._append_cmd("")
 
@@ -602,6 +785,16 @@ class AudioTranscribeInterface(InterfaceBase):
         self.tModel.setText(tr("asr.model.title"))
         self.tCmd.setText(tr("asr.cmd.title"))
         self.tService.setText(tr("asr.service.title"))
+        if hasattr(self, "tSettings"):
+            self.tSettings.setText(tr("asr.settings.title"))
+            self._settingsModelRow.fieldLabel.setText(tr("asr.settings.model"))
+            self._settingsSegmentRow.fieldLabel.setText(tr("asr.settings.segment"))
+            self._settingsStructuredRow.fieldLabel.setText(tr("asr.settings.structured"))
+            self._settingsDeviceRow.fieldLabel.setText(tr("asr.settings.device"))
+            self._refresh_structured_hint()
+            self._refresh_device_label()
+            self._refresh_model_combo()
+            self._refresh_device_combo()
         self.dropArea.retranslate(
             tr("asr.drop.title"), tr("asr.drop.hint"), tr("asr.drop.formats")
         )
