@@ -671,5 +671,11 @@
   "asr.settings.output.fixed": "儲存在固定目錄",
   "asr.settings.output.folder": "輸出資料夾",
   "asr.model.refresh": "重新整理模型",
-  "asr.model.relocated": "已自動歸位 {n} 個模型檔案"
+  "asr.model.relocated": "已自動歸位 {n} 個模型檔案",
+  "asr.model.source.github": "GitHub",
+  "asr.model.source.hf": "HuggingFace",
+  "asr.queue.empty": "轉寫佇列為空，請新增檔案",
+  "asr.queue.stats.total": "共 {n} 項",
+  "asr.queue.stats.done": "完成 {n}",
+  "asr.queue.stats.error": "失敗 {n}"
 }

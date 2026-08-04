@@ -671,5 +671,11 @@
   "asr.settings.output.fixed": "Save to Fixed Folder",
   "asr.settings.output.folder": "Output Folder",
   "asr.model.refresh": "Refresh Models",
-  "asr.model.relocated": "Relocated {n} model file(s)"
+  "asr.model.relocated": "Relocated {n} model file(s)",
+  "asr.model.source.github": "GitHub",
+  "asr.model.source.hf": "HuggingFace",
+  "asr.queue.empty": "Queue is empty, add files to start",
+  "asr.queue.stats.total": "{n} total",
+  "asr.queue.stats.done": "{n} done",
+  "asr.queue.stats.error": "{n} failed"
 }

@@ -69,16 +69,28 @@ from ..core.presets import AUDIO_EXTS, VIDEO_EXTS
 from ..core.qt_compat import QThreadPool, Signal
 from ..i18n.translator import tr
 from . import tokens
-from .base import InterfaceBase, bind_combo_mapping, combo_value, select_combo_value
+from .base import (
+    InterfaceBase,
+    QueueListBase,
+    bind_combo_mapping,
+    build_detail_label,
+    build_row_header,
+    build_row_layout,
+    combo_value,
+    select_combo_value,
+)
 from .drop_area import DropArea
 from .engine_card import open_folder
-from .queue_widget import QueueListWidget, StatusPill
+from .queue_widget import MarqueeName, ProgressBar, StatusPill
 from .theme import (
+    ThemedCard,
     apply_text,
     border_color,
     danger_color,
+    ext_badge,
     field_row,
     ghost_btn,
+    icon_btn,
     muted_text,
     primary_btn,
     success_color,
@@ -140,9 +152,21 @@ class _FunasrModelRow(QWidget):
         apply_text(self.descLbl, muted_text(), transparent=True)
         vb.addWidget(self.descLbl)
 
-        # 第三行：按钮（一键下载引擎与模型 / 前往下载 / 打开文件夹）
+        # 第三行：下载源下拉 + 按钮（一键下载引擎与模型 / 前往下载 / 打开文件夹）
         btns = QHBoxLayout()
         btns.setSpacing(8)
+        # v0.8.8 Bug1：下载源切换（默认 GitHub；GitHub 无模型镜像时自动回退 HF）
+        self.sourceCombo = ComboBox()
+        self.sourceCombo.setFixedHeight(28)
+        self.sourceCombo.setMinimumWidth(116)
+        self._source_items = [
+            ("github", tr("asr.model.source.github")),
+            ("hf", tr("asr.model.source.hf")),
+        ]
+        for _val, disp in self._source_items:
+            self.sourceCombo.addItem(disp)
+        self.sourceCombo.setCurrentIndex(0)  # 默认 GitHub
+        btns.addWidget(self.sourceCombo)
         self.dlBtn = PrimaryPushButton(tr("asr.model.download_engine"), icon=FIF.DOWNLOAD)
         self.dlBtn.setFixedHeight(28)
         self.dlBtn.clicked.connect(self._on_download)
@@ -187,7 +211,12 @@ class _FunasrModelRow(QWidget):
         self.dlBtn.setEnabled(False)
         self.prog.setValue(0)
         self.prog.show()
-        worker = fdl.FunasrModelDownloadWorker(self.spec["id"])
+        source = (
+            self._source_items[self.sourceCombo.currentIndex()][0]
+            if hasattr(self, "sourceCombo")
+            else "github"
+        )
+        worker = fdl.FunasrModelDownloadWorker(self.spec["id"], source=source)
         worker.signals.progress.connect(self._on_progress)
         worker.signals.finished.connect(self._on_dl_done)
         QThreadPool.globalInstance().start(worker)
@@ -207,16 +236,14 @@ class _FunasrModelRow(QWidget):
             parent.modelChanged(model_id, ok, msg)
 
     def _open_folder(self):
-        """打开模型存放目录：模型目录存在则打开它，否则打开/创建 tools/funasr/ 根。
+        """打开该模型的**二级文件夹**（不存在则创建）——手动下载的模型就放这里。
 
-        v0.8.7：文件夹按钮始终显示——即使模型还没下载，用户也要知道手动下载后
-        该放到哪个目录。
+        v0.8.8 Bug3：不再退回 tools/funasr/ 根目录；每个模型固定
+        ``tools/funasr/<id>/``，打开文件夹 = 打开这个二级文件夹。
         """
         try:
             d = fe.model_dir(self.spec["id"])
-            if not d.is_dir():
-                d = fe.models_dir()
-                d.mkdir(parents=True, exist_ok=True)
+            d.mkdir(parents=True, exist_ok=True)
             open_folder(str(d))
         except OSError as exc:
             log.warning("打开模型目录失败：%s", exc)
@@ -265,27 +292,111 @@ class _FunasrModelRow(QWidget):
         self.dlBtn.setText(tr("asr.model.download_engine"))
         self.gotoBtn.setText(tr("asr.model.goto"))
         self.folderBtn.setText(tr("asr.model.open_folder"))
+        # 源下拉重建（保留当前选中值）
+        if hasattr(self, "sourceCombo") and self._source_items:
+            cur = self._source_items[self.sourceCombo.currentIndex()][0]
+            self.sourceCombo.blockSignals(True)
+            self.sourceCombo.clear()
+            self._source_items = [
+                ("github", tr("asr.model.source.github")),
+                ("hf", tr("asr.model.source.hf")),
+            ]
+            for i, (_val, disp) in enumerate(self._source_items):
+                self.sourceCombo.addItem(disp)
+                if _val == cur:
+                    self.sourceCombo.setCurrentIndex(i)
+            self.sourceCombo.blockSignals(False)
         self.refresh()
 
 
-class _AsrQueueTask:
-    """喂给 QueueListWidget 的轻量任务对象（duck-typed core.models.Task）。
+class AsrItemWidget(ThemedCard):
+    """转写队列中的单个任务卡片。
 
-    v0.8.7 Bug2：转写队列复用现有队列组件（放大队列同款），不再自造 QListWidget。
-    QueueItemWidget 需要 id/input_path/output_path/target_format/status/progress/error
-    及 src_size/dst_size 等属性，这里补齐即可。
+    v0.8.8 Bug2：整体照搬「放大队列」UpscaleItemWidget 的结构（后缀徽标 +
+    滚动文件名 + 状态胶囊 + 进度条 + 详情行 + 删除按钮），不再自造队列 UI。
     """
 
-    def __init__(self, path: str, task_id: str, status: str = "pending", progress: int = 0):
-        self.id = task_id
-        self.input_path = path
-        self.output_path = ""
-        self.target_format = "txt"
-        self.status = status
-        self.progress = progress
-        self.error = ""
-        self.src_size = 0
-        self.dst_size = 0
+    removeRequested = Signal(str)
+
+    def __init__(self, item_id: str, src: str, parent=None):
+        super().__init__(parent)
+        self._id = item_id
+        self._src = src
+        self._status = "pending"
+
+        vb = build_row_layout(self)
+
+        src_ext = Path(src).suffix.upper().lstrip(".")
+        self.iconLbl = ext_badge(src_ext, self)
+        self.nameLbl = MarqueeName(self)
+        self.nameLbl.set_text(Path(src).name)
+        self.nameLbl.setObjectName("queueName")
+        self.pill = StatusPill("pending")
+        vb.addLayout(build_row_header(self.iconLbl, self.nameLbl, self.pill))
+
+        self.prog = ProgressBar()
+        vb.addWidget(self.prog)
+
+        bottom = QHBoxLayout()
+        self.detailLbl = build_detail_label()
+        bottom.addWidget(self.detailLbl, 1)
+        self.delBtn = icon_btn(FIF.DELETE)
+        self.delBtn.clicked.connect(lambda: self.removeRequested.emit(self._id))
+        bottom.addWidget(self.delBtn)
+        vb.addLayout(bottom)
+
+        self.set_status("pending")
+        self.set_progress(0)
+
+    def set_progress(self, pct: int):
+        self.prog.set_value(pct)
+
+    def set_status(self, status: str, detail: str = ""):
+        """status 取 QueueItemWidget 同款键：pending/running/done/failed。"""
+        self._status = status
+        self.pill.set_status(status)
+        if detail:
+            self.detailLbl.setText(detail)
+
+
+class AsrListWidget(QueueListBase):
+    """转写任务列表（v0.8.8 照搬放大队列结构：QueueListBase + 行卡片）。"""
+
+    removeRequested = Signal(str)
+
+    _empty_key = "asr.queue.empty"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.statTotal, self.statDone, self.statErr = self._statLabels
+
+    def _update_stats(self):
+        """统计总数 / 完成 / 失败（基于行的 ``_status``）。"""
+        total = len(self.items)
+        done = sum(1 for w in self.items.values() if w._status == "done")
+        failed = sum(1 for w in self.items.values() if w._status == "failed")
+        self.statTotal.setText(tr("asr.queue.stats.total", n=total))
+        self.statDone.setText(tr("asr.queue.stats.done", n=done))
+        self.statErr.setText(tr("asr.queue.stats.error", n=failed))
+
+    def add_item(self, item_id: str, src: str):
+        if item_id in self.items:
+            return
+        w = AsrItemWidget(item_id, src)
+        w.removeRequested.connect(self.removeRequested)
+        self._attach_row(item_id, w)
+        self._update_stats()
+
+    def set_status(self, item_id: str, status: str, detail: str = ""):
+        w = self.items.get(item_id)
+        if w:
+            w.set_status(status, detail)
+            self._update_stats()
+
+    def set_progress(self, item_id: str, pct: int):
+        w = self.items.get(item_id)
+        if w:
+            w.set_progress(pct)
 
 
 class AudioTranscribeInterface(InterfaceBase):
@@ -301,6 +412,8 @@ class AudioTranscribeInterface(InterfaceBase):
         self._worker: AsrTranscribeWorker | None = None
         self._health_thread: threading.Thread | None = None
         self._healthResult.connect(self._on_health_result)
+        # v0.8.8 Bug3：启动即预建各模型的二级文件夹（tools/funasr/<id>/）
+        fe.ensure_model_dirs()
 
         # =====================================================================
         # 1. 添加文件卡片（拖拽区 + 选择文件按钮 + 文件计数）
@@ -363,11 +476,11 @@ class AudioTranscribeInterface(InterfaceBase):
         # 4. 转写队列卡片（v0.8.6：多文件队列 + 开始/停止/移除/清空 + 进度）
         # =====================================================================
         qcard, qvb, self.tQueue = self._make_card("asr.queue.title")
-        # v0.8.7 Bug2：复用现有队列组件（放大队列同款），行内自带删除/重试按钮
-        self._queueList = QueueListWidget()
+        # v0.8.8 Bug2：整体照搬「放大队列」结构（QueueListBase + 行卡片），
+        # 不再使用通用 QueueListWidget 的适配层
+        self._queueList = AsrListWidget()
         self._queueList.setMinimumHeight(120)
         self._queueList.removeRequested.connect(self._remove_by_id)
-        self._queueList.retryRequested.connect(self._retry_by_id)
         qvb.addWidget(self._queueList)
 
         qctrl = QHBoxLayout()
@@ -395,12 +508,8 @@ class AudioTranscribeInterface(InterfaceBase):
         # 5. 转写结果卡片（CMD 完整文案，v0.8.6：自动保存 txt，无手动保存按钮）
         # =====================================================================
         rcard, rvb, self.tCmd = self._make_card("asr.cmd.title")
-        self.cmdEdit = QPlainTextEdit()
-        self.cmdEdit.setReadOnly(True)
+        self.cmdEdit = self._make_log_edit(tr("asr.cmd.ready"))
         self.cmdEdit.setMinimumHeight(170)
-        self.cmdEdit.setWordWrapMode(_WRAP_MODE)
-        self.cmdEdit.setPlaceholderText(tr("asr.cmd.ready"))
-        apply_text(self.cmdEdit, text_strong(), transparent=False)
         rvb.addWidget(self.cmdEdit)
         self.vbox.addWidget(rcard)
 
@@ -455,11 +564,8 @@ class AudioTranscribeInterface(InterfaceBase):
         log_title = CaptionLabel(tr("asr.service.log.title"))
         apply_text(log_title, text_strong(), weight=700, transparent=True)
         svb.addWidget(log_title)
-        self.serviceEdit = QPlainTextEdit()
-        self.serviceEdit.setReadOnly(True)
+        self.serviceEdit = self._make_log_edit("", text_secondary())
         self.serviceEdit.setMinimumHeight(96)
-        self.serviceEdit.setWordWrapMode(_WRAP_MODE)
-        apply_text(self.serviceEdit, text_secondary(), transparent=False)
         svb.addWidget(self.serviceEdit)
         self.vbox.addWidget(scard)
 
@@ -633,7 +739,10 @@ class AudioTranscribeInterface(InterfaceBase):
             lambda checked: setattr(cfg.asrStructured, "value", bool(checked))
         )
         self._settingsStructuredRow = field_row(
-            tr("asr.settings.structured"), self._structuredSwitch, label_width=132
+            tr("asr.settings.structured"),
+            self._structuredSwitch,
+            label_width=132,
+            label_wrap=True,  # v0.8.8 Bug4：label 允许换行完整显示，不再截断
         )
         svb.addWidget(self._settingsStructuredRow)
         self._structuredHint = CaptionLabel("")
@@ -919,6 +1028,7 @@ class AudioTranscribeInterface(InterfaceBase):
         self._progressLabel.setText(tr("asr.progress.failed"))
         if 0 <= self._queue_pos < len(self._queue):
             self._queue[self._queue_pos]["status"] = "failed"
+            self._queue[self._queue_pos]["error"] = msg
         self._refresh_queue_list()
     def _on_worker_finished(self):
         """worker 线程退出后释放引用；队列还有 waiting 项则自动续跑（不自动重试失败项）。"""
@@ -942,20 +1052,17 @@ class AudioTranscribeInterface(InterfaceBase):
         return {"waiting": "pending", "processing": "running"}.get(st, st)
 
     def _refresh_queue_list(self):
-        """把 self._queue 增量渲染到 QueueListWidget（新增/状态/进度/移除消失项）。"""
+        """把 self._queue 增量渲染到 AsrListWidget（新增/状态/进度/移除消失项）。"""
         live = set()
         for item in self._queue:
             tid = self._queue_id(item["path"])
             live.add(tid)
-            st = self._asr_status(item["status"])
             if tid not in self._queueList.items:
-                self._queueList.add_item(
-                    _AsrQueueTask(item["path"], tid, status=st, progress=item.get("progress", 0))
-                )
-            else:
-                self._queueList.update_status(tid, st, item.get("error", ""))
-                self._queueList.set_progress(tid, int(item.get("progress", 0) or 0))
-        for tid in list(self._queueList.items.keys()):
+                self._queueList.add_item(tid, item["path"])
+            st = self._asr_status(item["status"])
+            self._queueList.set_status(tid, st, item.get("error", ""))
+            self._queueList.set_progress(tid, int(item.get("progress", 0) or 0))
+        for tid in list(self._queueList.items):
             if tid not in live:
                 self._queueList.remove_item(tid)
         n = len(self._queue)
@@ -964,14 +1071,6 @@ class AudioTranscribeInterface(InterfaceBase):
     def _remove_by_id(self, task_id: str):
         """行内删除按钮：从队列数据源与渲染中移除。"""
         self._queue[:] = [it for it in self._queue if self._queue_id(it["path"]) != task_id]
-        self._refresh_queue_list()
-        self._sync_controls()
-
-    def _retry_by_id(self, task_id: str):
-        """行内重试按钮：把该项重置为等待。"""
-        for it in self._queue:
-            if self._queue_id(it["path"]) == task_id and it["status"] != "processing":
-                it["status"] = "waiting"
         self._refresh_queue_list()
         self._sync_controls()
 
@@ -1002,6 +1101,30 @@ class AudioTranscribeInterface(InterfaceBase):
     # =========================================================================
     # CMD / 服务日志追加
     # =========================================================================
+    @staticmethod
+    def _make_log_edit(placeholder: str = "", text_color: str | None = None) -> QPlainTextEdit:
+        """只读日志框：自动换行 + 圆角卡片样式（v0.8.8 Bug5）。
+
+        用户反馈旧日志框「矩形 + 无圆角」不好看，这里统一为圆角卡片：
+        背景 SURFACE + 1px 边框 + 8px 圆角 + 内边距，聚焦时边框变主色。
+        """
+        edit = QPlainTextEdit()
+        edit.setReadOnly(True)
+        edit.setWordWrapMode(_WRAP_MODE)
+        if placeholder:
+            edit.setPlaceholderText(placeholder)
+        edit.setStyleSheet(
+            f"QPlainTextEdit {{"
+            f"  color: {text_color or text_strong()};"
+            f"  background-color: {tokens.SURFACE};"
+            f"  border: 1px solid {border_color()};"
+            f"  border-radius: 8px;"
+            f"  padding: 6px 8px;"
+            f"}}"
+            f"QPlainTextEdit:focus {{ border: 1px solid {tokens.ACCENT}; }}"
+        )
+        return edit
+
     def _append_cmd(self, line: str):
         self.cmdEdit.appendPlainText(line)
         self._scroll_bottom(self.cmdEdit)

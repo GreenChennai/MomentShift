@@ -503,19 +503,29 @@ def panel(
     return card, vb
 
 
-def field_row(label_text: str, control, parent=None, label_width: int = 96) -> QWidget:
+def field_row(
+    label_text: str,
+    control,
+    parent=None,
+    label_width: int = 96,
+    label_wrap: bool = False,
+) -> QWidget:
     """构造「左标签 + 右控件」的一行。
 
     Args:
         label_text: 行标签文案。
         control: 右侧控件；传入 ``QLayout`` 时按布局加入（用于多控件组合行）。
         parent: 行控件父对象。
-        label_width: 标签固定宽度（px）。
+        label_width: 标签固定宽度（px，label_wrap=False 时生效）。
+        label_wrap: 标签允许换行完整显示（v0.8.8 Bug4：固定宽度下长文案
+            （如「结构化输出（时间戳 + 说话人）」）会被单行截断——开启后
+            标签按内容自动换行、高度自适应，右侧控件垂直居中。
     Returns:
         行控件 ``QWidget``；标签引用挂在 ``row.fieldLabel`` 上，
         调用方的 ``retranslateUi`` 可以通过它更新文案（v0.8.1 Bug4-②）。
     """
-    from PyQt6.QtWidgets import QLayout
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QLayout, QSizePolicy
 
     row = QWidget(parent)
     apply_transparent(row)
@@ -524,7 +534,14 @@ def field_row(label_text: str, control, parent=None, label_width: int = 96) -> Q
     hb.setSpacing(12)
     lbl = BodyLabel(label_text)
     lbl.setObjectName("fieldLabel")
-    lbl.setFixedWidth(label_width)
+    if label_wrap:
+        # 允许换行完整显示：宽度自适应内容、高度随换行增长
+        lbl.setWordWrap(True)
+        lbl.setMinimumWidth(0)
+        lbl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+    else:
+        lbl.setFixedWidth(label_width)
     hb.addWidget(lbl)
     if isinstance(control, QLayout):
         hb.addLayout(control, 1)

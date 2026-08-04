@@ -224,6 +224,23 @@ def model_dir(model_id: str) -> Path:
     return models_dir() / model_id
 
 
+def ensure_model_dirs() -> int:
+    """为模型清单里每个模型预建二级文件夹 ``tools/funasr/<id>/``（幂等）。
+
+    v0.8.8 Bug3：模型从一开始就按分类放二级文件夹，用户手动下载时按
+    「打开文件夹」进入对应目录存放即可，不再依赖文件名自动归类。
+    """
+    n = 0
+    for spec in MODEL_CATALOG:
+        d = model_dir(spec["id"])
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            n += 1
+        except OSError as exc:
+            log.warning("创建模型目录 %s 失败：%s", d, exc)
+    return n
+
+
 def find_spec(model_id: str) -> dict | None:
     """按 id 查模型清单；未知 id 返回 None。"""
     for spec in MODEL_CATALOG:
