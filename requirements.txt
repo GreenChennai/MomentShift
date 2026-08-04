@@ -5,3 +5,8 @@ PyQt6-Fluent-Widgets>=1.6.0
 # Image compression engine (always-available backend for the Compress feature).
 # oxipng / OptiPNG / mozjpeg are optional external binaries detected at runtime.
 Pillow>=10.0.0
+# v0.8.4 内置 FunASR 本地推理（裁剪版 funasr_onnx，仅需这三个运行时依赖；
+# 模型不随软件分发，下载到 tools/funasr/）
+numpy>=1.24.0
+onnxruntime>=1.17.0
+jieba>=0.42.1

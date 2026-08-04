@@ -1,20 +1,20 @@
-"""音频转文字（ASR）界面 —— 视频/音频 → 文字（FunASR HTTP 服务）。
+"""音频转文字（ASR）界面 —— 视频/音频 → 文字（内置 FunASR 本地推理 / HTTP 服务）。
 
 职责边界：
 - 做：收集输入文件（视频/音频拖拽或选择）、启动/停止后台转写 worker、把
   worker 信号渲染到两块只读文本区（主 CMD 结果区 + 服务模式日志区）、把完整
-  文案保存为 .txt、管理「本地服务模式」配置区。
-- 不做：不执行 ffmpeg / HTTP 请求（在 ``core/asr_worker`` / ``core/asr_client``）；
-  不持有队列。
+  文案保存为 .txt、管理「本地模型」下载与「本地服务模式」配置区。
+- 不做：不执行 ffmpeg / HTTP 请求 / ONNX 推理（在 ``core/asr_worker`` /
+  ``core/asr_client`` / ``core/funasr_engine``）；不持有队列。
 
-架构（v0.8.3）：MomentShift 是 PyInstaller 独立应用，绝不捆绑 FunASR 模型
-（884MB+）。本组件是**客户端**，连用户本地/远程已部署的 OpenAI 兼容服务
-（``C:\\FunASR\\server.py``：POST /v1/audio/transcriptions、/health、/v1/models）。
+架构（v0.8.4）：FunASR **功能内置**（本地推理），**模型不内置**（下载到
+``tools/funasr/``，绝不进 repo / 不打包）。默认（服务模式开关关）优先用本地
+模型；未下载模型时引导下载或启用服务模式。v0.8.3 的「服务模式」（连用户
+本地/远程 OpenAI 兼容服务 ``C:\\FunASR\\server.py``）保留为可选后端。
 
 服务模式语义：
-- 「启用服务模式」开关默认**关**。关闭时用内置默认地址/模型
-  （``http://127.0.0.1:8000/v1`` + ``paraformer-zh``）——零配置即可连用户本地
-  服务；开启后用配置区里的三件套（持久化到 ``cfg.asrBaseUrl/asrModel/asrApiKey``）。
+- 「启用服务模式」开关默认**关**。关闭时用本地推理（模型已下载）或提示下载；
+  开启后用配置区里的三件套（持久化到 ``cfg.asrBaseUrl/asrModel/asrApiKey``）。
 - 服务模式配置区是独立折叠卡片，默认折叠；卡片内含自己的日志区（请求/响应/
   错误），与主 CMD 结果区分开。
 """
@@ -27,13 +27,22 @@ from pathlib import Path
 from PyQt6.QtGui import QTextCursor, QTextOption
 from PyQt6.QtWidgets import (
     QFileDialog,
+    QFrame,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QProgressBar,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
 from qfluentwidgets import (
     CaptionLabel,
     PasswordLineEdit,
+    PrimaryPushButton,
+    PushButton,
+    StrongBodyLabel,
     SwitchButton,
     TransparentToolButton,
 )
@@ -41,22 +50,29 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
+from ..core import funasr_download as fdl
+from ..core import funasr_engine as fe
 from ..core.asr_client import DEFAULT_BASE_URL, DEFAULT_MODEL, asr_health
 from ..core.asr_worker import AsrTranscribeWorker
 from ..core.config import cfg
 from ..core.ffmpeg import find_ffmpeg, find_ffprobe
 from ..core.presets import AUDIO_EXTS, VIDEO_EXTS
-from ..core.qt_compat import Signal
+from ..core.qt_compat import QThreadPool, Signal
 from ..i18n.translator import tr
 from . import tokens
 from .base import InterfaceBase
 from .drop_area import DropArea
+from .engine_card import open_folder
+from .queue_widget import StatusPill
 from .theme import (
     apply_text,
+    border_color,
+    danger_color,
     field_row,
     ghost_btn,
     muted_text,
     primary_btn,
+    success_color,
     text_secondary,
     text_strong,
 )
@@ -64,6 +80,131 @@ from .theme import (
 # 本组件接受的输入扩展名：视频 + 音频
 _ASR_EXTS = VIDEO_EXTS | AUDIO_EXTS
 _WRAP_MODE = QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
+
+
+class _FunasrModelRow(QWidget):
+    """单个 FunASR 模型的下载/状态行（仿 engine_card.EngineRow，放 ASR 组件内）。
+
+    一行 = 状态点 + 名称 + 状态胶囊（已就绪 / 未下载 / 下载中 x%）+ 简介
+    （含体积）+ 下载按钮（未下载时主色高亮）+ 打开文件夹按钮（已下载时）。
+    """
+
+    def __init__(self, spec: dict, parent=None):
+        super().__init__(parent)
+        self.spec = spec
+        self._downloading = False
+        from .theme import apply_transparent
+
+        apply_transparent(self)
+
+        vb = QVBoxLayout(self)
+        vb.setContentsMargins(0, 0, 0, 0)
+        vb.setSpacing(5)
+
+        # 第一行：状态点 + 名称 + 状态胶囊
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        self.dot = QLabel()
+        self.dot.setFixedSize(8, 8)
+        top.addWidget(self.dot)
+        self.nameLbl = StrongBodyLabel(tr(spec["name_key"]))
+        self.nameLbl.setWordWrap(True)
+        self.nameLbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        top.addWidget(self.nameLbl, 1)
+        self.statusPill = StatusPill("pending")
+        top.addWidget(self.statusPill)
+        vb.addLayout(top)
+
+        # 第二行：简介 + 体积
+        self.descLbl = CaptionLabel(
+            f"{tr(spec['desc_key'])}  {tr('asr.model.size', size=spec['size_mb'])}"
+        )
+        self.descLbl.setWordWrap(True)
+        self.descLbl.setMinimumWidth(0)
+        self.descLbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        apply_text(self.descLbl, muted_text(), transparent=True)
+        vb.addWidget(self.descLbl)
+
+        # 第三行：按钮（下载 / 打开文件夹）
+        btns = QHBoxLayout()
+        btns.setSpacing(8)
+        self.dlBtn = PrimaryPushButton(tr("asr.model.download"), icon=FIF.DOWNLOAD)
+        self.dlBtn.setFixedHeight(28)
+        self.dlBtn.clicked.connect(self._on_download)
+        btns.addWidget(self.dlBtn)
+        self.folderBtn = PushButton(tr("asr.model.open_folder"), icon=FIF.FOLDER)
+        self.folderBtn.setFixedHeight(28)
+        self.folderBtn.clicked.connect(
+            lambda: open_folder(str(fe.model_dir(self.spec["id"])))
+        )
+        btns.addWidget(self.folderBtn)
+        btns.addStretch(1)
+        vb.addLayout(btns)
+
+        # 进度条（下载中显示）
+        self.prog = QProgressBar()
+        self.prog.setRange(0, 100)
+        self.prog.setFixedHeight(3)
+        self.prog.setTextVisible(False)
+        self.prog.setStyleSheet(tokens.progress_qss("transparent", tokens.ACCENT, 1))
+        self.prog.hide()
+        vb.addWidget(self.prog)
+
+        self.refresh()
+
+    # -- 下载 --
+    def _on_download(self):
+        if self._downloading:
+            return
+        self._downloading = True
+        self.dlBtn.setEnabled(False)
+        self.prog.setValue(0)
+        self.prog.show()
+        worker = fdl.FunasrModelDownloadWorker(self.spec["id"])
+        worker.signals.progress.connect(self._on_progress)
+        worker.signals.finished.connect(self._on_dl_done)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_progress(self, _model_id: str, pct: int):
+        self.prog.setValue(pct)
+        self.statusPill.set_status("compressing", text=tr("asr.model.downloading", pct=pct))
+
+    def _on_dl_done(self, model_id: str, ok: bool, msg: str):
+        self._downloading = False
+        self.prog.hide()
+        self.refresh()
+        parent = self.parent()
+        while parent is not None and not hasattr(parent, "modelChanged"):
+            parent = parent.parent()
+        if parent is not None:
+            parent.modelChanged(model_id, ok, msg)
+
+    # -- 状态刷新 --
+    def refresh(self) -> None:
+        ready = fe.is_model_ready(self.spec["id"], self.spec["quantize"])
+        if ready:
+            self.statusPill.set_status("done", text=tr("asr.model.ready"))
+            self.dot.setStyleSheet(tokens.dot_qss(success_color().name(), 4))
+            self.dlBtn.hide()
+            self.folderBtn.show()
+        else:
+            self.statusPill.set_status("failed", text=tr("asr.model.missing"))
+            self.dot.setStyleSheet(tokens.dot_qss(danger_color().name(), 4))
+            self.dlBtn.show()
+            self.folderBtn.hide()
+        if self._downloading:
+            # 下载中文案由进度信号实时刷新，这里不打断
+            self.statusPill.set_status("compressing", text=tr("asr.model.downloading", pct=self.prog.value()))
+            self.dlBtn.hide()
+
+    def retranslateUi(self) -> None:
+        self.nameLbl.setText(tr(self.spec["name_key"]))
+        self.descLbl.setText(
+            f"{tr(self.spec['desc_key'])}  {tr('asr.model.size', size=self.spec['size_mb'])}"
+        )
+        self.dlBtn.setText(tr("asr.model.download"))
+        self.folderBtn.setText(tr("asr.model.open_folder"))
+        self.refresh()
 
 
 class AudioTranscribeInterface(InterfaceBase):
@@ -135,6 +276,29 @@ class AudioTranscribeInterface(InterfaceBase):
         apply_text(self._hintLabel, muted_text(), transparent=True)
         cvb.addWidget(self._hintLabel)
         self.vbox.addWidget(ccard)
+
+        # =====================================================================
+        # 模型管理卡片（本地推理模型：下载 / 状态 / 打开文件夹）
+        # =====================================================================
+        mcard, mvb, self.tModel = self._make_card("asr.model.title")
+        hint = CaptionLabel(tr("asr.model.hint"))
+        hint.setWordWrap(True)
+        hint.setMinimumWidth(0)
+        hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        apply_text(hint, muted_text(), transparent=True)
+        mvb.addWidget(hint)
+
+        self._model_rows: list[_FunasrModelRow] = []
+        for spec in fdl.MODEL_CATALOG:
+            row = _FunasrModelRow(spec, self)
+            self._model_rows.append(row)
+            mvb.addWidget(row)
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.HLine)
+            sep.setFixedHeight(1)
+            sep.setStyleSheet(f"QFrame{{ background: {border_color()}; border: none; }}")
+            mvb.addWidget(sep)
+        self.vbox.addWidget(mcard)
 
         # =====================================================================
         # CMD 结果卡片（完整文案，可滚动、绝不截断）
@@ -224,23 +388,24 @@ class AudioTranscribeInterface(InterfaceBase):
         self._sync_controls()
 
     # =========================================================================
-    # 服务模式与健康检查
+    # 服务模式、本地模型状态与健康检查
     # =========================================================================
     def _effective_params(self) -> tuple[str, str, str]:
         """按服务模式开关解析实际使用的 (base_url, model, api_key)。
 
-        未启用服务模式 → 内置默认（零配置连本地服务）；启用 → 配置三件套。
+        仅服务模式（HTTP）使用；本地模式不走这里。
         """
         if self._serviceSwitch.isChecked():
             return cfg.asrBaseUrl.value, cfg.asrModel.value, cfg.asrApiKey.value
         return DEFAULT_BASE_URL, DEFAULT_MODEL, ""
 
     def _on_service_mode(self, checked: bool):
-        """服务模式开关：切换输入区可用状态 + 刷新提示/日志。"""
+        """服务模式开关：切换输入区可用状态 + 刷新提示/日志/状态。"""
         for row in (self._urlRow, self._modelRow, self._keyRow):
             row.setEnabled(checked)
         if checked:
             self._serviceHint.setText(tr("asr.service.enable.hint"))
+            self._hintLabel.setText(tr("asr.status.hint"))
             self._append_service(tr("asr.service.log.enabled"))
         else:
             self._serviceHint.setText(
@@ -250,7 +415,10 @@ class AudioTranscribeInterface(InterfaceBase):
         self._check_service()
 
     def _check_service(self):
-        """后台探测服务健康（不阻塞界面），结果经信号回传。"""
+        """按模式刷新状态行：服务模式 → HTTP 健康检查；默认 → 本地模型状态。"""
+        if not self._serviceSwitch.isChecked():
+            self._refresh_local_status()
+            return
         base_url, _model, _key = self._effective_params()
         self._statusLabel.setText(tr("asr.status.checking"))
         apply_text(self._statusLabel, muted_text(), transparent=True)
@@ -261,6 +429,28 @@ class AudioTranscribeInterface(InterfaceBase):
 
         self._health_thread = threading.Thread(target=_run, daemon=True)
         self._health_thread.start()
+
+    def _refresh_local_status(self):
+        """默认（未启用服务模式）时的状态行：显示本地模型就绪情况。"""
+        model_id = fe.find_ready_model()
+        if model_id is not None:
+            self._statusLabel.setText(tr("asr.model.local.ready", model=model_id))
+            apply_text(self._statusLabel, tokens.ACCENT, transparent=True)
+            self._hintLabel.setText(tr("asr.model.local.hint"))
+        else:
+            self._statusLabel.setText(tr("asr.model.local.missing"))
+            apply_text(self._statusLabel, tokens.DANGER_STRONG, transparent=True)
+            self._hintLabel.setText(tr("asr.model.no_model"))
+
+    def modelChanged(self, model_id: str, ok: bool, msg: str):
+        """模型下载完成/失败后：刷新全部行与状态行，并在 CMD 追加结果。"""
+        for row in self._model_rows:
+            row.refresh()
+        if ok:
+            self._append_cmd(tr("asr.model.download.done"))
+            self._check_service()
+        else:
+            self._append_cmd(tr("asr.model.download.failed", msg=msg))
 
     def _on_health_result(self, ok: bool, msg: str):
         base_url, model, _key = self._effective_params()
@@ -284,21 +474,36 @@ class AudioTranscribeInterface(InterfaceBase):
             self._append_cmd(tr("asr.error.no_ffmpeg"))
             return
 
-        base_url, model, api_key = self._effective_params()
         self.cmdEdit.clear()
         self._append_cmd(tr("asr.cmd.selected", name=Path(self._input_path).name))
-        self._append_cmd(
-            tr("asr.cmd.service", url=base_url, model=model, key="***" if api_key else "-")
-        )
 
-        self._worker = AsrTranscribeWorker(
-            self._input_path,
-            find_ffmpeg(cfg.ffmpegSource.value) or "",
-            find_ffprobe(),
-            base_url,
-            model,
-            api_key,
-        )
+        if self._serviceSwitch.isChecked():
+            base_url, model, api_key = self._effective_params()
+            self._append_cmd(
+                tr("asr.cmd.service", url=base_url, model=model, key="***" if api_key else "-")
+            )
+            self._worker = AsrTranscribeWorker(
+                self._input_path,
+                find_ffmpeg(cfg.ffmpegSource.value) or "",
+                find_ffprobe(),
+                base_url,
+                model,
+                api_key,
+                mode="http",
+            )
+        else:
+            model_id = fe.find_ready_model()
+            if model_id is None:
+                self._append_cmd(tr("asr.model.no_model"))
+                return
+            self._append_cmd(tr("asr.cmd.local", model=model_id))
+            self._worker = AsrTranscribeWorker(
+                self._input_path,
+                find_ffmpeg(cfg.ffmpegSource.value) or "",
+                find_ffprobe(),
+                mode="local",
+                model_id=model_id,
+            )
         self._worker.logMessage.connect(self._append_cmd)
         self._worker.serviceLog.connect(self._append_service)
         self._worker.progressChanged.connect(self._on_progress)
@@ -394,6 +599,7 @@ class AudioTranscribeInterface(InterfaceBase):
         self.subLabel.setText(tr("asr.subtitle"))
         self.tInput.setText(tr("asr.input.title"))
         self.tControl.setText(tr("asr.control.title"))
+        self.tModel.setText(tr("asr.model.title"))
         self.tCmd.setText(tr("asr.cmd.title"))
         self.tService.setText(tr("asr.service.title"))
         self.dropArea.retranslate(
@@ -408,12 +614,15 @@ class AudioTranscribeInterface(InterfaceBase):
         self._modelRow.fieldLabel.setText(tr("asr.service.model"))
         self._keyRow.fieldLabel.setText(tr("asr.service.api_key"))
         self._serviceSwitch.setText(tr("asr.service.enable"))
-        self._hintLabel.setText(tr("asr.status.hint"))
+        for row in self._model_rows:
+            row.retranslateUi()
         if self._serviceSwitch.isChecked():
             self._serviceHint.setText(tr("asr.service.enable.hint"))
+            self._hintLabel.setText(tr("asr.status.hint"))
         else:
             self._serviceHint.setText(
                 tr("asr.service.default", url=DEFAULT_BASE_URL, model=DEFAULT_MODEL)
             )
+        self._check_service()
         self._sync_controls()
 

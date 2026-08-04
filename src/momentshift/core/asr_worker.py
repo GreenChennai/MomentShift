@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 
 from .asr_client import AsrError, transcribe
+from .funasr_engine import FunasrEngineError, transcribe_local
 from .platform import popen_silent, run_silent
 from .presets import guess_category
 from .qt_compat import QThread, Signal
@@ -237,14 +238,16 @@ class AsrTranscribeWorker(QThread):
         input_path: 视频或音频文件路径。
         ffmpeg_path: ffmpeg 可执行文件路径（提取/分段用）。
         ffprobe_path: ffprobe 可执行文件路径（时长探测用，可为 None）。
-        base_url: ASR 服务地址（形如 ``http://127.0.0.1:8000/v1``）。
-        model: 模型名。
-        api_key: 可选鉴权 key；为空则不带头。
+        mode: ``"local"`` 用内置 FunASR 本地推理；``"http"`` 走 OpenAI 兼容服务。
+        base_url: ASR 服务地址（HTTP 模式；形如 ``http://127.0.0.1:8000/v1``）。
+        model: 服务端模型名（HTTP 模式）。
+        model_id: 本地模型清单里的 id（local 模式）。
+        api_key: 可选鉴权 key（HTTP 模式）；为空则不带头。
         segment_sec: 分段长度（秒）。
 
     信号（全部从 worker 线程发出，GUI 线程接收）：
     - ``logMessage(str)`` —— 主 CMD 面板的状态行。
-    - ``serviceLog(str)`` —— 服务模式日志（请求/响应/错误）。
+    - ``serviceLog(str)`` —— 服务模式 / 本地推理日志（请求/响应/错误）。
     - ``progressChanged(int)`` —— 0..100 整体进度。
     - ``segmentReady(int, int, str, str)`` —— ``(第几段, 总段数, 段标记, 该段文案)``。
     - ``succeeded(str)`` —— 全部完成的完整文案。
@@ -265,10 +268,12 @@ class AsrTranscribeWorker(QThread):
         input_path: str,
         ffmpeg_path: str,
         ffprobe_path: str | None,
-        base_url: str,
-        model: str,
+        base_url: str = "",
+        model: str = "",
         api_key: str = "",
         segment_sec: float = DEFAULT_SEGMENT_SEC,
+        mode: str = "http",
+        model_id: str = "",
         parent=None,
     ):
         super().__init__(parent)
@@ -278,6 +283,8 @@ class AsrTranscribeWorker(QThread):
         self._base_url = base_url
         self._model = model
         self._api_key = api_key
+        self._mode = mode if mode == "local" else "http"
+        self._model_id = model_id
         self._segment_sec = float(segment_sec)
         self._cancel = threading.Event()
 
@@ -327,20 +334,28 @@ class AsrTranscribeWorker(QThread):
                     seg_wav = wav_path  # 整段：直接用准备好的音频
 
                 self.logMessage.emit(f"正在转写第 {index}/{total} 段…")
-                self.serviceLog.emit(
-                    f"→ POST {self._base_url.rstrip('/')}/audio/transcriptions"
-                    f"（{Path(seg_wav).name}）"
-                )
+                if self._mode == "local":
+                    self.serviceLog.emit(
+                        f"→ 本地模型 {self._model_id} 推理（{Path(seg_wav).name}）"
+                    )
+                else:
+                    self.serviceLog.emit(
+                        f"→ POST {self._base_url.rstrip('/')}/audio/transcriptions"
+                        f"（{Path(seg_wav).name}）"
+                    )
                 t0 = time.monotonic()
                 try:
-                    text = transcribe(
-                        self._base_url, self._model, self._api_key, seg_wav
-                    )
-                except AsrError as exc:
+                    if self._mode == "local":
+                        text = transcribe_local(seg_wav, self._model_id)
+                    else:
+                        text = transcribe(
+                            self._base_url, self._model, self._api_key, seg_wav
+                        )
+                except (AsrError, FunasrEngineError) as exc:
                     self.serviceLog.emit(f"← 失败：{exc}")
                     raise
                 elapsed = time.monotonic() - t0
-                self.serviceLog.emit(f"← 200 OK（{elapsed:.1f}s）")
+                self.serviceLog.emit(f"← 完成（{elapsed:.1f}s）")
 
                 texts.append(text)
                 marker = format_segment_marker(start, end)
