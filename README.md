@@ -7,7 +7,7 @@
 </h1>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
-  <img src="https://img.shields.io/badge/version-0.8.14-brightgreen.svg" alt="Version 0.8.14">
+  <img src="https://img.shields.io/badge/version-0.8.14-brightgreen.svg" alt="Version 0.8.15">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/UI-PyQt6%20%2B%20Fluent--Widgets-238636.svg" alt="UI">
 </p>
@@ -16,9 +16,11 @@
 </p>
 
 ---
+
 <p align="center">
   <strong>声明：本项目全部代码由 AI（人工智能）编写，用于个人技术能力提升与学习交流，并非由人工逐行手写。如有问题或改进建议，欢迎提 Issue / PR</strong>
 </p>
+
 ---
 
 ## ✨ 特性
@@ -67,9 +69,9 @@
 
 ### 5. 快速调用 (1/2/3)
 - **右键调用**：通过右键图片/视频/音频 可以快速调用软件的 **转换**/**压缩**/**转换**/**放大** 功能；
-- 静默运行：调用之后，任务会直接传递到软件的各项任务队列中，并自动开始运行，开始和完成时会有系统提示+音效；
-- 高效多任务：能够批量选择批量运行任务；
-- 高效使用：不用频繁打开软件操作，右键即刻运行；
+- **静默运行**：调用之后，任务会直接传递到软件的任务队列中，并自动开始运行，开始和完成时会有系统提示+音效；
+- **高效多任**务：能够批量选择批量运行任务；
+- **高效使用**：不用频繁打开软件操作，右键即刻运行；
 
 ---
 
@@ -109,9 +111,11 @@ python -m momentshift
 ## 📦 构建与发行
 
 - **本地构建**：用 PyInstaller 按 `build.spec` 打包为单目录（onedir）程序：
+
   ```bash
   .venv\Scripts\python.exe -m PyInstaller build.spec --noconfirm --distpath dist --workpath build
   ```
+
   打包产物为 `dist/MomentShift/`，内含 `momentshift.exe` 与依赖。
 - **CI 自动发行**：推送带 `v*` 前缀的 Tag 即触发 `.github/workflows/build.yml` 自动构建并发布 GitHub Release。
 
@@ -171,17 +175,6 @@ MomentShift/
 - `en_US.json` —— English
 
 新增语言只需复制一份 JSON 并在 `translator.py` 的 `SUPPORTED_LOCALES` 注册即可。
-
----
-
-## ⚙️ 设置项速览
-
-- **语言 / 主题**：简体中文 / 繁体中文 / English；浅色 / 深色 / 跟随系统（主题切换会重启软件以彻底刷新）。
-- **硬件加速**：自动 / 仅 CPU / 优先 GPU。
-- **并发线程数**：纯数字输入（1–16）。
-- **关闭时行为**：最小化到系统托盘静默运行 / 直接退出（默认最小化到托盘）。
-- **ffmpeg 来源**：自动检测（优先安装目录，其次 PATH）/ 仅系统 PATH。
-- **音频转文字**：标点恢复（CPU，ct-punc）、情感识别（emotion2vec，需 NVIDIA CUDA）、服务模式监听端口。
 
 ---
 
