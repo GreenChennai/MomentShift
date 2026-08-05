@@ -21,15 +21,14 @@ from qfluentwidgets import (
 from qfluentwidgets import (
     FluentWindow,
     NavigationItemPosition,
-    SplashScreen,
 )
 
 from ..core import quick_launch
 from ..core.config import cfg, connect_autosave
 from ..core.logger import get_logger
-from ..core.qt_compat import QSize
 from ..i18n.translator import LocaleKey, tr, translator
-from .theme import WINDOW_BG
+from .splash import AppSplashScreen
+from .theme import WINDOW_BG, app_icon
 
 
 class MainWindow(FluentWindow):
@@ -112,18 +111,68 @@ class MainWindow(FluentWindow):
         connect_autosave()
 
     def _bootstrap(self):
+        """构建首页，随后逐页链式构建剩余界面并驱动启动屏进度条。
+
+        Notes:
+            v0.8.14 之前这里建完首页就立刻 ``splashScreen.finish()``，剩下 6 个页面
+            用 ``singleShot(20*i)`` 一把撒出去——用户会先看到一个「已经能点、但点谁
+            都还没建好」的半成品窗口。现在改成串行链：每建完一页推进一格进度，全部
+            就绪后才揭开主界面。串行还有个额外好处：每页之间都会回到事件循环，进度
+            条能真正动起来而不是卡在 0% 然后瞬间跳 100%。
+        """
         from .convert_interface import ConvertInterface
+
+        # 快速调用（Windows 右键菜单）仅 Windows 可用，其他平台不计入加载步数
+        self._boot_queue = [
+            s for s in self._lazy if not (s[0] == "quickLaunch" and not quick_launch.supported())
+        ]
+        self._boot_total = len(self._boot_queue) + 1
+        self._boot_done = 0
 
         self.convertInterface = ConvertInterface(self.manager, self)
         self.navigationInterface.setAcrylicEnabled(True)
         self.addSubInterface(self.convertInterface, FIF.HOME, tr("nav.convert"))
         self.convertInterface.retranslateUi()
-        self.splashScreen.finish()
-        for i, spec in enumerate(self._lazy):
-            # 快速调用（Windows 右键菜单）仅 Windows 可用，其他平台不加载该页面
-            if spec[0] == "quickLaunch" and not quick_launch.supported():
-                continue
-            QTimer.singleShot(20 * (i + 1), lambda s=spec: self._build_lazy(*s))
+        self._boot_step(tr("nav.convert"))
+        QTimer.singleShot(10, self._boot_next)
+
+    def _boot_next(self):
+        """构建启动队列里的下一个界面；队列空则收尾关闭启动屏。"""
+        if not self._boot_queue:
+            self._boot_finish()
+            return
+        spec = self._boot_queue.pop(0)
+        try:
+            self._build_lazy(*spec)
+        except Exception:
+            # 单页构建失败不能拖垮整个启动流程：记日志继续，缺的页面用户点不到而已。
+            get_logger("app").exception("构建界面失败：%s", spec[0])
+        self._boot_step(tr(spec[4]))
+        QTimer.singleShot(10, self._boot_next)
+
+    def _boot_step(self, name: str):
+        self._boot_done += 1
+        splash = getattr(self, "splashScreen", None)
+        if splash is None:
+            return
+        percent = int(self._boot_done * 100 / max(1, self._boot_total))
+        splash.set_progress(percent, tr("splash.loading", name=name))
+
+    def _boot_finish(self):
+        splash = getattr(self, "splashScreen", None)
+        if splash is None:
+            return
+        splash.set_progress(100, tr("splash.ready"))
+        # 停一拍再收，否则进度条刚跳到 100% 就被关掉，视觉上像是卡在 90%。
+        QTimer.singleShot(220, self._close_splash)
+
+    def _close_splash(self):
+        splash = getattr(self, "splashScreen", None)
+        if splash is None:
+            return
+        self.splashScreen = None
+        splash.finish()
+        self.navigationInterface.setCurrentItem("Convert")
 
     def _build_lazy(self, name, mod, clsname, icon, title_key, position):
         if getattr(self, name + "Interface", None) is not None:
@@ -204,10 +253,10 @@ class MainWindow(FluentWindow):
         self.setMicaEffectEnabled(False)
         self.setCustomBackgroundColor(WINDOW_BG, WINDOW_BG)
         self.setWindowTitle(tr("app.title"))
-        self.setWindowIcon(FIF.APPLICATION.icon())
+        # v0.8.14：统一走品牌图标（窗口 / 任务栏 / 托盘 / 启动屏共用同一枚 ico）
+        self.setWindowIcon(app_icon())
 
-        self.splashScreen = SplashScreen(self.windowIcon(), self)
-        self.splashScreen.setIconSize(QSize(96, 96))
+        self.splashScreen = AppSplashScreen(self)
         self.splashScreen.raise_()
 
         desktop = QApplication.primaryScreen().availableGeometry()

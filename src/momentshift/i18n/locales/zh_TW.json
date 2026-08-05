@@ -1,6 +1,9 @@
 {
   "app.title": "瞬變工坊",
   "app.tagline": "傻瓜式 ffmpeg 多媒體格式轉換",
+  "splash.starting": "正在啟動…",
+  "splash.loading": "正在載入 {name}…",
+  "splash.ready": "載入完成",
   "nav.convert": "轉換",
   "nav.settings": "設定",
   "nav.about": "關於",
@@ -465,6 +468,7 @@
   "engine.status.ready": "已就緒",
   "engine.status.missing": "未安裝",
   "engine.status.driver": "需驅動支援",
+  "engine.status.downloading": "下載中 {pct}%",
   "engine.param.model": "模型",
   "engine.param.scale": "放大倍率",
   "engine.param.zoom": "放大倍率",
@@ -710,5 +714,9 @@
   "asr.settings.punctuation": "標點恢復（CPU）",
   "asr.settings.punctuation.hint.off": "開啟後對轉寫結果自動加標點（需先下載 ct-punc 模型，CPU 可用）。",
   "asr.settings.punctuation.hint.on_ready": "已啟用，正在使用 ct-punc 模型為轉寫結果加標點。",
-  "asr.settings.punctuation.hint.on_missing": "已啟用但 ct-punc 模型未下載，請在「模型管理」中下載後生效。"
+  "asr.settings.punctuation.hint.on_missing": "已啟用但 ct-punc 模型未下載，請在「模型管理」中下載後生效。",
+  "asr.settings.emotion": "情感辨識（emotion2vec）",
+  "asr.settings.emotion.hint.off": "開啟後逐段轉寫結果附帶情感標籤（需下載 emotion2vec+large 模型、NVIDIA CUDA 與完整 funasr 套件）。",
+  "asr.settings.emotion.hint.on_ready": "已啟用，正在使用 emotion2vec+large 模型為轉寫結果標註情感。",
+  "asr.settings.emotion.hint.on_missing": "已啟用但 emotion2vec+large 模型不可用（未下載/非 NVIDIA CUDA 平台/缺 funasr 套件），請在「模型管理」中確認後生效。"
 }

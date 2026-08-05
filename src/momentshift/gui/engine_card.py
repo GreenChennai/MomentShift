@@ -175,7 +175,9 @@ class EngineRow(QWidget):
         vb.addLayout(path_row)
 
         self.prog = QProgressBar()
-        self.prog.setRange(0, 0)
+        # v0.8.14 软件功能调整：与「音频转文字」模型管理同步，下载时显示百分比胶囊，
+        # 故进度条设为 0..100 确定性范围（而非 0,0 不确定动画）。
+        self.prog.setRange(0, 100)
         self.prog.setFixedHeight(3)
         self.prog.setTextVisible(False)
         self.prog.setStyleSheet(tokens.progress_qss("transparent", accent_color().name(), 1))
@@ -191,14 +193,21 @@ class EngineRow(QWidget):
             return
         if self.dlBtn:
             self.dlBtn.setEnabled(False)
+        self.prog.setValue(0)
         self.prog.show()
         worker = dl_mod.EngineDownloadWorker(
             self.engine.eid,
             str(eng_mod.engine_dir(self.engine.eid)),
             sources,
         )
+        worker.signals.progress.connect(self._on_progress)
         worker.signals.finished.connect(self._on_dl_done)
         QThreadPool.globalInstance().start(worker)
+
+    def _on_progress(self, _eid: str, pct: int):
+        """v0.8.14：下载进度 → 进度条 + 状态胶囊显示「下载中 x%」。"""
+        self.prog.setValue(pct)
+        self.statusPill.set_status("compressing", text=tr("engine.status.downloading", pct=pct))
 
     def _on_dl_done(self, ok: bool, msg: str):
         if self.dlBtn:

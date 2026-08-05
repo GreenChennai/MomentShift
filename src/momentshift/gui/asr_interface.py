@@ -298,9 +298,13 @@ class _FunasrModelRow(QWidget):
             self.dlBtn.hide()
 
     def _hw_reason_text(self) -> str:
-        """硬件不满足时的可读原因（i18n）。"""
+        """硬件不满足时的可读原因（i18n）。
+
+        v0.8.14 #3：NVIDIA CUDA 不满足时复用已有的「硬件不支持」键，
+        不再单独造「需 NVIDIA CUDA GPU」文案（重复造轮子）。
+        """
         if self._hw_reason == "nvidia_cuda":
-            return tr("asr.model.hw_reason.nvidia_cuda")
+            return tr("asr.model.engine_unsupported")
         if self._hw_reason == "min_ram_gb":
             need = self.spec.get("hw_req", {}).get("min_ram_gb", 0)
             return tr("asr.model.hw_reason.min_ram_gb", gb=int(need))
@@ -546,9 +550,11 @@ class AudioTranscribeInterface(InterfaceBase):
 
         for cat in ("main", "optional"):
             groups[cat].sort(key=_sort_key)
+            # v0.8.14 #1：分组标题放大到标题字号 + 主题色 #238636 + 居中
             header = CaptionLabel(tr(f"asr.model.group.{cat}"))
-            apply_text(header, text_strong(), transparent=True)
-            header.setContentsMargins(0, 6, 0, 2)
+            apply_text(header, tokens.ACCENT, size=tokens.FONT_TITLE, weight=600, transparent=True)
+            header.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            header.setContentsMargins(0, 8, 0, 4)
             mvb.addWidget(header)
             for row in groups[cat]:
                 mvb.addWidget(row)
@@ -616,6 +622,8 @@ class AudioTranscribeInterface(InterfaceBase):
         self._portEdit = LineEdit()
         self._portEdit.setValidator(QIntValidator(1024, 65535))
         self._portEdit.setFixedWidth(110)
+        # v0.8.14 #4：监听端口输入框左对齐（默认居中不符合输入习惯）
+        self._portEdit.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self._portEdit.setText(str(int(cfg.asrServerPort.value)))
         self._portEdit.textChanged.connect(self._on_server_port_changed)
         svb.addWidget(field_row(tr("asr.service.port"), self._portEdit, label_width=132))
@@ -757,6 +765,7 @@ class AudioTranscribeInterface(InterfaceBase):
         self._refresh_model_combo()
         self._refresh_structured_hint()
         self._refresh_punc_hint()
+        self._refresh_emotion_hint()
         self._sync_controls()
 
     def _on_service_mode(self, checked: bool):
@@ -797,6 +806,7 @@ class AudioTranscribeInterface(InterfaceBase):
         self._refresh_model_combo()
         self._refresh_structured_hint()
         self._refresh_punc_hint()
+        self._refresh_emotion_hint()
         if ok:
             self._append_cmd(tr("asr.model.download.done"))
         else:
@@ -890,6 +900,27 @@ class AudioTranscribeInterface(InterfaceBase):
         apply_text(self._puncHint, muted_text(), transparent=True)
         svb.addWidget(self._puncHint)
 
+        # v0.8.14 #2：情感识别调用开关（需 emotion2vec+large 模型 + NVIDIA CUDA
+        # + 完整 funasr 包；无模型/无硬件时灰显禁用，调用前再检测，绝不直接调用）
+        self._emotionSwitch = SwitchButton()
+        self._emotionSwitch.setChecked(bool(cfg.asrEmotion.value))
+        self._emotionSwitch.checkedChanged.connect(self._on_emotion_toggled)
+        self._settingsEmotionRow = field_row(
+            tr("asr.settings.emotion"),
+            self._emotionSwitch,
+            label_width=132,
+            label_wrap=True,
+        )
+        svb.addWidget(self._settingsEmotionRow)
+        self._emotionHint = CaptionLabel("")
+        self._emotionHint.setWordWrap(True)
+        self._emotionHint.setMinimumWidth(0)
+        self._emotionHint.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        apply_text(self._emotionHint, muted_text(), transparent=True)
+        svb.addWidget(self._emotionHint)
+
         # ④ 推理设备：策略下拉（auto/cpu/cuda）+ 检测结果显示
         self._deviceCombo = ComboBox()
         self._deviceCombo.setMinimumWidth(180)
@@ -936,6 +967,7 @@ class AudioTranscribeInterface(InterfaceBase):
         self._refresh_device_label()
         self._refresh_structured_hint()
         self._refresh_punc_hint()
+        self._refresh_emotion_hint()
 
     def _on_output_mode(self, checked: bool):
         """输出位置开关：on=保存在源文件旁(same)，off=固定目录(fixed)。"""
@@ -1048,6 +1080,26 @@ class AudioTranscribeInterface(InterfaceBase):
             self._puncHint.setText(tr("asr.settings.punctuation.hint.on_ready"))
         else:
             self._puncHint.setText(tr("asr.settings.punctuation.hint.on_missing"))
+
+    def _on_emotion_toggled(self, checked: bool) -> None:
+        """v0.8.14 #2：情感识别开关切换 → 落盘 + 刷新提示。"""
+        setattr(cfg.asrEmotion, "value", bool(checked))
+        self._refresh_emotion_hint()
+
+    def _refresh_emotion_hint(self) -> None:
+        """v0.8.14 #2：emotion2vec 未就绪/无硬件时情感识别开关灰显禁用并按状态提示。"""
+        if not hasattr(self, "_emotionHint"):
+            return
+        ok, _reason = fe.emotion_available()
+        self._emotionSwitch.setEnabled(ok)
+        if not cfg.asrEmotion.value:
+            self._emotionHint.setText(tr("asr.settings.emotion.hint.off"))
+        elif ok:
+            self._emotionHint.setText(tr("asr.settings.emotion.hint.on_ready"))
+        else:
+            # 开关开启但环境不再满足（罕见：切设备/删模型）→ 提示不可用，
+            # 运行时 worker 仍会二次校验 emotion_available()，不会直接调用
+            self._emotionHint.setText(tr("asr.settings.emotion.hint.on_missing"))
 
     def _resolved_model_id(self) -> str | None:
         """按设置解析实际推理模型：cfg.asrModelId 空 → 自动（第一个已就绪）。"""
@@ -1301,6 +1353,7 @@ class AudioTranscribeInterface(InterfaceBase):
             self._settingsOutputRow.fieldLabel.setText(tr("asr.settings.output.folder"))
             self._refresh_structured_hint()
             self._refresh_punc_hint()
+            self._refresh_emotion_hint()
             self._refresh_device_label()
             self._refresh_model_combo()
             self._refresh_device_combo()

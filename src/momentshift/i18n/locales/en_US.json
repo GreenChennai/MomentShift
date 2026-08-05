@@ -1,6 +1,9 @@
 {
   "app.title": "MomentShift",
   "app.tagline": "Foolproof ffmpeg media format converter",
+  "splash.starting": "Starting…",
+  "splash.loading": "Loading {name}…",
+  "splash.ready": "Ready",
   "nav.convert": "Convert",
   "nav.settings": "Settings",
   "nav.about": "About",
@@ -465,6 +468,7 @@
   "engine.status.ready": "Ready",
   "engine.status.missing": "Not installed",
   "engine.status.driver": "Driver-level",
+  "engine.status.downloading": "Downloading {pct}%",
   "engine.param.model": "Model",
   "engine.param.scale": "Scale",
   "engine.param.zoom": "Zoom factor",
@@ -710,5 +714,9 @@
   "asr.settings.punctuation": "Punctuation (CPU)",
   "asr.settings.punctuation.hint.off": "When enabled, transcription results will be punctuated automatically (requires downloading ct-punc model, CPU-friendly).",
   "asr.settings.punctuation.hint.on_ready": "Enabled. Using ct-punc to punctuate transcription.",
-  "asr.settings.punctuation.hint.on_missing": "Enabled but ct-punc model is not downloaded yet. Download it under Model Manager."
+  "asr.settings.punctuation.hint.on_missing": "Enabled but ct-punc model is not downloaded yet. Download it under Model Manager.",
+  "asr.settings.emotion": "Emotion recognition (emotion2vec)",
+  "asr.settings.emotion.hint.off": "When enabled, each transcribed segment gets an emotion label (requires emotion2vec+large model, NVIDIA CUDA and the full funasr package).",
+  "asr.settings.emotion.hint.on_ready": "Enabled. Using emotion2vec+large to label emotions in transcription.",
+  "asr.settings.emotion.hint.on_missing": "Enabled but emotion2vec+large is unavailable (not downloaded / non-NVIDIA CUDA / missing funasr). Confirm under Model Manager."
 }

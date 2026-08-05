@@ -126,6 +126,11 @@ def main():
     if not _check_single_instance():
         log.warning("Another instance is running (pid=%d), exiting.", os.getpid())
         app = QApplication.instance() or QApplication(sys.argv)
+        # 这条早退路径没走 create_application，图标要自己补，否则「已在运行」
+        # 提示框会顶着 Qt 默认图标出现（v0.8.14）
+        from momentshift.gui.theme import app_icon
+
+        app.setWindowIcon(app_icon())
         QMessageBox.warning(
             None,
             APP_NAME,

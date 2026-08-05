@@ -25,6 +25,7 @@ from .qt_compat import QObject, QRunnable, Signal
 
 class EngineDownloadSignals(QObject):
     started = Signal(str)  # 正在下载的引擎 eid
+    progress = Signal(str, int)  # (eid, pct 0..100) 流式下载进度
     finished = Signal(str, bool, str)  # (eid, ok, message)
 
 
@@ -99,10 +100,13 @@ def _extract_all(data: bytes, dest_dir: str) -> None:
             print(f"[engine_download] extracted {member}")
 
 
-def download_engine(eid: str, dest_dir: str, sources: list) -> tuple[bool, str]:
+def download_engine(
+    eid: str, dest_dir: str, sources: list, progress_cb=None
+) -> tuple[bool, str]:
     """按优先级逐个尝试 ``sources``，解压第一个下载成功的源。
 
     ``sources`` 是 ``[(kind, value), ...]``（优先级从高到低）。
+    ``progress_cb``：可选 ``cb(pct: int)``，0..100 整体进度（流式读取时回调）。
     返回 ``(ok, message)``。
     """
     os.makedirs(dest_dir, exist_ok=True)
@@ -116,7 +120,20 @@ def download_engine(eid: str, dest_dir: str, sources: list) -> tuple[bool, str]:
             print(f"[engine_download] {eid} <- {url}")
             req = urllib.request.Request(url, headers={"User-Agent": "MomentShift"})
             with urllib.request.urlopen(req, timeout=300) as resp:
-                data = resp.read()
+                total = resp.length  # Content-Length，未知时为 -1
+                buf = io.BytesIO()
+                done = 0
+                while True:
+                    part = resp.read(8192)
+                    if not part:
+                        break
+                    buf.write(part)
+                    done += len(part)
+                    if progress_cb is not None and total > 0:
+                        progress_cb(min(100, int(100 * done / total)))
+                data = buf.getvalue()
+            if progress_cb is not None:
+                progress_cb(100)
             _extract_all(data, dest_dir)
             return True, f"downloaded from {url}"
         except Exception as exc:
@@ -138,5 +155,10 @@ class EngineDownloadWorker(QRunnable):
 
     def run(self) -> None:
         self.signals.started.emit(self.eid)
-        ok, msg = download_engine(self.eid, self.dest_dir, self.sources)
+        ok, msg = download_engine(
+            self.eid,
+            self.dest_dir,
+            self.sources,
+            progress_cb=lambda pct: self.signals.progress.emit(self.eid, pct),
+        )
         self.signals.finished.emit(self.eid, ok, msg)

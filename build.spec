@@ -131,11 +131,17 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data)
 
+# v0.8.14：可执行文件图标（多分辨率 ico，覆盖资源管理器 / 任务栏 / Alt-Tab）
+_APP_ICON = os.path.join(SRC_DIR, "momentshift", "resources", "icons", "app_logo.ico")
+if not os.path.isfile(_APP_ICON):
+    _APP_ICON = None
+
 exe = EXE(
     pyz,
     a.scripts,
     exclude_binaries=True,
     name=APP_NAME,
+    icon=_APP_ICON,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,

@@ -31,7 +31,9 @@ from .funasr.utils.wav_io import wav_needs_normalization
 from .funasr_engine import (
     DEFAULT_THREADS,
     FunasrEngineError,
+    emotion_available,
     is_model_ready,
+    transcribe_emotion,
     transcribe_local,
     transcribe_structured,
     transcribe_with_punc,
@@ -412,6 +414,22 @@ class AsrTranscribeWorker(QThread):
 
                 texts.append(text)
                 marker = format_segment_marker(start, end)
+
+                # v0.8.14 #2：情感识别（可选；需 emotion2vec 模型 + CUDA + funasr）。
+                # 开启且环境满足时才调用；失败仅跳过该段情感标签，不影响主转写。
+                if cfg.asrEmotion.value:
+                    try:
+                        if emotion_available()[0]:
+                            emos = transcribe_emotion(seg_wav)
+                            if emos:
+                                emo_str = " ".join(
+                                    f"{lab}({score:.0%})" for lab, score in emos
+                                )
+                                text = f"{text}\n[情感] {emo_str}"
+                                texts[-1] = text
+                    except (AsrError, FunasrEngineError) as exc:
+                        self.serviceLog.emit(f"← 情感识别跳过：{exc}")
+
                 self.segmentReady.emit(index, total, marker, text)
                 self.progressChanged.emit(35 + int(65 * index / total))
 

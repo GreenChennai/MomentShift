@@ -21,7 +21,7 @@ import os
 from pathlib import Path
 
 from PyQt6.QtCore import QPropertyAnimation, QSize, Qt
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPen
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -86,6 +86,37 @@ def _icon_path(name: str) -> str:
 
 ICON_EXPAND = _icon_path("\u4e0b\u62c9.svg")
 ICON_COLLAPSE = _icon_path("\u6536\u8d77.svg")
+
+# v0.8.14 品牌图标：多分辨率 ico 供窗口/托盘/任务栏；512 png 供启动屏与关于页缩放。
+ICON_APP_ICO = _icon_path("app_logo.ico")
+ICON_APP_PNG = _icon_path("app_logo.png")
+
+# QIcon 必须在 QGuiApplication 就绪后才能构造，因此惰性缓存而不是模块级常量。
+_APP_ICON_CACHE: QIcon | None = None
+
+
+def app_icon() -> QIcon:
+    """应用主图标（窗口 / 托盘 / 启动屏 / 任务栏统一入口）。"""
+    global _APP_ICON_CACHE
+    if _APP_ICON_CACHE is None:
+        icon = QIcon(ICON_APP_ICO)
+        if icon.isNull():  # ico 缺失时退回 png，避免整窗无图标
+            icon = QIcon(ICON_APP_PNG)
+        _APP_ICON_CACHE = icon
+    return _APP_ICON_CACHE
+
+
+def app_logo_pixmap(size: int) -> QPixmap:
+    """按指定边长返回平滑缩放的 Logo 位图（启动屏 / 关于页用）。"""
+    pm = QPixmap(ICON_APP_PNG)
+    if pm.isNull():
+        return pm
+    return pm.scaled(
+        size,
+        size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
 
 # =============================================================================
 # 颜色访问器

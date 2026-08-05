@@ -9,6 +9,7 @@
 运行环境卡片使用优雅的状态指示器布局。
 """
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -37,7 +38,15 @@ from ..i18n.translator import tr
 from ..metadata import APP_NAME, AUTHOR, RELEASE_URL, REPO_URL, VERSION
 from . import tokens
 from .base import InterfaceBase
-from .theme import CARD_MARGIN, ThemedCard, accent_name, danger_color, muted_text, success_color
+from .theme import (
+    CARD_MARGIN,
+    ThemedCard,
+    accent_name,
+    app_logo_pixmap,
+    danger_color,
+    muted_text,
+    success_color,
+)
 
 log = get_logger("about")
 
@@ -54,8 +63,14 @@ class AboutInterface(InterfaceBase):
         cv.setContentsMargins(CARD_MARGIN, 20, CARD_MARGIN, 20)
         cv.setSpacing(10)
 
+        # v0.8.14：卡片头部改为「品牌 Logo + 应用名」同行，Logo 与名字左对齐同基线
+        self.logoLabel = QLabel()
+        self.logoLabel.setFixedSize(58, 58)
+        self.logoLabel.setStyleSheet("background-color: transparent;")
+        self.logoLabel.setPixmap(app_logo_pixmap(58))
+        self.logoLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         self.nameLabel = TitleLabel(f"{APP_NAME}  ·  {tr('app.title')}")
-        cv.addWidget(self.nameLabel)
         self.accentRule = QFrame()
         self.accentRule.setFrameShape(QFrame.Shape.HLine)
         self.accentRule.setFixedHeight(3)
@@ -63,7 +78,18 @@ class AboutInterface(InterfaceBase):
         self.accentRule.setStyleSheet(
             f"QFrame{{ background: {accent_name()}; border: none; border-radius: 2px; }}"
         )
-        cv.addWidget(self.accentRule)
+
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(14)
+        head.addWidget(self.logoLabel, 0, Qt.AlignmentFlag.AlignVCenter)
+        head_text = QVBoxLayout()
+        head_text.setContentsMargins(0, 0, 0, 0)
+        head_text.setSpacing(8)
+        head_text.addWidget(self.nameLabel)
+        head_text.addWidget(self.accentRule)
+        head.addLayout(head_text, 1)
+        cv.addLayout(head)
         cv.addSpacing(6)
 
         self.tagLabel = BodyLabel(tr("about.description"))

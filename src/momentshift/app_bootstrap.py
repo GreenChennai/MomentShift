@@ -174,6 +174,12 @@ def create_application(
         app = (app_cls or QApplication)(argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(VERSION)
+    # v0.8.14：进程级默认图标。设在这里之后，所有没有显式设图标的顶层窗口
+    # （QDialog / QMessageBox / 快速调用弹窗 / 对比窗）都会自动带上品牌 Logo，
+    # 不必逐个窗口去 setWindowIcon —— 漏一个就露出 Qt 默认图标。
+    from .gui.theme import app_icon
+
+    app.setWindowIcon(app_icon())
     if quick_mode:
         app.setQuitOnLastWindowClosed(False)
 
