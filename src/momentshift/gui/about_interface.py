@@ -63,7 +63,7 @@ class AboutInterface(InterfaceBase):
         cv.setContentsMargins(CARD_MARGIN, 20, CARD_MARGIN, 20)
         cv.setSpacing(10)
 
-        # v0.8.14：卡片头部改为「品牌 Logo + 应用名」同行，Logo 与名字左对齐同基线
+        # v0.8.15 #2：软件图标独占一行居中，应用名在图标下方居中
         self.logoLabel = QLabel()
         self.logoLabel.setFixedSize(58, 58)
         self.logoLabel.setStyleSheet("background-color: transparent;")
@@ -71,6 +71,8 @@ class AboutInterface(InterfaceBase):
         self.logoLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.nameLabel = TitleLabel(f"{APP_NAME}  ·  {tr('app.title')}")
+        self.nameLabel.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
         self.accentRule = QFrame()
         self.accentRule.setFrameShape(QFrame.Shape.HLine)
         self.accentRule.setFixedHeight(3)
@@ -79,16 +81,13 @@ class AboutInterface(InterfaceBase):
             f"QFrame{{ background: {accent_name()}; border: none; border-radius: 2px; }}"
         )
 
-        head = QHBoxLayout()
+        head = QVBoxLayout()
         head.setContentsMargins(0, 0, 0, 0)
-        head.setSpacing(14)
-        head.addWidget(self.logoLabel, 0, Qt.AlignmentFlag.AlignVCenter)
-        head_text = QVBoxLayout()
-        head_text.setContentsMargins(0, 0, 0, 0)
-        head_text.setSpacing(8)
-        head_text.addWidget(self.nameLabel)
-        head_text.addWidget(self.accentRule)
-        head.addLayout(head_text, 1)
+        head.setSpacing(10)
+        head.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        head.addWidget(self.logoLabel, 0, Qt.AlignmentFlag.AlignHCenter)
+        head.addWidget(self.nameLabel, 0, Qt.AlignmentFlag.AlignHCenter)
+        head.addWidget(self.accentRule, 0, Qt.AlignmentFlag.AlignHCenter)
         cv.addLayout(head)
         cv.addSpacing(6)
 

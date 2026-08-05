@@ -12,12 +12,12 @@ author) live here. Localized UI strings come from :mod:`momentshift.i18n`.
 
 APP_NAME = "MomentShift"
 APP_NAME_ZH = "瞬变工坊"
-VERSION = "0.8.14"
+VERSION = "0.8.15"
 AUTHOR = "GreenChennai"
 
 REPO_URL = "https://github.com/GreenChennai/MomentShift"
 ISSUE_URL = REPO_URL + "/issues"
 RELEASE_URL = REPO_URL + "/releases/latest"
 
-DESCRIPTION = "傻瓜式 ffmpeg 多媒体格式转换工具"
+DESCRIPTION = "ffmpeg 多媒体工具箱"
 COPYRIGHT = f"Copyright © 2026 {AUTHOR}"

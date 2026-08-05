@@ -1,6 +1,6 @@
 {
   "app.title": "瞬变工坊",
-  "app.tagline": "傻瓜式 ffmpeg 多媒体格式转换",
+  "app.tagline": "ffmpeg 多媒体工具箱",
   "splash.starting": "正在启动…",
   "splash.loading": "正在加载 {name}…",
   "splash.ready": "加载完成",
@@ -212,7 +212,7 @@
   "about.version": "版本",
   "about.author": "作者",
   "about.repo": "项目主页",
-  "about.description": "傻瓜式 ffmpeg 多媒体格式转换工具",
+  "about.description": "ffmpeg 多媒体工具箱",
   "about.license": "基于 GPL-3.0 开源",
   "about.tech": "使用 PyQt6 + PyQt6-Fluent-Widgets + ffmpeg 构建",
   "about.check_update": "检查更新",

@@ -1,6 +1,6 @@
 {
   "app.title": "MomentShift",
-  "app.tagline": "Foolproof ffmpeg media format converter",
+  "app.tagline": "ffmpeg Multimedia Toolkit",
   "splash.starting": "Starting…",
   "splash.loading": "Loading {name}…",
   "splash.ready": "Ready",
@@ -212,7 +212,7 @@
   "about.version": "Version",
   "about.author": "Author",
   "about.repo": "Project home",
-  "about.description": "Foolproof ffmpeg media format converter",
+  "about.description": "ffmpeg Multimedia Toolkit",
   "about.license": "Open source under GPL-3.0",
   "about.tech": "Built with PyQt6 + PyQt6-Fluent-Widgets + ffmpeg",
   "about.check_update": "Check for updates",

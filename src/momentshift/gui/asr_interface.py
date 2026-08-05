@@ -622,7 +622,11 @@ class AudioTranscribeInterface(InterfaceBase):
         self._portEdit = LineEdit()
         self._portEdit.setValidator(QIntValidator(1024, 65535))
         self._portEdit.setFixedWidth(110)
-        # v0.8.14 #4：监听端口输入框左对齐（默认居中不符合输入习惯）
+        # v0.8.15 #1：qfluentwidgets LineEdit 默认 Expanding 策略会在 field_row 的
+        # stretch=1 下撑满整行，导致「监听端口」输入框看起来与其他条目不对齐。
+        # 显式改 Fixed，使其保持固定宽度并靠左，与开关/下拉等条目一致。
+        self._portEdit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        # v0.8.14 #4：监听端口输入框文本左对齐（默认居中不符合输入习惯）
         self._portEdit.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self._portEdit.setText(str(int(cfg.asrServerPort.value)))
         self._portEdit.textChanged.connect(self._on_server_port_changed)

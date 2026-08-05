@@ -1,4 +1,4 @@
-"""MomentShift（瞬变工坊）—— 傻瓜式 ffmpeg 多媒体格式转换工具。
+"""MomentShift（瞬变工坊）—— ffmpeg 多媒体工具箱。
 
 职责边界：
 - 做：暴露包版本号等顶层元信息。

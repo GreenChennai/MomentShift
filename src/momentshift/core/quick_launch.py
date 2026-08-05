@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -69,6 +70,26 @@ def _exe_path() -> str:
     return sys.executable
 
 
+def _icon_value() -> str:
+    """右键菜单条目前面的软件图标（REG_SZ ``Icon`` 值）。
+
+    优先用随包图标文件（与软件 Logo 完全一致，``app_logo.ico``）；
+    缺失时退回 EXE 内嵌图标资源（``"<exe>,0"``，build.spec 已把图标
+    烧进 EXE）。返回带引号的字符串，兼容路径含空格的情况。
+    """
+    exe = _exe_path()
+    # onedir 结构：exe 在 dist/<APP>/<APP>.exe，图标在
+    # dist/<APP>/<APP>/resources/icons/app_logo.ico
+    candidates = [
+        os.path.join(os.path.dirname(exe), "momentshift", "resources", "icons", "app_logo.ico"),
+        os.path.join(os.path.dirname(exe), "resources", "icons", "app_logo.ico"),
+    ]
+    for ico in candidates:
+        if os.path.isfile(ico):
+            return f'"{ico}"'
+    return f'"{exe}",0'
+
+
 def _command_for(task: str) -> str:
     """构造右键菜单命令：MomentShift.exe --quick <task> "%1"。
 
@@ -106,6 +127,13 @@ def register_context_menu(task: str) -> bool:
         key = f"{_REG_ROOT}\\*\\shell\\{info['name']}"
         run_silent(
             ["reg", "add", key, "/ve", "/d", info["label"], "/f"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        # 1.5 设置图标（v0.8.15：此前漏写，右键菜单条目前面缺少软件图标）
+        run_silent(
+            ["reg", "add", key, "/v", "Icon", "/d", _icon_value(), "/f"],
             capture_output=True,
             text=True,
             check=True,
