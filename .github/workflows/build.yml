@@ -40,11 +40,22 @@ jobs:
           cd dist
           Compress-Archive -Path MomentShift -DestinationPath MomentShift-Windows-Portable.zip
 
-      - name: Install NSIS
-        run: choco install nsis -y
-
       - name: Build installer
-        run: makensis installer.nsi
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Locate makensis.exe (GitHub Windows runner does not put NSIS on PATH).
+          $nsis = Get-ChildItem -Path "C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS" -Filter makensis.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $nsis) {
+            choco install nsis -y
+            $nsis = Get-ChildItem -Path "C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS" -Filter makensis.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $nsis) { throw "makensis.exe not found after install" }
+          # Make NSIS available on PATH for any later steps too.
+          $nsisDir = Split-Path $nsis.FullName
+          echo "$nsisDir" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+          & $nsis.FullName installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE" }
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
@@ -63,6 +74,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           prerelease: true
+          overwrite: true
           name: ${{ github.ref_name }} (测试版)
           fail_on_unmatched_files: false
           files: |
@@ -114,6 +126,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           prerelease: true
+          overwrite: true
           name: ${{ github.ref_name }} (测试版)
           fail_on_unmatched_files: false
           files: dist/MomentShift-macOS.zip
@@ -166,6 +179,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           prerelease: true
+          overwrite: true
           name: ${{ github.ref_name }} (测试版)
           fail_on_unmatched_files: false
           files: dist/MomentShift-Linux.zip
