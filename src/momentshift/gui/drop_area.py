@@ -235,7 +235,9 @@ class DropArea(ThemedCard):
         t = text
         for p in ("支持", "Supports", " supports"):
             t = t.replace(p, "")
-        parts = re.split(r"[·•、,，\s]+", t)
+        # 注意：分隔符必须包含 ``/``——「图片 / 音频 / 视频」里的斜杠若不当分隔符，
+        # 会被切成「图片」「/」「音频」「/」「视频」四个徽标（Bug #1）。
+        parts = re.split(r"[·•、,，/\s]+", t)
         return [p.strip() for p in parts if p.strip()]
 
     def _render_chips(self, labels: list[str]) -> None:

@@ -445,6 +445,7 @@ class CompressInterface(InterfaceBase):
         # 预设下拉框，均需在语言切换时刷新。
         self._ff_setters: dict = {}
         self._ff_cat_headers: dict = {}
+        self._ff_profile_labels: dict = {}
         self._ff_profile_combos: dict = {}
 
         # =====================================================================
@@ -933,10 +934,12 @@ class CompressInterface(InterfaceBase):
         ly.setContentsMargins(0, 0, 0, 0)
         ly.setSpacing(10)
 
-        # 分区头：类别名 + 预设档下拉
+        # 分区头：类别名 + 质量预设标签 + 预设档下拉
         hdr = QHBoxLayout()
         cat_lbl = StrongBodyLabel(tr(f"ffmpeg.cat.{kind}"))
         apply_text(cat_lbl, sub_text(), transparent=True)
+        prof_label = QLabel(tr("ffmpeg.quality_preset"))
+        apply_text(prof_label, sub_text(), transparent=True)
         prof_combo = self._make_combo(
             self._ff_profile_mapping(kind),
             grp.get(profile_key, "balanced"),
@@ -944,9 +947,11 @@ class CompressInterface(InterfaceBase):
         )
         hdr.addWidget(cat_lbl)
         hdr.addStretch(1)
+        hdr.addWidget(prof_label)
         hdr.addWidget(prof_combo)
         ly.addLayout(hdr)
         self._ff_cat_headers[kind] = cat_lbl
+        self._ff_profile_labels[kind] = prof_label
         self._ff_profile_combos[kind] = prof_combo
 
         setters: dict = {}
@@ -975,8 +980,10 @@ class CompressInterface(InterfaceBase):
             return ctl, (lambda v: ctl.setChecked(bool(v)))
         if t == "choice":
             vals = spec.get("values", [])
-            # 编解码器 / 选项用其技术名作显示（如 libx264 / copy），无需翻译。
-            mapping = [(v, v) for v in vals]
+            # 选项显示双语：中文 (技术值)，技术值仍作为数据写入 opts。
+            # 各 spec 的 ``labels`` 覆盖冲突值（copy / none / keep），其余走全局表。
+            ov = spec.get("labels") or {}
+            mapping = [(ov.get(v, compressor.FFMPEG_VALUE_LABELS.get(v, v)), v) for v in vals]
             ctl = self._make_combo(
                 mapping, grp.get(pkey, spec.get("default")), lambda v: grp.__setitem__(pkey, v)
             )
@@ -1375,6 +1382,8 @@ class CompressInterface(InterfaceBase):
         # FFmpeg 面板：三类（视频 / 音频 / 图片）各自的分类标题与预设下拉
         for kind, lbl in self._ff_cat_headers.items():
             lbl.setText(tr(f"ffmpeg.cat.{kind}"))
+        for kind, lbl in self._ff_profile_labels.items():
+            lbl.setText(tr("ffmpeg.quality_preset"))
         for kind, combo in self._ff_profile_combos.items():
             self._repopulate_combo(combo, self._ff_profile_mapping(kind))
         # v0.8.1 Bug4-②：field_row 行标签同步语言（此前标签是拿不到引用的局部变量）

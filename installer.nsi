@@ -19,7 +19,7 @@ Unicode true
 
 !define APPNAME "MomentShift"
 !define APPNAME_ZH "瞬变工坊"
-!define VERSION "0.8.16"
+!define VERSION "0.8.17"
 !define PUBLISHER "GreenChennai"
 !define ICON "src\momentshift\resources\icons\app_logo.ico"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"

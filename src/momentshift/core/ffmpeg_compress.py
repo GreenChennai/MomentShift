@@ -153,6 +153,67 @@ PRESET_NAMES: tuple[str, ...] = (
     "veryslow",
 )
 
+# 下拉选项的双语展示名（中文 + 技术值）。UI 渲染时作为显示文案，
+# 数据值仍用原始技术名写入 opts。冲突值（copy / none / keep 在不同参数里
+# 含义不同）由各 spec 自己的 ``labels`` 字段单独覆盖，这里只放无歧义的值。
+FFMPEG_VALUE_LABELS: dict[str, str] = {
+    # 视频 / 音频 / 图片 编码器里的「auto」
+    "auto": "自动 (auto)",
+    # 视频编码器
+    "libx264": "H.264 (libx264)",
+    "libx265": "H.265 (libx265)",
+    "libsvtav1": "AV1 (libsvtav1)",
+    "libvpx-vp9": "VP9 (libvpx-vp9)",
+    "h264_nvenc": "H.264 显卡加速 (h264_nvenc)",
+    "hevc_nvenc": "H.265 显卡加速 (hevc_nvenc)",
+    # 编码速度档
+    "ultrafast": "最快 (ultrafast)",
+    "superfast": "超级快 (superfast)",
+    "veryfast": "非常快 (veryfast)",
+    "faster": "很快 (faster)",
+    "fast": "快 (fast)",
+    "medium": "中等 (medium)",
+    "slow": "慢 (slow)",
+    "slower": "很慢 (slower)",
+    "veryslow": "非常慢 (veryslow)",
+    # 视频调优
+    "film": "实拍影片 (film)",
+    "animation": "动画 (animation)",
+    "grain": "胶片颗粒 (grain)",
+    "stillimage": "静帧图片 (stillimage)",
+    "fastdecode": "快速解码 (fastdecode)",
+    # 像素格式
+    "yuv420p": "兼容全平台 (yuv420p)",
+    # 音频编码器
+    "aac": "AAC (aac)",
+    "libopus": "Opus (libopus)",
+    "libmp3lame": "MP3 (libmp3lame)",
+    "flac": "FLAC 无损 (flac)",
+    # 音频码率
+    "48k": "48 kbps (48k)",
+    "64k": "64 kbps (64k)",
+    "96k": "96 kbps (96k)",
+    "128k": "128 kbps (128k)",
+    "160k": "160 kbps (160k)",
+    "192k": "192 kbps (192k)",
+    "256k": "256 kbps (256k)",
+    "320k": "320 kbps (320k)",
+    # 声道
+    "2": "立体声 (2)",
+    "1": "单声道 (1)",
+    # 采样率
+    "48000": "48 kHz (48000)",
+    "44100": "44.1 kHz (44100)",
+    "32000": "32 kHz (32000)",
+    "24000": "24 kHz (24000)",
+    # 图片编码器
+    "libwebp": "WebP (libwebp)",
+    "libaom-av1": "AV1 (libaom-av1)",
+    "mjpeg": "JPEG (mjpeg)",
+    "png": "PNG (png)",
+}
+
+
 FFMPEG_VIDEO_PARAMS: dict[str, dict] = {
     "ff_v_profile": {
         "type": "choice",
@@ -172,6 +233,7 @@ FFMPEG_VIDEO_PARAMS: dict[str, dict] = {
             "hevc_nvenc",
             "copy",
         ],
+        "labels": {"copy": "仅重封装不重编码 (copy)"},
         "default": "auto",
         "desc": (
             "视频编码器。auto 按容器自动选（webm→VP9，其余→H.264）；"
@@ -197,12 +259,14 @@ FFMPEG_VIDEO_PARAMS: dict[str, dict] = {
     "ff_v_tune": {
         "type": "choice",
         "values": ["none", "film", "animation", "grain", "stillimage", "fastdecode"],
+        "labels": {"none": "保持原样 (none)"},
         "default": "none",
         "desc": "内容调优。录屏/动画选 animation 可再省 10~30%；实拍保持 none 或 film",
     },
     "ff_v_pixfmt": {
         "type": "choice",
         "values": ["yuv420p", "keep"],
+        "labels": {"keep": "保持原格式 (keep)"},
         "default": "yuv420p",
         "desc": "像素格式。yuv420p 兼容所有播放器与浏览器；keep 保留源格式（可能无法在手机上播）",
     },
@@ -223,6 +287,7 @@ FFMPEG_VIDEO_PARAMS: dict[str, dict] = {
     "ff_v_audio": {
         "type": "choice",
         "values": ["auto", "aac", "libopus", "copy", "none"],
+        "labels": {"copy": "原样复制 (copy)", "none": "移除音轨 (none)"},
         "default": "auto",
         "desc": "视频里的音轨如何处理。auto 按容器选（webm→Opus，其余→AAC）；none 表示丢弃音轨",
     },
@@ -249,6 +314,7 @@ FFMPEG_AUDIO_PARAMS: dict[str, dict] = {
     "ff_a_encoder": {
         "type": "choice",
         "values": ["auto", "libopus", "aac", "libmp3lame", "flac", "copy"],
+        "labels": {"copy": "原样复制 (copy)"},
         "default": "auto",
         "desc": (
             "音频编码器。auto 按容器选；同码率下 Opus > AAC > MP3；"
@@ -278,12 +344,14 @@ FFMPEG_AUDIO_PARAMS: dict[str, dict] = {
     "ff_a_channels": {
         "type": "choice",
         "values": ["keep", "2", "1"],
+        "labels": {"keep": "保持原样 (keep)"},
         "default": "keep",
         "desc": "声道数。纯语音转单声道可直接省一半码率",
     },
     "ff_a_samplerate": {
         "type": "choice",
         "values": ["keep", "48000", "44100", "32000", "24000"],
+        "labels": {"keep": "保持原样 (keep)"},
         "default": "keep",
         "desc": "采样率。Opus 内部固定 48k；语音降到 24k 还能再省一截",
     },

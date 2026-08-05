@@ -353,6 +353,7 @@ GIFSICLE_PARAMS: dict[str, dict] = {
 FFMPEG_PARAMS: dict[str, dict] = ffmpeg_compress.FFMPEG_PARAMS
 FFMPEG_PARAMS_BY_KIND: dict[str, dict[str, dict]] = ffmpeg_compress.PARAMS_BY_KIND
 FFMPEG_PRESETS: dict[str, dict[str, dict]] = ffmpeg_compress.PRESETS
+FFMPEG_VALUE_LABELS: dict[str, str] = ffmpeg_compress.FFMPEG_VALUE_LABELS
 
 
 def param_defaults(backend: str) -> dict:

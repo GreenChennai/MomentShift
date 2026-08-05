@@ -7,7 +7,7 @@
 </h1>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
-  <img src="https://img.shields.io/badge/version-0.8.14-brightgreen.svg" alt="Version 0.8.15">
+  <img src="https://img.shields.io/badge/version-0.8.17-brightgreen.svg" alt="Version 0.8.17">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/UI-PyQt6%20%2B%20Fluent--Widgets-238636.svg" alt="UI">
 </p>
@@ -70,18 +70,18 @@
 ### 5. 快速调用 (1/2/3)
 - **右键调用**：通过右键图片/视频/音频 可以快速调用软件的 **转换**/**压缩**/**转换**/**放大** 功能；
 - **静默运行**：调用之后，任务会直接传递到软件的任务队列中，并自动开始运行，开始和完成时会有系统提示+音效；
-- **高效多任**务：能够批量选择批量运行任务；
+- **高效多任务**：能够批量选择批量运行任务；
 - **高效使用**：不用频繁打开软件操作，右键即刻运行；
 
 ---
 
 ## 🖥️ 平台
 
-| 平台      | 状态        | 说明                                   |
-| --------- | ----------- | -------------------------------------- |
-| Windows   | ✅ 首发      | 当前主要支持目标（含系统托盘、右键菜单） |
-| macOS     | ✅ 可用      | 从源码运行，引擎 / 工具补三平台下载源    |
-| Linux     | ✅ 可用      | 从源码运行，引擎 / 工具补三平台下载源    |
+| 平台    | 状态   | 说明                                     |
+| ------- | ------ | ---------------------------------------- |
+| Windows | ✅ 首发 | 当前主要支持目标（含系统托盘、右键菜单） |
+| macOS   | ✅ 可用 | 从源码运行，引擎 / 工具补三平台下载源    |
+| Linux   | ✅ 可用 | 从源码运行，引擎 / 工具补三平台下载源    |
 
 > 注：右键「快速调用」菜单为 Windows 专属功能；其余能力跨平台一致。
 
@@ -194,15 +194,15 @@ MomentShift/
 
 本项目在开发与设计中参考、使用了以下优秀的开源项目与资源，在此表示衷心感谢：
 
-| 项目 | 作者 / 维护者 | 官网 / 仓库 | 用途 |
-| --- | --- | --- | --- |
-| **ffmpeg** | FFmpeg 团队 | https://ffmpeg.org/ | 多媒体转码核心引擎 |
-| **FunASR** | 阿里巴巴达摩院 (ModelScope) | https://github.com/modelscope/FunASR | 本地语音识别推理 |
-| **PyQt6** | Riverbank Computing | https://www.riverbankcomputing.com/ | Python GUI 框架 |
-| **PyQt6-Fluent-Widgets** (`qfluentwidgets`) | zhiyiYo | https://github.com/zhiyiYo/PyQt-Fluent-Widgets | Fluent 风格 UI 组件库 |
-| **Real-ESRGAN / ncnn-vulkan** | nihui | https://github.com/nihui | AI 超分辨率引擎与 Vulkan 推理 |
-| **RIFE** | megvii-research / nihui 等 | https://github.com/nihui | 插帧引擎 |
-| **FFmpegFreeUI**（参考） | 1059 Studio (Lake1059) | https://github.com/Lake1059/FFmpegFreeUI | ffmpeg 调用参数与交互设计的参考（MIT） |
+| 项目                                        | 作者 / 维护者               | 官网 / 仓库                                    | 用途                                   |
+| ------------------------------------------- | --------------------------- | ---------------------------------------------- | -------------------------------------- |
+| **ffmpeg**                                  | FFmpeg 团队                 | https://ffmpeg.org/                            | 多媒体转码核心引擎                     |
+| **FunASR**                                  | 阿里巴巴达摩院 (ModelScope) | https://github.com/modelscope/FunASR           | 本地语音识别推理                       |
+| **PyQt6**                                   | Riverbank Computing         | https://www.riverbankcomputing.com/            | Python GUI 框架                        |
+| **PyQt6-Fluent-Widgets** (`qfluentwidgets`) | zhiyiYo                     | https://github.com/zhiyiYo/PyQt-Fluent-Widgets | Fluent 风格 UI 组件库                  |
+| **Real-ESRGAN / ncnn-vulkan**               | nihui                       | https://github.com/nihui                       | AI 超分辨率引擎与 Vulkan 推理          |
+| **RIFE**                                    | megvii-research / nihui 等  | https://github.com/nihui                       | 插帧引擎                               |
+| **FFmpegFreeUI**（参考）                    | 1059 Studio (Lake1059)      | https://github.com/Lake1059/FFmpegFreeUI       | ffmpeg 调用参数与交互设计的参考（MIT） |
 
 特别感谢以下 **ffmpeg 静态构建下载源**，本软件的「一键下载」功能即从中获取对应平台的二进制：
 
