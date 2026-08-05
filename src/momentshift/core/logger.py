@@ -18,8 +18,8 @@ import time
 from pathlib import Path
 
 # core.platform 只依赖标准库，这里引用它不会破坏 "logger 不引入 Qt" 的约束。
-from .platform import app_base_dir
 from .platform import log_dir as log_dir  # noqa: PLC0414  再导出，供测试与外部调用
+from .platform import writable_base_dir
 
 _LOG = logging.getLogger("momentshift")
 _configured = False
@@ -29,13 +29,13 @@ def app_root() -> Path:
     """应用根目录（``logs/`` 的父目录）。
 
     Returns:
-        与 :func:`momentshift.core.platform.app_base_dir` 相同的路径。
+        与 :func:`momentshift.core.platform.writable_base_dir` 相同的路径。
 
     Notes:
-        现在只是 :func:`~momentshift.core.platform.app_base_dir` 的别名。
-        保留这个名字，是因为它在日志相关代码里语义更贴切，且已被外部脚本引用。
+        v0.8.16 起指向**可写**根目录而非安装目录：安装到 Program Files 时
+        日志会落到 ``%APPDATA%/MomentShift/logs``，否则仍在 exe 旁边。
     """
-    return app_base_dir()
+    return writable_base_dir()
 
 
 def _cleanup_old_logs(days: int = 7) -> None:

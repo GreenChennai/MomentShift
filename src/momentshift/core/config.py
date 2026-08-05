@@ -231,17 +231,26 @@ def ensure_config_file() -> Path:
 
 
 def _migrate_config() -> None:
-    """把旧的 ``config/config.json`` 一次性迁移到应用根目录的新位置。
+    """把历史位置的 ``config.json`` 一次性迁移到当前的可写位置。
 
     Notes:
-        只在新位置**不存在**且旧文件存在时才搬运，避免覆盖用户的现有配置。
+        按 ``<安装目录>/config/config.json`` → ``<安装目录>/config.json`` 的顺序
+        找第一个存在的旧文件。只在新位置**不存在**时才搬运，避免覆盖现有配置。
+        第二个来源是 v0.8.16 引入的：安装到只读的 Program Files 后配置改落
+        ``%APPDATA%``，此时安装目录里可能还留着上一版写下的配置。
     """
-    old = _old_config_file()
-    if not CONFIG_FILE.exists() and old.exists():
+    if CONFIG_FILE.exists():
+        return
+    for old in (_old_config_file(), app_base_dir() / "config.json"):
+        if old == CONFIG_FILE or not old.exists():
+            continue
         try:
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
             CONFIG_FILE.write_text(old.read_text(encoding="utf-8"), encoding="utf-8")
         except OSError:
             pass  # 静默原因：配置回退写入失败属非致命，保留原文件即可
+        else:
+            return
 
 
 # 配置固定放在软件根目录，保证「一个目录即完整应用」可便携拷贝。

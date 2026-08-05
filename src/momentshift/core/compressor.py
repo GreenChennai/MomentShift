@@ -1,33 +1,43 @@
-"""图像压缩引擎，内置 oxipng + jpegoptim + gifsicle 三个后端。
+"""媒体压缩引擎，内置 oxipng + jpegoptim + gifsicle + FFmpeg 四个外部后端。
 
 职责边界：
 - 做：按目标格式路由到具体压缩后端、调用外部可执行文件、返回压缩前后体积。
 - 不做：不做并发调度（交给 core/task_pool）；不决定输出路径（交给 core/output_path）。
+- 不做：不拼 FFmpeg 参数（交给 core/ffmpeg_compress），本模块只负责「选它 / 调它」。
 
-依赖：core/formatting、core/logger、core/platform；被依赖：core/queue、gui/advanced_panel、gui/compress_interface。
+依赖：core/formatting、core/logger、core/platform、core/ffmpeg_compress；
+被依赖：core/queue、gui/advanced_panel、gui/compress_interface。
 
 后端
 ----
 - ``pillow``    : 始终可用（Pillow 依赖）。通用兜底，覆盖 PNG/JPEG/WebP/BMP/TIFF。
 - ``oxipng``    : 内置 ``resources/oxipng.exe``（v10.1.1）。PNG 无损压缩。
 - ``jpegoptim`` : 内置 ``resources/jpegoptim.exe``（v1.5.6）。JPG/JPEG 压缩。
+- ``gifsicle``  : GIF 专用（Pillow 压 GIF 会丢多帧动画）。
+- ``ffmpeg``    : V0.8.16 新增。**唯一能处理视频与音频**的后端，同时也能压图片。
 
 默认路由
 --------
 - ``png``        → oxipng
 - ``jpg/jpeg``   → jpegoptim
+- ``gif``        → gifsicle
+- 音频 / 视频    → ffmpeg
 - 其他图片类型   → pillow
 
 当 oxipng / jpegoptim 的二进制缺失或调用失败时，写一条日志提示并自动切换到
-Pillow 继续任务（需求 6），不会让任务失败。
+Pillow 继续任务（需求 6），不会让任务失败。**但音视频不套用这条规则**：Pillow
+根本打不开 mp4/mp3，静默兜底只会把「ffmpeg 没装」这条真实原因盖掉，换来一个
+莫名其妙的解码错误。所以音视频路径上 ffmpeg 失败就是失败，错误信息直接透出。
 
 参数键约定
 ----------
-同一个 ``opts`` 字典同时承载三种后端的参数，按前缀区分，互不冲突：
+同一个 ``opts`` 字典同时承载全部后端的参数，按前缀区分，互不冲突：
 
 - oxipng    : ``level`` ``interlace`` ``strip`` ``filter`` ``zc`` ``alpha``（历史键，无前缀）
 - jpegoptim : ``jo_*``
 - pillow    : ``pil_*``
+- gifsicle  : ``gs_*``
+- ffmpeg    : ``ff_v_*``（视频）``ff_a_*``（音频）``ff_i_*``（图片）
 """
 
 from __future__ import annotations
@@ -38,9 +48,17 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import ffmpeg_compress
 from .formatting import human_size
 from .logger import get_logger
-from .platform import binary_name, resources_dir, run_silent, strip_exe_suffix, tools_dir
+from .platform import (
+    binary_name,
+    bundled_tools_dir,
+    resources_dir,
+    run_silent,
+    strip_exe_suffix,
+    tools_dir,
+)
 
 log = get_logger("compressor")
 
@@ -50,6 +68,23 @@ _JPG = {"jpg", "jpeg"}
 _WEBP = {"webp"}
 _RASTER = {"bmp", "tiff", "tif", "gif"}
 IMAGE_EXTS = _PNG | _JPG | _WEBP | _RASTER
+
+# V0.8.16：压缩模块不再只吃图片。音视频集合直接引用 ffmpeg_compress 的定义，
+# 避免两处各维护一份扩展名清单（加个 .m4v 只在一个地方漏改就会出现「能入队但
+# 选不到后端」的怪状态）。
+AUDIO_EXTS: frozenset[str] = frozenset(ffmpeg_compress.AUDIO_EXTS)
+VIDEO_EXTS: frozenset[str] = frozenset(ffmpeg_compress.VIDEO_EXTS)
+# 压缩模块能受理的全部扩展名。注意 ffmpeg 侧的图片集合比 IMAGE_EXTS 多了 avif，
+# 取并集才不会把 avif 挡在门外。
+MEDIA_EXTS: frozenset[str] = frozenset(IMAGE_EXTS) | frozenset(ffmpeg_compress.MEDIA_EXTS)
+
+
+def media_kind(path_or_ext: str) -> str | None:
+    """判断媒体类别：``"video"`` / ``"audio"`` / ``"image"``，无法识别返回 None。
+
+    薄转发，让 GUI 与队列只依赖 compressor 一个入口，不必再 import 一层。
+    """
+    return ffmpeg_compress.media_kind(path_or_ext)
 
 
 # =============================================================================
@@ -108,6 +143,16 @@ BACKENDS: tuple[BackendSpec, ...] = (
         i18n_key="advanced.compression.gifsicle",
     ),
     BackendSpec(
+        bid="ffmpeg",
+        label="FFmpeg",
+        # 唯一覆盖音视频的后端；图片也能压（webp/avif 由 libwebp/libaom 出）。
+        formats=MEDIA_EXTS,
+        lossless=True,  # flac / png / 无损 webp
+        lossy=True,
+        tool="ffmpeg",
+        i18n_key="advanced.compression.ffmpeg",
+    ),
+    BackendSpec(
         bid="pillow",
         label="Pillow",
         formats=frozenset(_PNG | _JPG | _WEBP | _RASTER),
@@ -158,7 +203,9 @@ def cleanup_temp_files(out_path: str) -> int:
     调一次这里，保证不给用户留垃圾。
 
     ``TMP_SUFFIX_TRANSCODE`` 后面还会再跟一层格式后缀（``.tc.tmp.png``），所以
-    对它用前缀匹配扫同目录。
+    对它用前缀匹配扫同目录。V0.8.16 起 ``TMP_SUFFIX_COMPRESS`` 也可能带尾缀
+    （``.cmp.tmp.mp4``）——ffmpeg 靠输出扩展名挑复用器，光给个 ``.tmp`` 它会直接
+    报「Unable to find a suitable output format」，所以中间文件必须留真后缀。
     """
     removed = 0
     for suffix in _TMP_SUFFIXES:
@@ -166,14 +213,19 @@ def cleanup_temp_files(out_path: str) -> int:
         if os.path.isfile(candidate):
             _rm(candidate)
             removed += 1
-    stage_prefix = f"{os.path.basename(out_path)}{TMP_SUFFIX_TRANSCODE}."
+
+    base = os.path.basename(out_path)
+    stage_prefixes = (
+        f"{base}{TMP_SUFFIX_TRANSCODE}.",
+        f"{base}{TMP_SUFFIX_COMPRESS}.",
+    )
     directory = os.path.dirname(out_path) or "."
     try:
         names = os.listdir(directory)
     except OSError:
         names = []
     for name in names:
-        if name.startswith(stage_prefix):
+        if name.startswith(stage_prefixes):
             _rm(os.path.join(directory, name))
             removed += 1
     return removed
@@ -296,6 +348,13 @@ GIFSICLE_PARAMS: dict[str, dict] = {
 }
 
 
+# FFmpeg 可设置参数（V0.8.16）。规格定义在 core/ffmpeg_compress，这里只做转出，
+# 让 GUI 保持「参数规格一律找 compressor 要」的单一入口。
+FFMPEG_PARAMS: dict[str, dict] = ffmpeg_compress.FFMPEG_PARAMS
+FFMPEG_PARAMS_BY_KIND: dict[str, dict[str, dict]] = ffmpeg_compress.PARAMS_BY_KIND
+FFMPEG_PRESETS: dict[str, dict[str, dict]] = ffmpeg_compress.PRESETS
+
+
 def param_defaults(backend: str) -> dict:
     """返回某后端的参数默认值字典。"""
     table = {
@@ -303,8 +362,23 @@ def param_defaults(backend: str) -> dict:
         "pillow": PILLOW_PARAMS,
         "oxipng": OXIPNG_PARAMS,
         "gifsicle": GIFSICLE_PARAMS,
+        "ffmpeg": FFMPEG_PARAMS,
     }.get(backend, {})
     return {k: v["default"] for k, v in table.items() if v.get("default") is not None}
+
+
+def ffmpeg_param_defaults(kind: str | None = None) -> dict:
+    """FFmpeg 后端某一媒体类别的默认值；``kind=None`` 返回三类合集。
+
+    单独开一个函数是因为 FFmpeg 的参数按 video/audio/image 分三段，UI 生成控件
+    时只想要当前类别那一段，而 :func:`param_defaults` 的契约是「一个后端一张表」。
+    """
+    return ffmpeg_compress.param_defaults(kind)
+
+
+def ffmpeg_preset_values(kind: str, preset: str) -> dict:
+    """取 FFmpeg 某类别下某个预设（balanced/archive/small/...）的参数覆盖。"""
+    return ffmpeg_compress.preset_values(kind, preset)
 
 
 # =============================================================================
@@ -342,6 +416,14 @@ def find_tool(name: str) -> str | None:
     stem = strip_exe_suffix(name)
     exe = binary_name(stem)
 
+    # ffmpeg 有自己一套查找规则（内置目录、用户下载落点 ffmpeg_bin、数据重定向后
+    # 的可写目录……全在 core/ffmpeg 里）。这里必须委派过去，否则「关于」页明明
+    # 显示 FFmpeg 已就绪，压缩后端列表里却找不到它。
+    if stem == "ffmpeg":
+        from .ffmpeg import find_ffmpeg
+
+        return find_ffmpeg()
+
     p = _bundled(exe)
     if p:
         return p
@@ -349,6 +431,12 @@ def find_tool(name: str) -> str | None:
     t = tools_dir() / exe
     if t.is_file():
         return str(t)
+
+    # 数据重定向后（安装到 Program Files），安装目录里随包分发的 tools/
+    # 与用户下载落点不再是同一个目录，这里补一次只读回退。
+    b = bundled_tools_dir() / exe
+    if b.is_file():
+        return str(b)
 
     # gifsicle-bin（pip 包，Python 版安装到 Scripts 目录）
     if stem == "gifsicle":
@@ -412,11 +500,19 @@ def available_backends() -> dict[str, dict]:
     return out
 
 
-def default_backend(fmt: str) -> str:
-    """v0.7.0 默认路由：png→oxipng，jpg/jpeg→jpegoptim，其他→pillow。
-    v0.7.28：gif→gifsicle（Pillow 压缩 GIF 会丢失多帧动画）。
+def is_av(fmt: str) -> bool:
+    """该格式是否为音频或视频（即「只有 ffmpeg 能处理」）。"""
+    f = (fmt or "").lower().lstrip(".")
+    return f in AUDIO_EXTS or f in VIDEO_EXTS
 
-    对应后端不可用时回落到 ``pillow``（调用方负责写日志提示）。
+
+def default_backend(fmt: str) -> str:
+    """v0.7.0 默认路由：png→oxipng，jpg/jpeg→jpegoptim，其他图片→pillow。
+    v0.7.28：gif→gifsicle（Pillow 压缩 GIF 会丢失多帧动画）。
+    V0.8.16：音频 / 视频→ffmpeg。
+
+    对应后端不可用时回落到 ``pillow``（调用方负责写日志提示）；音视频没有
+    Pillow 这条退路，即使 ffmpeg 没装也照样返回 ``ffmpeg``，让失败原因如实暴露。
     """
     f = (fmt or "").lower().lstrip(".")
     backs = available_backends()
@@ -426,6 +522,11 @@ def default_backend(fmt: str) -> str:
         return "jpegoptim"
     if f == "gif" and "gifsicle" in backs:
         return "gifsicle"
+    if is_av(f):
+        return "ffmpeg"
+    if f not in IMAGE_EXTS and f in MEDIA_EXTS:
+        # avif 这类 Pillow 默认装不了插件的图片格式，交给 ffmpeg
+        return "ffmpeg"
     return "pillow"
 
 
@@ -452,7 +553,8 @@ def best_backend(fmt: str, mode: str = "lossless", preferred: str | None = None)
     routed = default_backend(f)
     if supports(routed):
         return routed
-    return "pillow"
+    # 音视频只有 ffmpeg 一条路，兜到 Pillow 等于必定失败且错得莫名其妙
+    return "ffmpeg" if is_av(f) else "pillow"
 
 
 def fallback_to_pillow(backend: str, src: str) -> str:
@@ -461,6 +563,9 @@ def fallback_to_pillow(backend: str, src: str) -> str:
     公开（v0.8.0 起去掉下划线前缀）：压缩界面需要在派发任务前算出「实际会用哪个
     后端」并显示给用户，之前是跨模块调 ``compressor._fallback_to_pillow``——
     调私有函数等于把内部细节写死进 GUI，改名就会静默炸掉。
+
+    V0.8.16 例外：ffmpeg 处理音视频时**不做**这个兜底。Pillow 打不开 mp4/mp3，
+    切过去只会把「ffmpeg 缺失」换成一句看不懂的解码错误。
     """
     if backend == "oxipng" and not _bundled_oxipng():
         log.warning("oxipng 不可用（未找到内置二进制），已自动切换到 Pillow：%s", Path(src).name)
@@ -468,12 +573,47 @@ def fallback_to_pillow(backend: str, src: str) -> str:
     if backend == "jpegoptim" and not find_tool("jpegoptim"):
         log.warning("jpegoptim 不可用（未找到内置二进制），已自动切换到 Pillow：%s", Path(src).name)
         return "pillow"
+    if backend == "ffmpeg" and not ffmpeg_compress.available():
+        fmt = Path(src).suffix.lower().lstrip(".")
+        if is_av(fmt) or fmt not in IMAGE_EXTS:
+            return backend  # 保持 ffmpeg，让 run() 返回「未找到 ffmpeg」的明确提示
+        log.warning("FFmpeg 不可用（未找到可执行文件），已自动切换到 Pillow：%s", Path(src).name)
+        return "pillow"
     return backend
 
 
 # =============================================================================
 # 压缩执行
 # =============================================================================
+def resolve_backend(fmt: str, backend: str | None) -> str:
+    """把「用户选的后端」规整成「实际能跑的后端」。
+
+    单独抽出来是因为压缩界面在派发任务**之前**就要显示「实际会用哪个后端」，
+    以前 GUI 自己复刻了一遍这段纠偏逻辑，改一处漏一处。
+    """
+    fmt = (fmt or "").lower().lstrip(".")
+
+    if backend in (None, "", "auto"):
+        return default_backend(fmt)
+    if backend not in BACKENDS_BY_ID:
+        return default_backend(fmt)
+
+    # 音视频只有 ffmpeg 能处理，选了别的一律纠正
+    if is_av(fmt):
+        return "ffmpeg"
+
+    # 后端与格式不匹配时纠正（例如对 webp 选了 oxipng）
+    if backend == "oxipng" and fmt not in _PNG:
+        return default_backend(fmt)
+    if backend == "jpegoptim" and fmt not in _JPG:
+        return default_backend(fmt)
+    if backend == "gifsicle" and fmt != "gif":
+        return default_backend(fmt)
+    if backend == "pillow" and fmt not in IMAGE_EXTS:
+        return default_backend(fmt)
+    return backend
+
+
 def compress(
     src: str,
     dst: str,
@@ -481,24 +621,20 @@ def compress(
     quality: int = 95,
     backend: str | None = None,
     opts: dict | None = None,
+    on_progress=None,
+    cancel_event=None,
 ) -> bool:
-    """压缩单张图片，``src`` → ``dst``。返回 ``True`` 表示成功。"""
+    """压缩单个媒体文件，``src`` → ``dst``。返回 ``True`` 表示成功。
+
+    Args:
+        on_progress: 0..100 进度回调，**仅 ffmpeg 后端**会调用。图片后端都是
+            一次性调用外部程序，中途没有可上报的进度。
+        cancel_event: 需实现 ``is_set()``；置位后 ffmpeg 会被终止。
+    """
     fmt = (fmt or "").lower().lstrip(".")
     opts = dict(opts or {})
 
-    if backend in (None, "", "auto"):
-        backend = default_backend(fmt)
-    if backend not in ("oxipng", "jpegoptim", "pillow", "gifsicle"):
-        backend = default_backend(fmt)
-
-    # 后端与格式不匹配时纠正（例如对 webp 选了 oxipng）
-    if backend == "oxipng" and fmt not in _PNG:
-        backend = default_backend(fmt)
-    elif backend == "jpegoptim" and fmt not in _JPG:
-        backend = default_backend(fmt)
-    elif backend == "gifsicle" and fmt != "gif":
-        backend = default_backend(fmt)
-
+    backend = resolve_backend(fmt, backend)
     backend = fallback_to_pillow(backend, src)
 
     handlers = {
@@ -507,23 +643,64 @@ def compress(
         "gifsicle": _compress_gifsicle,
         "pillow": _compress_pillow,
     }
+    # Pillow 兜底只对图片有意义；音视频失败就是失败
+    can_fallback = not is_av(fmt) and fmt in IMAGE_EXTS
 
     try:
-        ok = handlers[backend](src, dst, fmt, quality, opts)
+        if backend == "ffmpeg":
+            ok = _compress_ffmpeg(src, dst, fmt, quality, opts, on_progress, cancel_event)
+        else:
+            ok = handlers[backend](src, dst, fmt, quality, opts)
         # gifsicle 失败直接失败（Pillow 压 GIF 会丢帧，兜底无意义）
-        if not ok and backend not in ("pillow", "gifsicle"):
+        if not ok and backend not in ("pillow", "gifsicle") and can_fallback:
             log.warning("%s 压缩未成功，已自动切换到 Pillow：%s", backend, Path(src).name)
             return _compress_pillow(src, dst, fmt, quality, opts)
         return ok
     except Exception:
         log.exception("%s 压缩异常：%s", backend, Path(src).name)
-        if backend == "gifsicle":
-            return False  # gifsicle 异常不切 Pillow
+        if backend == "gifsicle" or not can_fallback:
+            return False
         try:
             return _compress_pillow(src, dst, fmt, quality, opts)
         except Exception:
             log.exception("Pillow 兜底压缩同样失败：%s", Path(src).name)
             return False
+
+
+# --- ffmpeg ---
+# 最近一次 ffmpeg 压缩的失败摘要。ffmpeg 的错误信息（缺编码器、容器不支持……）
+# 对用户是有价值的，但 :func:`compress` 的契约是返回 bool，只能靠这个单元格把
+# detail 捎给 :func:`compress_auto`。压缩任务在 task_pool 里是串行进入本函数的
+# ——同一个 src 从 compress_auto 调进来、立刻在同一线程读走——不存在跨任务串味。
+_last_ffmpeg_error: str = ""
+
+
+def _compress_ffmpeg(
+    src: str,
+    dst: str,
+    fmt: str,
+    quality: int,
+    opts: dict,
+    on_progress=None,
+    cancel_event=None,
+) -> bool:
+    """FFmpeg 压缩（视频 / 音频 / 图片）。参数拼装全在 core/ffmpeg_compress。"""
+    global _last_ffmpeg_error
+    _last_ffmpeg_error = ""
+
+    kind = ffmpeg_compress.media_kind(dst) or ffmpeg_compress.media_kind(src)
+    ok, detail = ffmpeg_compress.run(
+        src,
+        dst,
+        opts=opts,
+        kind=kind,
+        on_progress=on_progress,
+        cancel_event=cancel_event,
+    )
+    if not ok:
+        _last_ffmpeg_error = detail
+        log.warning("FFmpeg 压缩失败：%s（%s）", Path(src).name, detail)
+    return ok
 
 
 # --- oxipng ---
@@ -840,11 +1017,16 @@ def compress_auto(
     quality: int = 95,
     opts: dict | None = None,
     preferred: str | None = None,
+    on_progress=None,
+    cancel_event=None,
 ) -> tuple[bool, str, int]:
     """压缩 ``src`` 到 ``out``，自动挑选后端。
 
     返回 ``(ok, detail, saved_bytes)``。压缩后反而变大时保留原文件内容，
     ``saved_bytes`` 记 0。
+
+    ``on_progress`` / ``cancel_event`` 只有 ffmpeg 后端会用到（视频动辄几分钟，
+    没有进度条的等待体验等同于卡死）。
     """
     opts = dict(opts or {})
     fmt = Path(src).suffix.lower().lstrip(".")
@@ -852,11 +1034,27 @@ def compress_auto(
     backend = fallback_to_pillow(backend, src)
 
     before = _size(src)
-    tmp = f"{out}{TMP_SUFFIX_COMPRESS}"
+    # ffmpeg 靠输出扩展名挑复用器，中间文件必须留真后缀，否则直接报
+    # 「Unable to find a suitable output format for xxx.cmp.tmp」。
+    tmp = f"{out}{TMP_SUFFIX_COMPRESS}.{fmt}" if backend == "ffmpeg" and fmt else (
+        f"{out}{TMP_SUFFIX_COMPRESS}"
+    )
     try:
-        ok = compress(src, tmp, fmt, quality, backend=backend, opts=opts)
+        ok = compress(
+            src,
+            tmp,
+            fmt,
+            quality,
+            backend=backend,
+            opts=opts,
+            on_progress=on_progress,
+            cancel_event=cancel_event,
+        )
         if not ok or not os.path.isfile(tmp):
-            return False, f"{backend} 压缩失败", 0
+            reason = _last_ffmpeg_error if backend == "ffmpeg" and _last_ffmpeg_error else ""
+            if reason == "canceled":
+                return False, "已取消", 0
+            return False, (f"{backend} 压缩失败：{reason}" if reason else f"{backend} 压缩失败"), 0
 
         after = _size(tmp)
         if after >= before > 0:
@@ -878,6 +1076,47 @@ def compress_auto(
         _rm(tmp)
 
 
+def _ffmpeg_transcode_compress(
+    src: str,
+    out: str,
+    target_fmt: str,
+    opts: dict,
+    on_progress=None,
+    cancel_event=None,
+) -> tuple[bool, str, int]:
+    """音视频：换容器 + 重编码在一趟 ffmpeg 里做完。
+
+    返回值与 :func:`transcode_and_compress` 一致。
+    """
+    tf = (target_fmt or "").lower().lstrip(".") or Path(src).suffix.lower().lstrip(".")
+    before = _size(src)
+    tmp = f"{out}{TMP_SUFFIX_COMPRESS}.{tf}"
+    try:
+        ok, detail = ffmpeg_compress.run(
+            src,
+            tmp,
+            opts=opts,
+            kind=ffmpeg_compress.media_kind(tmp) or ffmpeg_compress.media_kind(src),
+            on_progress=on_progress,
+            cancel_event=cancel_event,
+        )
+        if not ok or not os.path.isfile(tmp):
+            if detail == "canceled":
+                return False, "已取消", 0
+            return False, detail or "FFmpeg 压缩失败", 0
+
+        after = _size(tmp)
+        os.replace(tmp, out)
+        saved = max(0, before - after)
+        pct = (saved / before * 100) if before else 0
+        return True, f"{tf}: {human_size(before)} → {human_size(after)} (-{pct:.1f}%)", saved
+    except Exception as exc:
+        log.exception("FFmpeg 转码压缩失败：%s", Path(src).name)
+        return False, str(exc), 0
+    finally:
+        _rm(tmp)
+
+
 def transcode_and_compress(
     src: str,
     out: str,
@@ -886,14 +1125,25 @@ def transcode_and_compress(
     quality: int = 95,
     opts: dict | None = None,
     preferred: str | None = None,
+    on_progress=None,
+    cancel_event=None,
 ) -> tuple[bool, str, int]:
-    """先用 Pillow 把 ``src`` 转成 ``target_fmt``，再压缩到 ``out``。
+    """先把 ``src`` 转成 ``target_fmt``，再压缩到 ``out``。
 
+    图片走「Pillow 转码 → compress_auto」两段式；音视频交给 ffmpeg 一趟做完。
     返回 ``(ok, detail, saved_bytes)``，``saved_bytes`` 相对原始文件计算。
     """
     opts = dict(opts or {})
     tf = (target_fmt or "").lower().lstrip(".")
     before = _size(src)
+    sf = Path(src).suffix.lower().lstrip(".")
+
+    # V0.8.16：音视频不走「Pillow 转码 → 再压缩」两段式。一来 Pillow 根本打不开
+    # mp4/mp3，二来 ffmpeg 本来就能在一趟里同时换容器和重编码，多转一次只会白掉
+    # 一代画质。
+    if is_av(sf) or is_av(tf):
+        return _ffmpeg_transcode_compress(src, out, tf, opts, on_progress, cancel_event)
+
     # 中转文件必须带真实格式后缀，Pillow 与后续 compress_auto 都靠后缀识别格式。
     stage = f"{out}{TMP_SUFFIX_TRANSCODE}.{tf or 'png'}"
 

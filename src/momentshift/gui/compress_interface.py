@@ -48,7 +48,10 @@ from ..core.config import cfg
 from ..core.logger import get_logger
 from ..core.output_path import unique_output_path
 from ..core.platform import tools_dir
-from ..core.presets import IMAGE_EXTS
+from ..core.presets import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS
+
+# 压缩模块受理的媒体范围（带点的扩展名集合，供文件对话框筛选与后缀校验）。
+MEDIA_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
 from ..core.qt_compat import QThreadPool, Signal
 from ..core.task_pool import PoolItem, ProgressCb, TaskPool, TaskState
 from ..core.tools_download import ToolsDownloadWorker
@@ -60,6 +63,7 @@ from .base import (
     build_detail_label,
     build_row_header,
     build_row_layout,
+    select_combo_value,
 )
 from .drop_area import DropArea
 from .help_bubble import attach_help
@@ -93,7 +97,7 @@ log = get_logger("compress")
 def run_compress_task(
     item: PoolItem, report: ProgressCb, cancel: threading.Event
 ) -> tuple[bool, str]:
-    """压缩一张图片。这是喂给 :class:`TaskPool` 的业务执行体。
+    """压缩一个媒体文件（图片 / 音频 / 视频）。喂给 :class:`TaskPool` 的业务执行体。
 
     Args:
         item: 队列条目。``payload`` 是 :meth:`CompressInterface._prepare_item`
@@ -138,14 +142,37 @@ def run_compress_task(
         preferred,
         backend,
     )
+    # V0.8.16：ffmpeg 压视频动辄几分钟，必须把 ffmpeg 的进度透传出来，否则进度条
+    # 会从 0 直接跳到 100，用户看着像卡死。图片后端不会调这个回调。
+    def _on_progress(pct: int) -> None:
+        try:
+            report(max(0, min(100, int(pct))))
+        except Exception:  # 静默原因：进度上报失败不应中断压缩本身
+            log.debug("[compress] 进度回调失败 id=%s", item.iid)
+
     try:
         if compressor.needs_conversion(src_ext, effective):
             ok, detail, saved = compressor.transcode_and_compress(
-                src, out, effective, mode, quality, opts, preferred=backend
+                src,
+                out,
+                effective,
+                mode,
+                quality,
+                opts,
+                preferred=backend,
+                on_progress=_on_progress,
+                cancel_event=cancel,
             )
         else:
             ok, detail, saved = compressor.compress_auto(
-                src, out, mode, quality, opts, preferred=backend
+                src,
+                out,
+                mode,
+                quality,
+                opts,
+                preferred=backend,
+                on_progress=_on_progress,
+                cancel_event=cancel,
             )
     except Exception:
         log.exception("[compress] task %s raised an exception", item.iid)
@@ -165,7 +192,13 @@ def run_compress_task(
 # 队列列表组件
 # =============================================================================
 # 后端显示名（用于「自动切换」后的状态提示，如 "jpegoptim 完成"）
-BACKEND_NAMES = {"oxipng": "oxipng", "jpegoptim": "jpegoptim", "pillow": "Pillow"}
+BACKEND_NAMES = {
+    "oxipng": "oxipng",
+    "jpegoptim": "jpegoptim",
+    "gifsicle": "Gifsicle",
+    "pillow": "Pillow",
+    "ffmpeg": "FFmpeg",
+}
 
 
 class CompressItemWidget(ThemedCard):
@@ -245,8 +278,8 @@ class CompressItemWidget(ThemedCard):
             # 修复4：tr('compress.done.by') 含 {backend} 占位符，必须 .format() 替换
             if (
                 backend
-                and self._selected in ("oxipng", "jpegoptim", "pillow")
-                and backend != self._selected
+                and self._selected != backend
+                and backend in BACKEND_NAMES
             ):
                 name = BACKEND_NAMES.get(backend, backend)
                 self.pill.set_status("done_sw", text=tr("compress.done.by").format(backend=name))
@@ -397,6 +430,8 @@ class CompressInterface(InterfaceBase):
                 "pil_progressive": True,
                 "pil_subsampling": "4:4:4",
             },
+            # ffmpeg 三段参数（视频 / 音频 / 图片）全部默认键，UI 按类别挑选展示。
+            "ffmpeg": compressor.ffmpeg_param_defaults(),
         }
         self._target = "same"
         self._switches: list = []
@@ -406,6 +441,11 @@ class CompressInterface(InterfaceBase):
         # v0.8.1 Bug4-②：后端参数分区里的 field_row 行标签，retranslateUi 按
         # ``(row, i18n_key)`` 逐行刷新（field_row 的标签此前是拿不到引用的局部变量）
         self._param_rows: list[tuple] = []
+        # FFmpeg 面板：每类别的参数控件 setter（供预设档一键套用）、分类小标题、
+        # 预设下拉框，均需在语言切换时刷新。
+        self._ff_setters: dict = {}
+        self._ff_cat_headers: dict = {}
+        self._ff_profile_combos: dict = {}
 
         # =====================================================================
         # 输入卡片
@@ -437,6 +477,7 @@ class CompressInterface(InterfaceBase):
                 (tr("advanced.compression.jpegoptim"), "jpegoptim"),
                 (tr("advanced.compression.gifsicle"), "gifsicle"),
                 (tr("advanced.compression.pillow"), "pillow"),
+                (tr("advanced.compression.ffmpeg"), "ffmpeg"),
             ],
             self._program,
             lambda v: self._on_program(v),
@@ -490,6 +531,8 @@ class CompressInterface(InterfaceBase):
         _bcont_ly.addWidget(self.gsGroup)
         self.pilGroup = self._backend_section("pillow", self._build_pillow())
         _bcont_ly.addWidget(self.pilGroup)
+        self.ffmpegGroup = self._backend_section("ffmpeg", self._build_ffmpeg())
+        _bcont_ly.addWidget(self.ffmpegGroup)
         svb.addWidget(self._backend_container)
 
         # 输出位置
@@ -855,6 +898,122 @@ class CompressInterface(InterfaceBase):
         attach_help(fr, "advanced.help.pil.subsampling")
         return w
 
+    # ------------------------------------------------------------------
+    # FFmpeg 压缩面板（视频 / 音频 / 图片 三段独立参数 + 预设档）
+    # ------------------------------------------------------------------
+    def _ff_profile_mapping(self, kind: str) -> list:
+        """某类别的预设下拉项：翻译后的展示名 → 预设名（末项永远是「自定义」）。"""
+        presets = compressor.FFMPEG_PRESETS.get(kind, {})
+        mapping = [(tr(f"ffmpeg.profile.{name}"), name) for name in presets.keys()]
+        mapping.append((tr("ffmpeg.profile.custom"), "custom"))
+        return mapping
+
+    def _ff_profile_key(self, kind: str) -> str:
+        return {"video": "ff_v_profile", "audio": "ff_a_profile", "image": "ff_i_profile"}[kind]
+
+    def _build_ffmpeg(self):
+        """FFmpeg 压缩参数面板：视频 / 音频 / 图片 三个独立分区。"""
+        grp = self._tool_opts["ffmpeg"]
+        w = QWidget()
+        apply_transparent(w)
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 0, 0, 0)
+        ly.setSpacing(18)
+        for kind in ("video", "audio", "image"):
+            ly.addWidget(self._build_ffmpeg_category(kind, grp))
+        return w
+
+    def _build_ffmpeg_category(self, kind: str, grp: dict):
+        params = compressor.FFMPEG_PARAMS_BY_KIND.get(kind, {})
+        profile_key = self._ff_profile_key(kind)
+
+        w = QWidget()
+        apply_transparent(w)
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(0, 0, 0, 0)
+        ly.setSpacing(10)
+
+        # 分区头：类别名 + 预设档下拉
+        hdr = QHBoxLayout()
+        cat_lbl = StrongBodyLabel(tr(f"ffmpeg.cat.{kind}"))
+        apply_text(cat_lbl, sub_text(), transparent=True)
+        prof_combo = self._make_combo(
+            self._ff_profile_mapping(kind),
+            grp.get(profile_key, "balanced"),
+            lambda v: self._on_ff_profile(kind, v),
+        )
+        hdr.addWidget(cat_lbl)
+        hdr.addStretch(1)
+        hdr.addWidget(prof_combo)
+        ly.addLayout(hdr)
+        self._ff_cat_headers[kind] = cat_lbl
+        self._ff_profile_combos[kind] = prof_combo
+
+        setters: dict = {}
+        for pkey, spec in params.items():
+            if pkey == profile_key:
+                continue
+            control, setter = self._build_ff_param(grp, pkey, spec)
+            fr = self._param_row(f"ffmpeg.{pkey}", control)
+            ly.addWidget(fr)
+            attach_help(fr, f"ffmpeg.help.{pkey}")
+            setters[pkey] = setter
+        self._ff_setters[kind] = setters
+        return w
+
+    def _build_ff_param(self, grp: dict, pkey: str, spec: dict):
+        """构建一个 ffmpeg 参数控件，返回 (控件, 设值函数)。
+
+        设值函数供「预设档」一键套用时回写控件显示，保证控件与 opts 一致。
+        """
+        t = spec.get("type")
+        if t == "bool":
+            ctl = SwitchButton()
+            ctl.setChecked(bool(grp.get(pkey, spec.get("default", False))))
+            ctl.checkedChanged.connect(lambda b: grp.__setitem__(pkey, b))
+            self._switches.append(ctl)
+            return ctl, (lambda v: ctl.setChecked(bool(v)))
+        if t == "choice":
+            vals = spec.get("values", [])
+            # 编解码器 / 选项用其技术名作显示（如 libx264 / copy），无需翻译。
+            mapping = [(v, v) for v in vals]
+            ctl = self._make_combo(
+                mapping, grp.get(pkey, spec.get("default")), lambda v: grp.__setitem__(pkey, v)
+            )
+            return ctl, (lambda v: select_combo_value(ctl, v))
+        # int（含带范围的数字参数）
+        lo = int(spec.get("min", 0))
+        hi = int(spec.get("max", 100))
+        cur = int(grp.get(pkey, spec.get("default", lo)) or lo)
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(lo, hi)
+        slider.setValue(cur)
+        spin = QSpinBox()
+        spin.setRange(lo, hi)
+        spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        spin.setValue(cur)
+        slider.valueChanged.connect(lambda v: (grp.__setitem__(pkey, v), spin.setValue(v)))
+        spin.valueChanged.connect(lambda v: (grp.__setitem__(pkey, v), slider.setValue(v)))
+        row = QHBoxLayout()
+        row.addWidget(slider, 1)
+        row.addWidget(spin)
+        return row, (lambda v: (slider.setValue(int(v)), spin.setValue(int(v))))
+
+    def _on_ff_profile(self, kind: str, preset: str):
+        """切换预设档：自定义则保留当前各参数；否则把预设覆盖写回控件与 opts。"""
+        grp = self._tool_opts["ffmpeg"]
+        grp[self._ff_profile_key(kind)] = preset
+        if preset == "custom":
+            return
+        overrides = compressor.ffmpeg_preset_values(kind, preset)
+        setters = self._ff_setters.get(kind, {})
+        for k, v in overrides.items():
+            if k in grp:
+                grp[k] = v
+            s = setters.get(k)
+            if s:
+                s(v)
+
     def _on_program(self, p):
         self._program = p
         auto = p == "auto"
@@ -865,6 +1024,7 @@ class CompressInterface(InterfaceBase):
             ("jpegoptim", self.joGroup),
             ("gifsicle", self.gsGroup),
             ("pillow", self.pilGroup),
+            ("ffmpeg", self.ffmpegGroup),
         ):
             grp_w.setVisible(auto or p == key)
             grp_w._header.setVisible(auto)
@@ -889,6 +1049,8 @@ class CompressInterface(InterfaceBase):
             installed = compressor.find_tool("jpegoptim") is not None
         elif self._program == "gifsicle":
             installed = compressor.find_tool("gifsicle") is not None
+        elif self._program == "ffmpeg":
+            installed = compressor.find_tool("ffmpeg") is not None
         self.toolsBtn.setVisible(not installed)
         self.toolsStatus.setVisible(installed)
         if installed:
@@ -901,6 +1063,8 @@ class CompressInterface(InterfaceBase):
             return "lossless"
         if self._program == "jpegoptim":
             return self._tool_opts["jpegoptim"].get("jo_mode", "lossless")
+        if self._program == "ffmpeg":
+            return "lossy"
         return "lossy"
 
     def _current_quality(self) -> int:
@@ -973,17 +1137,17 @@ class CompressInterface(InterfaceBase):
     # =========================================================================
 
     def _on_files(self, paths):
-        for p in self._expand_paths(paths, IMAGE_EXTS):
+        for p in self._expand_paths(paths, MEDIA_EXTS):
             self._add_item(p)
         self._update_controls()
 
     def _pick_files(self):
-        """弹出图片文件选择器（带重入防护）。"""
+        """弹出媒体文件选择器（带重入防护）。"""
         if self._picking:
             return
         self._picking = True
         try:
-            files = self._ask_open_files(tr("compress.add.files"), IMAGE_EXTS, "Images")
+            files = self._ask_open_files(tr("compress.add.files"), MEDIA_EXTS, tr("compress.filter.media"))
             if files:
                 self._on_files(files)
         finally:
@@ -1183,8 +1347,9 @@ class CompressInterface(InterfaceBase):
                 (tr("advanced.compression.auto"), "auto"),
                 (tr("advanced.compression.oxipng"), "oxipng"),
                 (tr("advanced.compression.jpegoptim"), "jpegoptim"),
-                (tr("advanced.compression.gifsicle"), "gifsicle"),  # retranslate 漏了
+                (tr("advanced.compression.gifsicle"), "gifsicle"),
                 (tr("advanced.compression.pillow"), "pillow"),
+                (tr("advanced.compression.ffmpeg"), "ffmpeg"),
             ],
         )
         self._repopulate_combo(
@@ -1202,9 +1367,16 @@ class CompressInterface(InterfaceBase):
         for key, grp_w in (
             ("oxipng", self.oxipngGroup),
             ("jpegoptim", self.joGroup),
+            ("gifsicle", self.gsGroup),
             ("pillow", self.pilGroup),
+            ("ffmpeg", self.ffmpegGroup),
         ):
             grp_w._header.setText(tr(f"advanced.compression.{key}"))
+        # FFmpeg 面板：三类（视频 / 音频 / 图片）各自的分类标题与预设下拉
+        for kind, lbl in self._ff_cat_headers.items():
+            lbl.setText(tr(f"ffmpeg.cat.{kind}"))
+        for kind, combo in self._ff_profile_combos.items():
+            self._repopulate_combo(combo, self._ff_profile_mapping(kind))
         # v0.8.1 Bug4-②：field_row 行标签同步语言（此前标签是拿不到引用的局部变量）
         self.backendRow.fieldLabel.setText(tr("advanced.compression.backend"))
         self.targetRow.fieldLabel.setText(tr("compress.target"))

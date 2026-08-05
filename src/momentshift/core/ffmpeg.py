@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .platform import run_silent
+from .platform import is_redirected, run_silent, writable_base_dir
 
 
 def _binary_names() -> tuple[str, str]:
@@ -29,13 +29,18 @@ def bundled_locations() -> list[Path]:
     """返回可能存放本地 ffmpeg/ffprobe 的目录，按搜索优先级排列。
 
     Returns:
-        打包运行时只含安装根目录（可执行文件旁）；开发运行时依次是仓库的
-        ``tools/ffmpeg_bin`` 与包旁的 ``ffmpeg_bin``。
+        打包运行时含安装根目录（可执行文件旁）；若安装目录只读（v0.8.16 起
+        默认装到 ``Program Files (x86)``），再追加用户数据目录下的
+        ``ffmpeg_bin``。开发运行时依次是仓库的 ``tools/ffmpeg_bin``
+        与包旁的 ``ffmpeg_bin``。
     """
     locations: list[Path] = []
     if getattr(sys, "frozen", False):
         # PyInstaller 单目录打包：二进制与主程序同级
         locations.append(Path(sys.executable).parent)
+        # 安装到 Program Files 时装不进去，一键下载会落到可写目录，这里补搜索位。
+        if is_redirected():
+            locations.append(writable_base_dir() / "ffmpeg_bin")
     else:
         here = Path(__file__).resolve()
         # 仓库根在四层之上：core/ffmpeg.py -> momentshift/core -> momentshift -> src
@@ -50,10 +55,15 @@ def ffmpeg_install_dir() -> Path:
     """返回一键下载应当把 ffmpeg/ffprobe 放到的目录。
 
     Notes:
-        取的是 :func:`find_ffmpeg` 搜索链的第一站，因此下载完不必额外注册路径，
-        下次检测会自动发现。
+        取的是 :func:`find_ffmpeg` 搜索链中**第一个可写**的位置，
+        因此下载完不必额外注册路径，下次检测会自动发现。
+        安装到只读的 Program Files 时会自动落到用户数据目录。
     """
-    return bundled_locations()[0]
+    locations = bundled_locations()
+    if getattr(sys, "frozen", False) and is_redirected():
+        # 第一站是只读的安装目录，直接跳到可写落点。
+        return locations[-1]
+    return locations[0]
 
 
 def find_ffmpeg(mode: str = "auto") -> str | None:

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -104,29 +105,128 @@ def resources_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "resources"
 
 
+# 可写根目录的探测结果缓存：None 表示尚未探测。
+# 探测涉及一次真实的文件写入，放在模块级缓存里避免每次取路径都做磁盘 IO。
+_WRITABLE_BASE: Path | None = None
+
+
+def user_data_dir() -> Path:
+    """当前用户的应用数据目录（一定可写，不保证已存在）。
+
+    Returns:
+        - Windows：``%APPDATA%\\MomentShift``
+        - macOS：``~/Library/Application Support/MomentShift``
+        - Linux：``$XDG_CONFIG_HOME/MomentShift``，未设置时退回 ``~/.config/MomentShift``
+
+    Notes:
+        v0.8.16 起安装版默认装到 ``C:\\Program Files (x86)\\MomentShift``，
+        非管理员对该目录没有写权限，可写数据必须落到这里。
+    """
+    if IS_WINDOWS:
+        roaming = os.environ.get("APPDATA")
+        base = Path(roaming) if roaming else Path.home() / "AppData" / "Roaming"
+    elif IS_MACOS:
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        xdg = os.environ.get("XDG_CONFIG_HOME")
+        base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "MomentShift"
+
+
+def _probe_writable(directory: Path) -> bool:
+    """真实写一个探针文件来判断目录是否可写。
+
+    Args:
+        directory: 待检测目录。
+    Returns:
+        可写返回 ``True``。
+
+    Notes:
+        不用 ``os.access(W_OK)``：Windows 上它对 Program Files 会误报可写
+        （UAC 虚拟化与 ACL 的组合让权限位失真），只有真写一次才准。
+    """
+    probe = directory / ".momentshift-write-test"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe.write_text("ok", encoding="utf-8")
+    except OSError:
+        return False
+    else:
+        try:
+            probe.unlink()
+        except OSError:
+            pass  # 探针残留无害，不影响判定结论。
+        return True
+
+
+def writable_base_dir() -> Path:
+    """可写数据根目录（``config.json`` / ``logs/`` / ``tools/`` 的实际父目录）。
+
+    Returns:
+        安装目录可写时返回 :func:`app_base_dir`（绿色解压版、开发态走这条），
+        否则返回 :func:`user_data_dir`（安装到 Program Files 时走这条）。
+
+    Notes:
+        结果在进程内缓存。首次调用会在安装目录写一个探针文件，
+        因此不要在极早期（例如 ``sys.path`` 尚未就绪时）调用。
+    """
+    global _WRITABLE_BASE  # noqa: PLW0603 - 进程级单例缓存，避免重复磁盘探测。
+    if _WRITABLE_BASE is not None:
+        return _WRITABLE_BASE
+    base = app_base_dir()
+    if not _probe_writable(base):
+        base = user_data_dir()
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass  # 连用户目录都建不了时保持原路径，让调用方在使用点报错。
+    _WRITABLE_BASE = base
+    return base
+
+
+def is_redirected() -> bool:
+    """可写数据是否被重定向到了用户目录（即安装目录只读）。"""
+    return writable_base_dir() != app_base_dir()
+
+
 def tools_dir() -> Path:
-    """外部工具目录 ``<app_base_dir>/tools``（用户下载的引擎与压缩器落在这里）。
+    """外部工具目录 ``<writable_base_dir>/tools``（用户下载的引擎与压缩器落在这里）。
 
     Returns:
         工具目录路径，已确保存在。
 
     Raises:
-        OSError: 目录无法创建（例如安装在只读的 Program Files 下）。
-            这里刻意向上抛而不是静默吞掉，让调用方决定如何提示用户。
+        OSError: 目录无法创建。这里刻意向上抛而不是静默吞掉，
+            让调用方决定如何提示用户。
+
+    Notes:
+        安装到 Program Files 时会落到 ``%APPDATA%/MomentShift/tools``；
+        若安装目录里已有随包分发的 ``tools/``，:func:`bundled_tools_dir`
+        提供只读回退，查找顺序由 compressor / upscaler 自行决定。
     """
-    directory = app_base_dir() / "tools"
+    directory = writable_base_dir() / "tools"
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
 
+def bundled_tools_dir() -> Path:
+    """安装目录下随包分发的只读 ``tools/``（可能不存在，不自动创建）。
+
+    Notes:
+        与 :func:`tools_dir` 区分：前者是用户下载落点（一定可写），
+        这里是安装包自带的兜底位置。数据重定向后两者才会不同。
+    """
+    return app_base_dir() / "tools"
+
+
 def config_file() -> Path:
-    """配置文件路径 ``<app_base_dir>/config.json``（不保证存在）。"""
-    return app_base_dir() / "config.json"
+    """配置文件路径 ``<writable_base_dir>/config.json``（不保证存在）。"""
+    return writable_base_dir() / "config.json"
 
 
 def log_dir() -> Path:
-    """日志目录 ``<app_base_dir>/logs``（不自动创建，由 logger 负责）。"""
-    return app_base_dir() / "logs"
+    """日志目录 ``<writable_base_dir>/logs``（不自动创建，由 logger 负责）。"""
+    return writable_base_dir() / "logs"
 
 
 def _with_silent_defaults(kwargs: dict) -> dict:

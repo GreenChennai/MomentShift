@@ -86,16 +86,21 @@ PROFILES: dict[str, dict] = {    # ----- 图片 -----
     "tiff": {"ext": ".tiff", "category": "image", "params": ["-compression_algo", "deflate"]},
     "gif": {"ext": ".gif", "category": "video", "params": [], "is_gif": True},
     # ----- 音频 -----
-    "mp3": {"ext": ".mp3", "category": "audio", "params": ["-b:a", "320k"]},
+    # mp3：libmp3lame 的 VBR 刻度 -q:a（0 最好 9 最差），2 接近「透明」且体积远小于 320k CBR
+    "mp3": {"ext": ".mp3", "category": "audio", "params": ["-c:a", "libmp3lame", "-q:a", "2"]},
     "wav": {"ext": ".wav", "category": "audio", "params": ["-c:a", "pcm_s16le"]},
     "flac": {"ext": ".flac", "category": "audio", "params": ["-compression_level", "8"]},
-    "aac": {"ext": ".aac", "category": "audio", "params": ["-b:a", "320k"]},
+    # aac：内置 aac 编码器在 >256k 后收益递减且易引入瑕疵，256k 已属高码率安全值
+    "aac": {"ext": ".aac", "category": "audio", "params": ["-c:a", "aac", "-b:a", "256k"]},
     "m4a": {"ext": ".m4a", "category": "audio", "params": ["-c:a", "aac", "-b:a", "256k"]},
     "ogg": {"ext": ".ogg", "category": "audio", "params": ["-c:a", "libvorbis", "-q:a", "6"]},
     # ----- 视频 -----
     "mp4": {
         "ext": ".mp4",
         "category": "video",
+        # yuv420p + high：浏览器 / QuickTime / 旧设备全兼容的「黄金组合」
+        "pix_fmt": "yuv420p",
+        "profile": "high",
         "params": [
             "-c:v",
             "libx264",
@@ -114,6 +119,8 @@ PROFILES: dict[str, dict] = {    # ----- 图片 -----
     "mkv": {
         "ext": ".mkv",
         "category": "video",
+        "pix_fmt": "yuv420p",
+        "profile": "high",
         "params": [
             "-c:v",
             "libx264",
@@ -130,6 +137,8 @@ PROFILES: dict[str, dict] = {    # ----- 图片 -----
     "mov": {
         "ext": ".mov",
         "category": "video",
+        "pix_fmt": "yuv420p",
+        "profile": "high",
         "params": [
             "-c:v",
             "libx264",
@@ -148,6 +157,7 @@ PROFILES: dict[str, dict] = {    # ----- 图片 -----
     "webm": {
         "ext": ".webm",
         "category": "video",
+        "pix_fmt": "yuv420p",
         "params": [
             "-c:v",
             "libvpx-vp9",
@@ -155,6 +165,13 @@ PROFILES: dict[str, dict] = {    # ----- 图片 -----
             "30",
             "-b:v",
             "0",
+            # VP9 提速：row-mt 开多线程、cpu-used 抬高到 2（good 档）大幅缩短编码耗时
+            "-row-mt",
+            "1",
+            "-deadline",
+            "good",
+            "-cpu-used",
+            "2",
             "-c:a",
             "libopus",
             "-b:a",
@@ -164,6 +181,7 @@ PROFILES: dict[str, dict] = {    # ----- 图片 -----
     "avi": {
         "ext": ".avi",
         "category": "video",
+        "pix_fmt": "yuv420p",
         "params": ["-c:v", "mpeg4", "-q:v", "3", "-c:a", "libmp3lame", "-q:a", "2"],
     },
 }
@@ -238,7 +256,8 @@ def _gpu_video_encode_args(encoder: str) -> list[str]:
     """
     args = ["-c:v", encoder]
     if "nvenc" in encoder:
-        args += ["-rc", "vbr", "-cq", "19", "-preset", "p4"]
+        # -tune hq 让 NVENC 在同等码率下提升主观质量（牺牲少量速度）
+        args += ["-rc", "vbr", "-cq", "19", "-preset", "p4", "-tune", "hq"]
     elif "qsv" in encoder:
         args += ["-global_quality", "25", "-preset", "medium"]
     elif "amf" in encoder:
@@ -264,6 +283,9 @@ def _gpu_video_args(encoder: str, target: str) -> list[str]:
     """
     args = _gpu_video_encode_args(encoder)
     args += ["-c:a", "aac", "-b:a", "192k"]
+    # 硬件编码同样强制 yuv420p，避免 10-bit 源产出浏览器/QuickTime 无法播放的文件
+    if target in ("mp4", "mkv", "mov", "webm"):
+        args += ["-pix_fmt", "yuv420p"]
     if target in ("mp4", "mov"):
         args += ["-movflags", "+faststart"]
     return args
@@ -336,6 +358,14 @@ def build_args(task, hw: dict | None = None) -> list[str]:
         # webm / avi / 图片 / 音频一律走 CPU 预设：这些格式的硬件编码器覆盖面差，
         # 强行上 GPU 反而容易直接失败
         args += profile["params"]
+
+    # --- 统一像素格式 / 编码 profile（仅视频预设带这两个字段，GIF 不含）---
+    # -pix_fmt yuv420p：保证浏览器 / QuickTime / 旧设备全兼容（10-bit 源也会落回 8-bit）
+    # -profile:v high：H.264 高规格，配合 yuv420p 即「黄金兼容组合」
+    if profile.get("pix_fmt"):
+        args += ["-pix_fmt", profile["pix_fmt"]]
+    if profile.get("profile"):
+        args += ["-profile:v", profile["profile"]]
 
     # --- 分类级高级参数微调 ---
     if opt:

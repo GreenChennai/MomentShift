@@ -463,8 +463,13 @@ def _run_iface_task(
 
 
 def _run_compress(files, window):
-    """右键 → 压缩：弹「创建图片压缩任务」→ 注入主窗口压缩队列 → 自动开始。"""
-    from .core.presets import IMAGE_EXTS
+    """右键 → 压缩：弹「创建压缩任务」→ 注入主窗口压缩队列 → 自动开始。
+
+    Notes:
+        v0.8.16 起放开到音频与视频：FFmpeg 压缩后端能处理这两类，
+        以前只收图片是 oxipng / jpegoptim 时代的历史限制。
+    """
+    from .core.presets import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS
     from .gui.quick_dialogs import QuickCompressDialog
 
     _run_iface_task(
@@ -472,16 +477,21 @@ def _run_compress(files, window):
         window,
         label="compress",
         iface_attr="compressInterface",
-        valid_exts=IMAGE_EXTS,
+        valid_exts=IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS,
         dialog_cls=QuickCompressDialog,
         done_msg_key="quick.notify.compress_done",
     )
 
 
 def _run_upscale(files, window):
-    """右键 → 放大：弹「创建图片放大任务」→ 注入主窗口放大队列 → 自动开始。"""
+    """右键 → 放大：弹「创建放大任务」→ 注入主窗口放大队列 → 自动开始。
+
+    Notes:
+        v0.8.16 起放开到视频：插帧类引擎本来就吃视频，
+        超分引擎也能逐帧处理，扩展名白名单不该再卡死在图片。
+    """
     from .core import engines as eng_mod
-    from .core.presets import IMAGE_EXTS
+    from .core.presets import IMAGE_EXTS, VIDEO_EXTS
     from .gui.quick_dialogs import QuickUpscaleDialog
 
     def _engines_ready() -> bool:
@@ -495,7 +505,7 @@ def _run_upscale(files, window):
         window,
         label="upscale",
         iface_attr="upscaleInterface",
-        valid_exts=IMAGE_EXTS | eng_mod.ANIM_EXTS,
+        valid_exts=IMAGE_EXTS | eng_mod.ANIM_EXTS | VIDEO_EXTS,
         dialog_cls=QuickUpscaleDialog,
         done_msg_key="quick.notify.upscale_done",
         precheck=_engines_ready,

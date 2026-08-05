@@ -37,7 +37,7 @@ from typing import Any, Callable, Sequence
 
 from .config import tools_dir
 from .logger import get_logger
-from .platform import binary_name, platform_tag, popen_silent, run_silent
+from .platform import binary_name, bundled_tools_dir, platform_tag, popen_silent, run_silent
 
 log = get_logger("engines")
 
@@ -716,6 +716,11 @@ def _iter_search_roots(eng: Engine):
     """引擎目录 + 兼容目录，各自展开 2 层子目录（release zip 常多套一层）。"""
     roots = [engine_dir(eng.eid, create=False)]
     roots += [tools_dir() / d for d in eng.legacy_dirs]
+    # 数据重定向后（安装到 Program Files）再补一份安装目录下的只读 tools/。
+    bundled = bundled_tools_dir()
+    if bundled != tools_dir():
+        roots += [bundled / eng.eid]
+        roots += [bundled / d for d in eng.legacy_dirs]
     for root in roots:
         if not root.is_dir():
             continue
