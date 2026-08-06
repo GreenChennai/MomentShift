@@ -184,7 +184,29 @@ class EngineRow(QWidget):
         self.prog.hide()
         vb.addWidget(self.prog)
 
+        # V0.8.20 动画2：行悬停高亮（浅灰底 + 圆角，objectName 限定不影响子控件）
+        self.setObjectName("engineRow")
         self.refresh()
+
+    def enterEvent(self, event):
+        self._set_hover(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._set_hover(False)
+        super().leaveEvent(event)
+
+    def _set_hover(self, hover: bool):
+        """切换行悬停底色。对象选择器只作用于本行，不级联到子标签。"""
+        try:
+            if hover:
+                self.setStyleSheet(
+                    f"#engineRow{{ background: {tokens.SURFACE_HOVER}; border-radius: 6px; }}"
+                )
+            else:
+                self.setStyleSheet("background: transparent;")
+        except RuntimeError:
+            pass  # 静默原因：控件可能已随界面销毁
 
     # -- 一键下载：按引擎注册表中「当前平台」的下载源，HF→GitHub→官方 --
     def _one_click(self):

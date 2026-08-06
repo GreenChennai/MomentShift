@@ -201,7 +201,29 @@ class _FunasrModelRow(QWidget):
         self.prog.hide()
         vb.addWidget(self.prog)
 
+        # V0.8.20 动画2：行悬停高亮（与引擎卡 EngineRow 同一视觉语言）
+        self.setObjectName("asrModelRow")
         self.refresh()
+
+    def enterEvent(self, event):
+        self._set_hover(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._set_hover(False)
+        super().leaveEvent(event)
+
+    def _set_hover(self, hover: bool):
+        """切换行悬停底色。对象选择器只作用于本行，不级联到子标签。"""
+        try:
+            if hover:
+                self.setStyleSheet(
+                    f"#asrModelRow{{ background: {tokens.SURFACE_HOVER}; border-radius: 6px; }}"
+                )
+            else:
+                self.setStyleSheet("background: transparent;")
+        except RuntimeError:
+            pass  # 静默原因：控件可能已随界面销毁
 
     # -- 下载 --
     def _hf_page_url(self) -> str:
