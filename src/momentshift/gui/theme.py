@@ -567,7 +567,14 @@ class CollapsibleCard(ThemedCard):
         self._anim.setDuration(self._ANIM_DURATION)
         self._anim.setStartValue(cur)
         self._anim.setEndValue(real_target)
-        self._anim.setEasingCurve(animations.CURVE_IN)
+        # V0.8.20 Bug2（参数修复）：收起与展开用不同缓动曲线。
+        # 原收起也用 CURVE_IN（OutCubic 先快后慢）→ 动画一开始 body 就猛缩，
+        # 父级布局/滚动区重排剧烈，标题被带着上下抖。收起改为 CURVE_OUT
+        # （InCubic 先慢后快）：开头收缩平缓、重排柔和，标题稳定；末尾快速
+        # 收完时 body 已很小，视觉冲击可忽略。展开保持 CURVE_IN 不变。
+        self._anim.setEasingCurve(
+            animations.CURVE_OUT if target_h <= 0 else animations.CURVE_IN
+        )
         self._anim.finished.connect(self._on_anim_finished)
         self._anim.start()
 
