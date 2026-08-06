@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QPropertyAnimation, QSize, Qt, pyqtProperty, pyqtSignal
+from PyQt6.QtCore import QPointF, QPropertyAnimation, QSize, Qt, pyqtProperty, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
@@ -406,8 +406,11 @@ class _ArrowToggle(QWidget):
         )
         painter.translate(w / 2.0, h / 2.0)
         painter.rotate(self._angle)
-        painter.drawLine(-5.0, -2.0, 0.0, 3.0)
-        painter.drawLine(5.0, -2.0, 0.0, 3.0)
+        # V0.8.20 Bug1 修复：PyQt6 的 QPainter.drawLine 四参重载只接受 int，
+        # 传 float 会抛 TypeError（异常被 Qt 吞掉 → 箭头消失，只剩 hover 方块）。
+        # 改用 QPointF 两点重载。
+        painter.drawLine(QPointF(-5.0, -2.0), QPointF(0.0, 3.0))
+        painter.drawLine(QPointF(5.0, -2.0), QPointF(0.0, 3.0))
 
 
 class CollapsibleCard(ThemedCard):
@@ -421,6 +424,7 @@ class CollapsibleCard(ThemedCard):
         self._collapsed = collapsed
         self._anim = None
         self._content_height = 0
+        self._bar_h_fixed = None  # V0.8.20 Bug2：收起动画期间钉死的标题栏高度
 
         self.setStyleSheet(
             tokens.transparent_children_qss(
@@ -569,6 +573,12 @@ class CollapsibleCard(ThemedCard):
 
     def _on_anim_finished(self):
         """按结束时的实际状态收尾，避免快速连点造成状态错位。"""
+        # V0.8.20 Bug2：解除收起动画期间对标题栏高度的钉死，恢复自由布局。
+        # （展开分支同样会经过这里，两种状态下解除都安全。）
+        if self._bar_h_fixed is not None:
+            self._bar.setMinimumHeight(0)
+            self._bar.setMaximumHeight(16777215)
+            self._bar_h_fixed = None
         if self._collapsed:
             self._body.setVisible(False)
         else:
@@ -582,6 +592,12 @@ class CollapsibleCard(ThemedCard):
         h = self._body.height()
         if h > 0:
             self._content_height = h
+        # V0.8.20 Bug2：收起动画期间把标题栏高度钉死。收起时 body 高度逐帧
+        # 收缩，若父级布局/滚动区随内容高度重排，或 Windows DPI 缩放下标题
+        # 垂直居中产生亚像素波动，标题文字会上下抖动。钉死后标题栏几何在
+        # 动画期间绝对不变，动画结束由 _on_anim_finished 恢复。
+        self._bar_h_fixed = self._bar.height()
+        self._bar.setFixedHeight(self._bar_h_fixed)
         self._anim_target(0)
         self._spin_toggle_icon()
 
