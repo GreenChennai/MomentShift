@@ -783,5 +783,8 @@
   "asr.settings.emotion.hint.on_missing": "Enabled but emotion2vec+large is unavailable (not downloaded / non-NVIDIA CUDA / missing funasr). Confirm under Model Manager.",
   "compress.output.title": "Compress output location",
   "quick.compress.title.kind": "Create compress task - {kind}",
-  "settings.hardware.hint": "Auto-detect acceleration (GPU is faster but needs compatible drivers)"
+  "settings.hardware.hint": "Auto-detect acceleration (GPU is faster but needs compatible drivers)",
+  "upscale.compare.fullscreen": "Fullscreen",
+  "upscale.compare.minimize": "—",
+  "upscale.compare.close": "×"
 }

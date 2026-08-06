@@ -135,13 +135,13 @@ class CompareWindow(QDialog):
         th.addStretch(1)
 
         # 标题栏右侧三个按钮外观完全一致，合并成一次建样式 + 一轮装配，
-        # 避免三处 setStyleSheet 各写一遍（顺序仍是 全屏 / 最小化 / 关闭）
+        # 顺序仍是 全屏 / 最小化 / 关闭；文案走 i18n（V0.8.19 优化2）
         self._fullscreen = False
         btn_qss = self._btn_style()
         for text, slot in (
-            ("全屏", self._toggle_fullscreen),
-            ("—", self.showMinimized),
-            ("×", self.close),
+            (tr("upscale.compare.fullscreen"), self._toggle_fullscreen),
+            (tr("upscale.compare.minimize"), self.showMinimized),
+            (tr("upscale.compare.close"), self.close),
         ):
             btn = QPushButton(text)
             btn.setStyleSheet(btn_qss)

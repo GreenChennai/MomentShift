@@ -783,5 +783,8 @@
   "asr.settings.emotion.hint.on_missing": "已啟用但 emotion2vec+large 模型不可用（未下載/非 NVIDIA CUDA 平台/缺 funasr 套件），請在「模型管理」中確認後生效。",
   "compress.output.title": "壓縮輸出位置",
   "quick.compress.title.kind": "建立壓縮任務 - {kind}",
-  "settings.hardware.hint": "自動偵測可用加速方式（GPU 轉碼更快，但需相容顯卡驅動）"
+  "settings.hardware.hint": "自動偵測可用加速方式（GPU 轉碼更快，但需相容顯卡驅動）",
+  "upscale.compare.fullscreen": "全螢幕",
+  "upscale.compare.minimize": "—",
+  "upscale.compare.close": "×"
 }
