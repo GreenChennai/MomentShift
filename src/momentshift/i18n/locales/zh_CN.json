@@ -782,5 +782,6 @@
   "asr.settings.emotion.hint.on_ready": "已启用，正在使用 emotion2vec+large 模型为转写结果标注情感。",
   "asr.settings.emotion.hint.on_missing": "已启用但 emotion2vec+large 模型不可用（未下载/非 NVIDIA CUDA 平台/缺 funasr 包），请在「模型管理」中确认后生效。",
   "compress.output.title": "压缩输出位置",
-  "quick.compress.title.kind": "创建压缩任务 - {kind}"
+  "quick.compress.title.kind": "创建压缩任务 - {kind}",
+  "settings.hardware.hint": "自动检测可用加速方式（GPU 转码更快，但需兼容显卡驱动）"
 }

@@ -185,7 +185,7 @@ class SettingInterface(InterfaceBase):
             cfg.hardware,
             FIF.ROBOT,
             tr("settings.hardware"),
-            tr("settings.threads.hint"),
+            tr("settings.hardware.hint"),
             [
                 (tr("settings.hardware.auto"), "auto"),
                 (tr("settings.hardware.cpu"), "cpu"),
@@ -331,6 +331,7 @@ class SettingInterface(InterfaceBase):
         self.trayCard.setTitle(tr("settings.close_to_tray"))
         self.trayCard.setContent(tr("settings.close_to_tray.hint"))
         self.hwCard.setTitle(tr("settings.hardware"))
+        self.hwCard.setContent(tr("settings.hardware.hint"))
         self.threadsCard.setTitle(tr("settings.threads"))
         self.threadsCard.setContent(tr("settings.threads.hint"))
         self.ffCard.setTitle(tr("settings.ffmpeg"))
