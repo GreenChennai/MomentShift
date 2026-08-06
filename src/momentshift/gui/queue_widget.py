@@ -444,7 +444,7 @@ class QueueItemWidget(ThemedCard):
         if status in ("done", "compress_done"):
             self.detailLbl.setText(self._detail_text())
         elif status == "failed":
-            self.detailLbl.setText((error or tr("convert.status.failed"))[:60])
+            self.detailLbl.setText((error or tr("convert.status.failed"))[:80])
         elif status == "running":
             self.detailLbl.setText(f"{self._task.progress}%")
         elif status == "compressing":

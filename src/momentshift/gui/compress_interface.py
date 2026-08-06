@@ -277,7 +277,7 @@ class CompressItemWidget(ThemedCard):
             self.pill.set_status(status)
             self.prog.set_error(status == "failed")
             if status == "failed":
-                self.detailLbl.setText((detail or tr("compress.failed"))[:60])
+                self.detailLbl.setText((detail or tr("compress.failed"))[:80])
             elif status == "running":
                 self.detailLbl.setText("")
             else:
