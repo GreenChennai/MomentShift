@@ -251,7 +251,10 @@ class EngineRow(QWidget):
         if self.dlBtn:
             self.dlBtn.setText(tr("engine.download.oneclick"))
         if self.reasonLbl:
-            self.reasonLbl.setText(tr(self.engine.download_reason_key))
+            # V0.8.19 优化9：与构造路径的 or 兜底保持一致，
+            # 避免 download_reason_key 为空串时 tr("") 空白
+            reason_key = self.engine.download_reason_key or "engine.reason.platform"
+            self.reasonLbl.setText(tr(reason_key))
         self.refresh()
 
 
