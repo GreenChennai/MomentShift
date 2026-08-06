@@ -20,9 +20,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QPropertyAnimation, QSize, Qt
+from PyQt6.QtCore import QPropertyAnimation, QSize, Qt, pyqtProperty
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -83,9 +83,6 @@ _RESOURCES = Path(__file__).parent.parent / "resources" / "icons"
 def _icon_path(name: str) -> str:
     return os.fspath(_RESOURCES / name)
 
-
-ICON_EXPAND = _icon_path("\u4e0b\u62c9.svg")
-ICON_COLLAPSE = _icon_path("\u6536\u8d77.svg")
 
 # v0.8.14 品牌图标：多分辨率 ico 供窗口/托盘/任务栏；512 png 供启动屏与关于页缩放。
 ICON_APP_ICO = _icon_path("app_logo.ico")
@@ -317,8 +314,58 @@ class ThemedCard(CardWidget):
 # =============================================================================
 # CollapsibleCard — 折叠卡片（带动效）
 # =============================================================================
+class _ArrowToggle(QPushButton):
+    """自绘折叠箭头按钮（V0.8.20 动画优化）。
+
+    为什么自绘而不是用 SVG 图标按钮：widget 无法直接旋转
+    （``QGraphicsRotation`` 是 ``QGraphicsTransform``，``setGraphicsEffect``
+    不接受），瞬时换图又不够精致。改为自绘 chevron + ``angle`` 属性
+    （``pyqtProperty``），由 :func:`animations.animate_value` 平滑旋转。
+
+    ``angle`` 语义：0° = 箭头向下（卡片收起，提示可展开）；180° = 箭头向上
+    （卡片展开，提示可收起）。收起↔展开互为 180° 旋转。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(30, 30)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # 透明底 + 极淡 hover/pressed（与其它图标按钮一致的克制风格）
+        self.setStyleSheet(
+            "QPushButton{background:transparent;border:none;border-radius:6px;}"
+            "QPushButton:hover{background:rgba(0,0,0,0.05);}"
+            "QPushButton:pressed{background:rgba(0,0,0,0.09);}"
+        )
+        self._angle = 0.0
+
+    def _get_angle(self) -> float:
+        return self._angle
+
+    def _set_angle(self, value: float) -> None:
+        self._angle = float(value)
+        self.update()
+
+    angle = pyqtProperty(float, fget=_get_angle, fset=_set_angle)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(
+            QColor(tokens.TEXT_STRONG),
+            2,
+            Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap,
+            Qt.PenJoinStyle.RoundJoin,
+        )
+        painter.setPen(pen)
+        painter.translate(self.width() / 2.0, self.height() / 2.0)
+        painter.rotate(self._angle)
+        # chevron：两条线段汇聚成 V 形箭头
+        painter.drawLine(-5.0, -2.0, 0.0, 3.0)
+        painter.drawLine(5.0, -2.0, 0.0, 3.0)
+
+
 class CollapsibleCard(ThemedCard):
-    _ICON_W = _ICON_H = 20
     # v0.8.0 B3 接入点 6：时长/曲线迁到 gui/animations 收口，**数值不变**
     # （250ms + OutCubic，与改造前逐帧一致）。保留这个类属性名是因为它是既有
     # 对外可读的事实，只是不再在这里写死魔法数字。
@@ -353,10 +400,11 @@ class CollapsibleCard(ThemedCard):
         hb.addWidget(self.titleLabel, 1)
         hb.addStretch()
 
-        self._toggleBtn = TransparentToolButton(self._toggle_icon(), self)
-        self._toggleBtn.setIconSize(QSize(self._ICON_W, self._ICON_H))
+        self._toggleBtn = _ArrowToggle(self)
         self._toggleBtn.setFixedSize(30, 30)
         self._toggleBtn.clicked.connect(self.toggle)
+        # 初始角度按折叠状态：收起=下拉(0°)，展开=上收(180°)
+        self._toggleBtn.angle = 0.0 if collapsed else 180.0
         hb.addWidget(self._toggleBtn)
 
         self._outer.addWidget(self._bar)
@@ -420,11 +468,23 @@ class CollapsibleCard(ThemedCard):
         """
         self._body.setMaximumHeight(0)
         self._body.setVisible(False)
-        self._toggleBtn.setIcon(self._toggle_icon())
 
-    def _toggle_icon(self) -> QIcon:
-        path = ICON_EXPAND if self._collapsed else ICON_COLLAPSE
-        return QIcon(path) if os.path.exists(path) else QIcon()
+    def _spin_toggle_icon(self) -> None:
+        """折叠箭头 180° 平滑旋转切换（V0.8.20 动画优化）。
+
+        收起↔展开互为 180° 旋转：把箭头平滑旋转到目标角度（0° 下拉 /
+        180° 上收），比瞬时换图更有物理感。走 :func:`animations.animate_value`
+        —— 无动画路径（全局关闭 / 控件不可见，如离屏门禁）直接写终值，
+        终态与动画播完后完全一致，不破坏 B3x 稳态指纹。
+        """
+        animations.animate_value(
+            self._toggleBtn,
+            b"angle",
+            0.0 if self._collapsed else 180.0,
+            duration=animations.DURATION_CARD,
+            curve=animations.CURVE_SMOOTH,
+            animate=animations.should_animate(self._toggleBtn),
+        )
 
     def _anim_target(self, target_h: int):
         if self._anim is not None:
@@ -469,13 +529,13 @@ class CollapsibleCard(ThemedCard):
         if h > 0:
             self._content_height = h
         self._anim_target(0)
-        self._toggleBtn.setIcon(self._toggle_icon())
+        self._spin_toggle_icon()
 
     def _apply_expanded(self):
         self._collapsed = False
         self._body.setVisible(True)
         self._anim_target(16777215)
-        self._toggleBtn.setIcon(self._toggle_icon())
+        self._spin_toggle_icon()
 
     @property
     def body(self) -> QVBoxLayout:
