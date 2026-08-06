@@ -23,7 +23,7 @@ from pathlib import Path
 from .asr_client import clean_cjk_spaces
 from .funasr.utils.postprocess_utils import rich_transcription_postprocess
 from .funasr.utils.wav_io import load_wav
-from .hardware import cached_asr_device
+from .hardware import cached_asr_device, nvidia_cuda_available
 from .logger import get_logger
 from .platform import tools_dir
 
@@ -785,7 +785,10 @@ def emotion_available(model_id: str = "emotion2vec-large") -> tuple[bool, str]:
         return False, "no_model"
     if not is_model_ready(model_id, spec.get("quantize")):
         return False, "no_model"
-    if cached_asr_device() != "cuda":
+    # v0.8.18 Bug1：按「硬件是否具备 NVIDIA CUDA」判定，而非 onnxruntime 的
+    # CUDA EP（随包是 CPU 版 onnxruntime，但 emotion2vec 走外部 funasr+torch，
+    # 用户自有部署可用其 CUDA；5070 Ti 等真实 N 卡不应被误报为不支持）。
+    if not nvidia_cuda_available():
         return False, "nvidia_cuda"
     try:
         import importlib.util

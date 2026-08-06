@@ -32,7 +32,6 @@ from qfluentwidgets import (
 from ..core.logger import get_logger
 from ..i18n.translator import tr
 from . import tokens
-from .base import combo_mapping
 from .theme import (
     accent_color,
     apply_plain_scroll,
@@ -144,6 +143,18 @@ class _SettingsEmbed(QWidget):
 
 
 # --------------------------------------------------------------------------
+def _compress_kind_display(kind: str) -> str:
+    """压缩文件类型 → 弹窗标题里展示的名称。"""
+    return {
+        "png": "PNG",
+        "jpg": "JPG",
+        "gif": "GIF",
+        "image": tr("ffmpeg.cat.image"),
+        "video": tr("ffmpeg.cat.video"),
+        "audio": tr("ffmpeg.cat.audio"),
+    }.get(kind, str(kind))
+
+
 class _QuickTaskDialog(QDialog):
     """快速调用设置弹窗公共骨架：左待处理文件 / 右设置（可滚动、顶置）。"""
 
@@ -151,10 +162,11 @@ class _QuickTaskDialog(QDialog):
     _DIALOG_H = 630  # 压缩/放大窗口统一 900×630
     _LEFT_W = 300
 
-    def __init__(self, parent, files, title_key, settings_title_key, on_confirm):
+    def __init__(self, parent, files, title_key, settings_title_key, on_confirm, title_kwargs=None):
         super().__init__(parent)
         self._on_confirm = on_confirm
-        self.setWindowTitle(tr(title_key))
+        self._title_kwargs = dict(title_kwargs or {})
+        self.setWindowTitle(tr(title_key, **self._title_kwargs))
         self.resize(self._DIALOG_W, self._DIALOG_H)
         self.setMinimumSize(760, 600)
         self.setObjectName("quickDlg")
@@ -169,7 +181,7 @@ class _QuickTaskDialog(QDialog):
         root.setSpacing(12)
 
         # 标题
-        title = QLabel(tr(title_key))
+        title = QLabel(tr(title_key, **self._title_kwargs))
         apply_text(title, tokens.TEXT_TITLE, size=tokens.FONT_DIALOG_TITLE, weight=700)
         root.addWidget(title)
 
@@ -264,53 +276,39 @@ class _QuickTaskDialog(QDialog):
 
 
 class QuickCompressDialog(_QuickTaskDialog):
-    """创建图片压缩任务设置弹窗（v0.7.16 左右分栏）。
+    """创建压缩任务设置弹窗（V0.8.18：按文件类型路由后端）。
 
-    压缩设置卡片 reparent 自 CompressInterface，参数与主窗口完全一致。
-    v0.7.18：移除「自动选择」条目及 auto 专属 UI，默认 Pillow。
+    不再 reparent 大组件「压缩」的 ``_settingsCard``（该卡片已在主界面删除），
+    而是内嵌 :class:`~momentshift.gui.compress_task_panel.CompressTaskPanel`：
+    面板按 ``kind``（png/jpg/gif/其他图片/视频/音频）给出候选后端与 FFmpeg
+    分段参数；弹窗内的「输出位置」与主界面「压缩 → 输出位置」双向同步
+    （通过 ``main_iface.apply_output_state`` 回调）。
     """
 
-    def __init__(self, parent, files, on_confirm):
-        from .compress_interface import CompressInterface
-
-        self.iface = CompressInterface(None)
-        self._postprocess_settings()
+    def __init__(self, parent, kind, files, on_confirm, main_iface=None):
+        self.kind = kind
+        # 必须先 super().__init__（完成 QDialog 初始化）再创建子控件——
+        # 否则在未初始化的 QDialog 上 new QWidget 会抛
+        # "super-class __init__() ... never called"。
         super().__init__(
-            parent, files, "quick.compress.title", "compress.settings.title", on_confirm
+            parent,
+            files,
+            "quick.compress.title.kind",
+            "compress.settings.title",
+            on_confirm,
+            title_kwargs={"kind": _compress_kind_display(kind)},
         )
-        self._embed_settings(getattr(self.iface, "_settingsCard", None))
+        from .compress_task_panel import CompressTaskPanel
 
-    def _postprocess_settings(self):
-        """v0.7.18：移除 auto 条目、auto 专属 UI；默认 Pillow。"""
-        iface = self.iface
-        combo = getattr(iface, "programCombo", None)
-        if combo is not None:
-            # ODD-07：改走 gui/base 的公开 API，不再直接摸 combo._mapping。
-            # 拿到的是拷贝，下面的裁剪只影响本地副本 —— 与改造前一致：
-            # 候选项已从控件里 removeItem，映射里那条残留取不到也就不影响。
-            mapping = combo_mapping(combo)
-            # 移除「自动选择」
-            for disp, val in list(mapping.items()):
-                if val == "auto":
-                    idx = combo.findText(disp)
-                    if idx >= 0:
-                        combo.removeItem(idx)
-                    mapping.pop(disp, None)
-                    break
-            # 默认 Pillow（setCurrentText 触发 _on_program → 只显示 Pillow 参数组）
-            pill_disp = next((d for d, v in mapping.items() if v == "pillow"), None)
-            if pill_disp:
-                try:
-                    combo.setCurrentText(pill_disp)
-                except Exception:
-                    log.debug("恢复格式下拉文本失败，忽略")  # 静默原因：控件可能已销毁
-        # 隐藏 auto 专属路由提示（仅 auto 模式显示）
-        hint = getattr(iface, "_route_hint", None)
-        if hint is not None:
-            try:
-                hint.hide()
-            except Exception:
-                log.debug("隐藏提示失败，忽略")  # 静默原因：控件可能已销毁
+        self.panel = CompressTaskPanel(kind, self)
+        if main_iface is not None and hasattr(main_iface, "apply_output_state"):
+            # 弹窗内保存位置改动 → 同步主界面「输出位置」卡片
+            self.panel.set_output_sync(main_iface.apply_output_state)
+        self._embed_settings(self.panel)
+
+    def _confirm(self):
+        self._on_confirm(self.staging.paths(), self.panel.settings())
+        self.accept()
 
 
 class QuickUpscaleDialog(_QuickTaskDialog):

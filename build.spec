@@ -102,6 +102,7 @@ hiddenimports = [
     "momentshift.gui.drop_area",
     "momentshift.gui.queue_widget",
     "momentshift.gui.compress_interface",
+    "momentshift.gui.compress_task_panel",  # v0.8.18：创建压缩任务面板（quick_dialogs / quick_runner 动态 import）
     "momentshift.gui.convert_interface",
     "momentshift.gui.convert_setup_dialog",
     "momentshift.gui.upscale_interface",

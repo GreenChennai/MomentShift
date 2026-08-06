@@ -414,22 +414,22 @@ def _run_iface_task(
     done_msg_key: str,
     precheck=None,
 ) -> None:
-    """压缩 / 放大两条「弹窗 → 注入主窗口队列 → 自动开始」流程的共同实现。
+    """「弹窗 → 注入主窗口队列 → 自动开始」流程（V0.8.18 起仅放大使用）。
 
     Args:
         files: 右键传进来的原始文件列表（未过滤）。
         window: 主窗口。
-        label: 日志与通知计数器用的流水线名（``"compress"`` / ``"upscale"``）。
-        iface_attr: 主窗口上对应界面的属性名，例如 ``"compressInterface"``。
+        label: 日志与通知计数器用的流水线名（"upscale"）。
+        iface_attr: 主窗口上对应界面的属性名，例如 ``"upscaleInterface"``。
         valid_exts: 可接受的扩展名集合（小写，含点）。
         dialog_cls: 设置弹窗类，签名须为 ``(parent, files, on_confirm)``。
         done_msg_key: 整批完成通知的翻译键。
         precheck: 可选的额外前置检查，返回 False 表示中止（自行提示用户）。
 
     Notes:
-        v0.8.0 B4：压缩与放大原本是两份逐字重复的函数，差别只有上面这几个参数。
-        两条 ``_confirm`` 都已经在 ODD-07 里改走 ``apply_settings`` /
-        ``enqueue_and_start`` 公开 API，形状完全一致，正好可以收成一份。
+        V0.8.18：压缩改为按文件类型分别弹窗（:func:`_run_compress`），不再走本
+        函数；本函数保留给放大（QuickUpscaleDialog 仍 reparent 大组件的
+        ``_settingsCard``，流程未变）。
 
         无有效文件时**只记日志、绝不 ``_fatal``**：这个函数也可能跑在 IPC
         上下文里（已有主窗口在运行），``_fatal`` 会把整个主窗口 quit 掉闪退。
@@ -463,24 +463,54 @@ def _run_iface_task(
 
 
 def _run_compress(files, window):
-    """右键 → 压缩：弹「创建压缩任务」→ 注入主窗口压缩队列 → 自动开始。
+    """右键 → 压缩：按文件类型分别弹「创建压缩任务」→ 确认后**自动开始**。
 
     Notes:
-        v0.8.16 起放开到音频与视频：FFmpeg 压缩后端能处理这两类，
-        以前只收图片是 oxipng / jpegoptim 时代的历史限制。
+        V0.8.18 重构：与主界面「压缩」共用同一条按类型弹窗流程（每组文件类型
+        单独一个 :class:`QuickCompressDialog`，设置快照冻结进每个任务），差异
+        只在确认回调 —— 主界面只入队等用户按「开始」（需求 V0.8.18-4），
+        这里入队后立即 ``enqueue_with_settings(auto_start=True)`` 自动开始
+        （需求 V0.8.18-5）。``files=[]`` 秒弹，文件由异步分段载入。
     """
     from .core.presets import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS
+    from .gui.compress_task_panel import compress_kind
     from .gui.quick_dialogs import QuickCompressDialog
 
-    _run_iface_task(
-        files,
-        window,
-        label="compress",
-        iface_attr="compressInterface",
-        valid_exts=IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS,
-        dialog_cls=QuickCompressDialog,
-        done_msg_key="quick.notify.compress_done",
+    valid_exts = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS
+    valid_files = [f for f in files if Path(f).suffix.lower() in valid_exts]
+    if not valid_files:
+        log.warning("quick compress: 无有效输入文件（共 %d 个输入）", len(files))
+        return
+
+    iface = window.compressInterface
+    # 通知连接一次（模块级），多次 flush 不重复
+    _ensure_batch_notify(
+        window, iface, iface.taskAdded, iface.taskFinished, "quick.notify.compress_done", "compress"
     )
+
+    groups: dict[str, list[str]] = {}
+    for f in valid_files:
+        k = compress_kind(f)
+        if k:
+            groups.setdefault(k, []).append(f)
+    if not groups:
+        log.warning("quick compress: 文件类型无法识别（共 %d 个输入）", len(files))
+        return
+
+    def _confirm(paths, settings, _iface=iface):
+        # 右键快速调用：入队后自动开始，不需要用户手动按「开始」
+        _iface.enqueue_with_settings(
+            [(p, dict(settings or {})) for p in paths], auto_start=True
+        )
+        _notify_started(window)
+
+    for kind, paths in groups.items():
+        # 空文件秒弹，文件异步分段载入
+        dlg = QuickCompressDialog(None, kind, [], _confirm, main_iface=iface)
+        dlg.finished.connect(lambda r: None)  # 取消不弹提示框
+        _KEEP_ALIVE.append(dlg)
+        _show_topmost(dlg)
+        _load_files_async(dlg, paths)
 
 
 def _run_upscale(files, window):

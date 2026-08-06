@@ -98,7 +98,7 @@
   "convert.advanced.original": "Original",
   "convert.advanced.quality_hint": "Higher = better quality and larger file (default 100; lossless-first)",
   "nav.compress": "Compress",
-  "compress.tagline": "Batch image compression (lossless / lossy)",
+  "compress.tagline": "Batch image / audio / video compression",
   "compress.settings.title": "Compression settings",
   "compress.backend": "Engine",
   "compress.backend.auto": "Auto",
@@ -358,7 +358,7 @@
   "compress.pause": "Pause",
   "compress.resume": "Resume",
   "compress.start": "Start",
-  "compress.subtitle": "Batch image compression (lossless / lossy)",
+  "compress.subtitle": "Batch image / audio / video compression",
   "convert.add.files": "Add files",
   "convert.add.folder": "Add folder",
   "convert.advanced.subtitle": "Fine-tune quality, resolution, bitrate and merge",
@@ -752,7 +752,7 @@
   "asr.service.running": "Server running: {url}",
   "asr.service.failed": "Failed to start: {msg}",
   "asr.service.no_model": "Server model {model} not downloaded yet. Download it under Model Manager first",
-  "asr.model.engine_unsupported": "HW Not Supported",
+  "asr.model.engine_unsupported": "Not runnable locally",
   "asr.elapsed.pending": "--:--",
   "asr.elapsed.prefix": "Elapsed",
   "asr.status.transcribing": "Transcribing…",
@@ -781,5 +781,7 @@
   "asr.settings.emotion": "Emotion recognition (emotion2vec)",
   "asr.settings.emotion.hint.off": "When enabled, each transcribed segment gets an emotion label (requires emotion2vec+large model, NVIDIA CUDA and the full funasr package).",
   "asr.settings.emotion.hint.on_ready": "Enabled. Using emotion2vec+large to label emotions in transcription.",
-  "asr.settings.emotion.hint.on_missing": "Enabled but emotion2vec+large is unavailable (not downloaded / non-NVIDIA CUDA / missing funasr). Confirm under Model Manager."
+  "asr.settings.emotion.hint.on_missing": "Enabled but emotion2vec+large is unavailable (not downloaded / non-NVIDIA CUDA / missing funasr). Confirm under Model Manager.",
+  "compress.output.title": "Compress output location",
+  "quick.compress.title.kind": "Create compress task - {kind}"
 }

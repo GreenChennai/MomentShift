@@ -98,7 +98,7 @@
   "convert.advanced.original": "原始",
   "convert.advanced.quality_hint": "数值越大质量越高、文件越大（默认 100，优先无损）",
   "nav.compress": "压缩",
-  "compress.tagline": "批量图片压缩（无损 / 有损）",
+  "compress.tagline": "批量图片 / 音频 / 视频压缩",
   "compress.settings.title": "压缩设置",
   "compress.backend": "压缩引擎",
   "compress.backend.auto": "自动选择",
@@ -358,7 +358,7 @@
   "compress.pause": "暂停",
   "compress.resume": "继续",
   "compress.start": "开始",
-  "compress.subtitle": "批量图片压缩（无损 / 有损）",
+  "compress.subtitle": "批量图片 / 音频 / 视频压缩",
   "convert.add.files": "添加文件",
   "convert.add.folder": "添加文件夹",
   "convert.advanced.subtitle": "微调质量、分辨率、码率与合并",
@@ -752,7 +752,7 @@
   "asr.service.running": "服务运行中：{url}",
   "asr.service.failed": "启动失败：{msg}",
   "asr.service.no_model": "服务模型 {model} 未下载，请先在「模型管理」下载",
-  "asr.model.engine_unsupported": "硬件不支持",
+  "asr.model.engine_unsupported": "暂不支持本地运行",
   "asr.elapsed.pending": "--:--",
   "asr.elapsed.prefix": "耗时",
   "asr.status.transcribing": "转写中…",
@@ -781,5 +781,7 @@
   "asr.settings.emotion": "情感识别（emotion2vec）",
   "asr.settings.emotion.hint.off": "开启后逐段转写结果附带情感标签（需下载 emotion2vec+large 模型、NVIDIA CUDA 与完整 funasr 包）。",
   "asr.settings.emotion.hint.on_ready": "已启用，正在使用 emotion2vec+large 模型为转写结果标注情感。",
-  "asr.settings.emotion.hint.on_missing": "已启用但 emotion2vec+large 模型不可用（未下载/非 NVIDIA CUDA 平台/缺 funasr 包），请在「模型管理」中确认后生效。"
+  "asr.settings.emotion.hint.on_missing": "已启用但 emotion2vec+large 模型不可用（未下载/非 NVIDIA CUDA 平台/缺 funasr 包），请在「模型管理」中确认后生效。",
+  "compress.output.title": "压缩输出位置",
+  "quick.compress.title.kind": "创建压缩任务 - {kind}"
 }

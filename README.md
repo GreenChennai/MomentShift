@@ -7,7 +7,7 @@
 </h1>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
-  <img src="https://img.shields.io/badge/version-0.8.17-brightgreen.svg" alt="Version 0.8.17">
+  <img src="https://img.shields.io/badge/version-0.8.18-brightgreen.svg" alt="Version 0.8.18">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/UI-PyQt6%20%2B%20Fluent--Widgets-238636.svg" alt="UI">
 </p>
@@ -46,13 +46,15 @@
 自动选择最优编码器与硬件加速，批量队列并发；
 处理完成后显示前后文件大小对比，结果路径可一键复制。
 
-### 2. 压缩（图片）
-内置多后端压缩引擎：
-- **PNG**：oxipng 无损最优；
-- **JPG**：jpegoptim 无损 / 有损；
+### 2. 压缩（图片 / 音频 / 视频）
+内置多后端压缩引擎，**按文件类型路由**（V0.8.18：拖入文件后按类型分别弹出「创建压缩任务」窗口，设置冻结进每个任务）：
+- **PNG**：oxipng 无损最优（可切 Pillow / FFmpeg）；
+- **JPG**：jpegoptim 无损 / 有损（可切 Pillow / FFmpeg）；
 - **GIF**：Gifsicle GIF 动图优化；
-- **其他格式**：Pillow 高质量重编码。
-默认走无损最优策略，无需调参。
+- **其他图片**：Pillow 高质量重编码（可切 FFmpeg）；
+- **视频 / 音频**：FFmpeg 压缩（视频/音频独立参数面板 + 质量预设）。
+默认走无损最优策略，无需调参；「压缩设置」已并入创建压缩任务窗口，
+主界面保留「输出位置」并与弹窗内保存位置双向同步。
 
 ### 3. 放大 / 插帧（AI）
 基于 **ncnn-vulkan** 的离线 AI 引擎，无需联网即可推理：

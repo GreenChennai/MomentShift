@@ -50,6 +50,17 @@ def _nvidia_runtime_available() -> bool:
     return False
 
 
+def nvidia_cuda_available() -> bool:
+    """本机是否具备 NVIDIA CUDA 能力（硬件 + 驱动层面）。
+
+    v0.8.18 Bug1：这是「硬件能力」探测（有 N 卡 + CUDA 驱动即 True），与
+    onnxruntime 是否内置 ``CUDAExecutionProvider`` 无关。模型清单里 ``hw_req``
+    为 ``nvidia_cuda`` 的条目应据此判定，而不是看运行时 provider —— 否则
+    RTX 5070 Ti 用户会因为随包 onnxruntime 是 CPU 版而被误报「硬件不支持」。
+    """
+    return _nvidia_runtime_available()
+
+
 def _encoder_declared(ffmpeg_path: str, encoder: str) -> bool:
     """轻量检查：这个 ffmpeg 是否**声明**支持该编码器。
 
@@ -346,6 +357,7 @@ def model_hw_satisfied(
     spec: dict,
     device: str = "cpu",
     ram_gb: float | None = None,
+    nvidia_ok: bool | None = None,
 ) -> tuple[bool, str | None]:
     """判断模型清单条目是否满足本机硬件要求。
 
@@ -354,21 +366,32 @@ def model_hw_satisfied(
             ``{"min_ram_gb": N}``；缺省表示无要求）。
         device: 当前 ASR 推理设备（``"cuda"`` / ``"cpu"``）。
         ram_gb: 物理内存 GB；None 表示未知（按不满足 min_ram 处理）。
+        nvidia_ok: 本机是否具备 NVIDIA CUDA 能力；None 时实时探测。
 
     Returns:
         ``(是否满足, 不满足原因或 None)``。原因用于界面展示，键值见
         ``asr.model.hw_reason.*``。
+
+    Notes:
+        v0.8.18 Bug1：``nvidia_cuda`` 要求按「硬件是否具备 NVIDIA CUDA 能力」
+        判定（``nvidia_cuda_available()``），而不是按 onnxruntime 是否提供
+        CUDA EP。随包 onnxruntime 是 CPU 版，若按后者判定，RTX 5070 Ti 这类
+        真实 N 卡用户会被误报「硬件不支持」。``device == "cuda"`` 仍视为满足，
+        兼容旧语义与单测（显式传入 cuda 设备时无需求证 nvidia_ok）。
     """
     hw_req = spec.get("hw_req")
     if not hw_req:
         return True, None
+    if nvidia_ok is None:
+        nvidia_ok = _nvidia_runtime_available()
+    cuda_ok = device == "cuda" or bool(nvidia_ok)
     if isinstance(hw_req, str) and hw_req == "nvidia_cuda":
-        if device == "cuda":
+        if cuda_ok:
             return True, None
         return False, "nvidia_cuda"
     if isinstance(hw_req, dict):
         # v0.8.9：支持组合条件 {"nvidia_cuda": True, "min_ram_gb": N}
-        if hw_req.get("nvidia_cuda") and device != "cuda":
+        if hw_req.get("nvidia_cuda") and not cuda_ok:
             return False, "nvidia_cuda"
         need = float(hw_req.get("min_ram_gb") or 0)
         if need > 0 and (ram_gb is None or ram_gb < need):

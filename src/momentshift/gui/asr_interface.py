@@ -300,11 +300,12 @@ class _FunasrModelRow(QWidget):
     def _hw_reason_text(self) -> str:
         """硬件不满足时的可读原因（i18n）。
 
-        v0.8.14 #3：NVIDIA CUDA 不满足时复用已有的「硬件不支持」键，
-        不再单独造「需 NVIDIA CUDA GPU」文案（重复造轮子）。
+        v0.8.18 Bug1：nvidia_cuda 不满足时展示「需 NVIDIA CUDA GPU」专用键，
+        不再复用 engine_unsupported（后者是「本地引擎暂不支持」的语义，文案
+        改为「暂不支持本地运行」，两者混淆会让 N 卡用户看到错误的「硬件不支持」）。
         """
         if self._hw_reason == "nvidia_cuda":
-            return tr("asr.model.engine_unsupported")
+            return tr("asr.model.hw_reason.nvidia_cuda")
         if self._hw_reason == "min_ram_gb":
             need = self.spec.get("hw_req", {}).get("min_ram_gb", 0)
             return tr("asr.model.hw_reason.min_ram_gb", gb=int(need))
