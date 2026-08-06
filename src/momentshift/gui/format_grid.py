@@ -56,6 +56,7 @@ class FormatCard(QWidget):
         self.category = category
         self.fmt = fmt
         self._selected = False
+        self._hover = False  # V0.8.19 优化8：悬停反馈
         self.setFixedSize(74, 74)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -75,12 +76,16 @@ class FormatCard(QWidget):
         三元，深色分支自 v0.7.x 移除深色主题后已是死代码；颜色也全是魔法数。
         改用 theme token（``border_hover()`` / ``text_secondary()``，与
         原来的 (200,200,200)/(90,90,90) 视觉基本一致）。
+
+        V0.8.19 优化8：未选中且悬停时边框提为主色，给鼠标经过明确反馈。
         """
         if self._selected:
             accent = accent_color()
             # 半透明主色填充 + 白字，避免变成一整块实心色导致格式名看不清。
             accent.setAlpha(180)
             return accent, QColor(255, 255, 255)
+        if self._hover:
+            return accent_color(), QColor(text_secondary())
         return QColor(border_hover()), QColor(text_secondary())
 
     def paintEvent(self, event):
@@ -94,7 +99,8 @@ class FormatCard(QWidget):
             painter.setPen(QPen(accent_color(), 2))
         else:
             painter.setBrush(QBrush(component_bg()))
-            painter.setPen(QPen(fill, 1.5))
+            # 悬停时边框加粗与选中态一致（V0.8.19 优化8）
+            painter.setPen(QPen(fill, 2 if self._hover else 1.5))
         painter.drawRoundedRect(QRect(1, 1, w - 2, h - 2), RADIUS, RADIUS)
 
         painter.setPen(text)
@@ -111,6 +117,17 @@ class FormatCard(QWidget):
         """按下即发出点击信号，不等待释放，交互更跟手。"""
         self.clicked.emit(self.category, self.fmt)
         super().mousePressEvent(event)
+
+    def enterEvent(self, event):
+        """V0.8.19 优化8：悬停反馈（边框提为主色）。"""
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
 
 
 class FormatGrid(QWidget):
