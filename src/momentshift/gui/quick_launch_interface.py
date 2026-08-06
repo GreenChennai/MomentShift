@@ -19,10 +19,9 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QObject, QTimer
 from PyQt6.QtGui import QTextDocument
-from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
-    CaptionLabel,
     SettingCardGroup,
     StrongBodyLabel,
     SwitchSettingCard,
@@ -35,6 +34,7 @@ from ..core import quick_launch
 from ..core.config import cfg
 from ..core.logger import get_logger
 from ..i18n.translator import tr
+from . import tokens
 from .base import InterfaceBase
 from .theme import (
     CARD_MARGIN,
@@ -101,8 +101,10 @@ class _StatusCard(ThemedCard):
             hb = QHBoxLayout(row)
             hb.setContentsMargins(0, 4, 0, 4)
             hb.setSpacing(8)
-            dot = CaptionLabel("●")
-            dot.setFixedWidth(16)
+            # V0.8.19 优化7：与其他页（关于/引擎卡/ASR）一致，用 QLabel 圆点
+            # 而非文本「●」字符（避免字体差异导致渲染大小不一）
+            dot = QLabel()
+            dot.setFixedSize(8, 8)
             label = BodyLabel(task_labels.get(t, t))
             hb.addWidget(dot)
             hb.addWidget(label, 1)
@@ -117,7 +119,7 @@ class _StatusCard(ThemedCard):
             registered = quick_launch.is_context_menu_registered(t)
             dot, _label = self._status_rows[t]
             color = success_color() if registered else danger_color()
-            dot.setStyleSheet(f"color: {color.name()}; font-size: 14px;")
+            dot.setStyleSheet(tokens.dot_qss(color.name(), 4))
 
     def retranslate(self):
         self.titleLbl.setText(tr("quicklaunch.status.title"))
