@@ -845,7 +845,6 @@ class UpscaleInterface(InterfaceBase):
             label = full_label if len(full_label) <= 32 else full_label[:31] + "…"
             self.modelCombo.addItem(label)
             self._engine_map[label] = e.eid
-            self._engine_map[label] = e.eid
         if self._engine_id not in [e.eid for e in installed]:
             self._engine_id = installed[0].eid
         for i, e in enumerate(installed):
