@@ -109,7 +109,6 @@ class ConvertSetupDialog(QDialog):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        apply_text(sep, muted_text())
         root.addWidget(sep)
 
         body = QHBoxLayout()
@@ -160,9 +159,9 @@ class ConvertSetupDialog(QDialog):
         self.stagingLayout.addStretch(1)
         self.stagingScroll.setWidget(self.stagingList)
         left_lay.addWidget(self.stagingScroll, 1)
-        self.clearBtn = QPushButton(tr("convert.clear"))
+        # V0.8.19 优化3：清空是次要操作，与三大模块队列清空按钮一致用 ghost 样式
+        self.clearBtn = ghost_btn(tr("convert.clear"))
         self.clearBtn.clicked.connect(self._clear_all)
-        self.clearBtn.setStyleSheet(tokens.accent_button_qss())
         left_lay.addWidget(self.clearBtn)
         body.addWidget(left_card)
 
