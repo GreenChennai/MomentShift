@@ -102,9 +102,9 @@ class FormatCard(QWidget):
         font.setPointSize(13)
         font.setBold(True)
         painter.setFont(font)
-        # 统一显示成「.Png」这种带点前缀 + 首字母大写的样式，
-        # 比纯小写更容易一眼看出这是扩展名
-        display = "." + self.fmt.capitalize()
+        # 统一显示成「.PNG」这种带点前缀 + 全大写的样式，与队列 FormatPill /
+        # ext_badge 的大小写一致（V0.8.19 优化4），避免同一种格式两种写法
+        display = "." + self.fmt.upper()
         painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, display)
 
     def mousePressEvent(self, event):
