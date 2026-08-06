@@ -2,7 +2,8 @@
 
 职责边界：
 - 做：按日期把带时间戳的日志写入可执行文件旁的 logs/ 目录（开发期为仓库根），
-  仅保留最近 7 天；提供 get_logger 工厂。
+  单文件超过 :data:`LOG_MAX_BYTES` 按体积滚动，只保留最近 7 天；
+  提供 get_logger 工厂。
 - 不做：不引入 Qt（保证任意模块可安全导入）；不负责日志的上报/展示。
 
 依赖：core/platform（目录解析）；被依赖：全项目。
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import glob
 import logging
+import logging.handlers
 import os
 import sys
 import time
@@ -23,6 +25,14 @@ from .platform import writable_base_dir
 
 _LOG = logging.getLogger("momentshift")
 _configured = False
+
+# 单个日志文件的体积上限与滚动份数（V0.8.21 E2）。
+# 为什么必须限：日志级别是 DEBUG，ffmpeg 的每行非进度输出都会落盘。批量转几百个
+# 视频时，"按天一个文件 + 只清 7 天前的" 挡不住**当天**这一个文件涨到几百 MB ——
+# 保留策略管的是天数，管不了单日体量。8 MB × 4 份 ≈ 32 MB 封顶，够排查最近一次
+# 故障，也不会把用户磁盘吃掉。
+LOG_MAX_BYTES = 8 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
 
 
 def app_root() -> Path:
@@ -46,10 +56,15 @@ def _cleanup_old_logs(days: int = 7) -> None:
     Notes:
         单个文件删除失败不影响其余文件，整体失败也不向上抛——日志清理不该
         阻断应用启动。
+
+        V0.8.21 E2：连 ``*.log.1`` 这类滚动备份一起清。只 glob ``*.log`` 的话，
+        滚动出来的备份永远匹配不上，会在 logs/ 里一直堆着。
     """
     try:
         cutoff = time.time() - days * 86400
-        for f in glob.glob(str(log_dir() / "*.log")):
+        d = log_dir()
+        stale = glob.glob(str(d / "*.log")) + glob.glob(str(d / "*.log.*"))
+        for f in stale:
             try:
                 if os.path.getmtime(f) < cutoff:
                     os.remove(f)
@@ -90,7 +105,16 @@ def init_logging(level: int = logging.DEBUG) -> None:
     )
 
     try:
-        fh = logging.FileHandler(logfile, encoding="utf-8", errors="replace")
+        # V0.8.21 E2：换成按体积滚动。delay=True 让文件在第一条日志真正写出时
+        # 才创建，避免「只是导入了模块」就在磁盘上留下一个空日志。
+        fh = logging.handlers.RotatingFileHandler(
+            logfile,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
+            errors="replace",
+            delay=True,
+        )
         fh.setLevel(level)
         fh.setFormatter(fmt)
         _LOG.addHandler(fh)

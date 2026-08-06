@@ -51,6 +51,7 @@ from ..core import compressor, engines as eng_mod
 from ..core.config import cfg
 from ..core.logger import get_logger
 from ..core.output_path import unique_output_path
+from ..core.ffmpeg_progress import format_eta
 from ..core.qt_compat import QApplication, Signal
 from ..core.task_pool import PoolItem, ProgressCb, TaskPool, TaskState
 from ..i18n.translator import tr
@@ -336,6 +337,7 @@ class UpscaleItemWidget(ThemedCard):
         self._status = "pending"
         # 调整1：耗时计时
         self._start_time = None
+        self._run_pct = 0
         self._elapsed_timer = QTimer(self)
         self._elapsed_timer.setInterval(1000)
         self._elapsed_timer.timeout.connect(self._on_elapsed_tick)
@@ -391,6 +393,11 @@ class UpscaleItemWidget(ThemedCard):
 
     def set_progress(self, pct: int):
         self.prog.set_value(pct)
+        self._run_pct = int(pct)
+        # v0.8.22 Bug3-B：进度条动了，详情行的「剩余 X / 已用 Y」也要跟着动，
+        # 否则进度条和文字长期对不上。
+        if self._status == "running":
+            self._refresh_live()
 
     def set_status(self, status: str, saved: int = 0, detail: str = ""):
         self._status = status
@@ -402,7 +409,8 @@ class UpscaleItemWidget(ThemedCard):
 
                 self._start_time = _time.monotonic()
             self._elapsed_timer.start()
-            self.detailLbl.setText(tr("upscale.status.upscaling"))
+            # v0.8.22 Bug3-B：运行中详情行改为实时「剩余 X / 已用 Y」。
+            self._refresh_live()
         else:
             self._elapsed_timer.stop()
             if status in ("done", "failed"):
@@ -420,6 +428,32 @@ class UpscaleItemWidget(ThemedCard):
 
     def _on_elapsed_tick(self):
         self._update_elapsed_text()
+        # v0.8.22 Bug3-B：每秒刷新一次已用时间，顺带让详情行 ETA 跟着走。
+        if self._status == "running":
+            self._refresh_live()
+
+    def _refresh_live(self) -> None:
+        """运行态重绘详情行：``剩余 {rem} / 已用 {used}``。
+
+        ETA 由已用时间与当前百分比推算（放大引擎不吐 ffmpeg 进度快照，
+        但会回报 0~100 真实进度，够算剩余时间）。终态由 :meth:`set_status` 独占。
+        """
+        import time as _time
+
+        if self._start_time is None:
+            return
+        elapsed = max(0, int(_time.monotonic() - self._start_time))
+        pct = self._run_pct
+        # 进度为 0 或还没跑起来时不算 ETA（除零 / 无限大都不合理）。
+        if pct <= 0:
+            self.detailLbl.setText(
+                tr("convert.queue.time", rem="--", used=format_eta(elapsed))
+            )
+            return
+        eta = int(elapsed * (100 - pct) / pct)
+        self.detailLbl.setText(
+            tr("convert.queue.time", rem=format_eta(eta), used=format_eta(elapsed))
+        )
 
     def _update_elapsed_text(self):
         import time as _time

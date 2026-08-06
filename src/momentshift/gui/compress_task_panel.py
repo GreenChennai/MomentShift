@@ -303,7 +303,11 @@ class CompressTaskPanel(QWidget):
         self.suffixEdit = QLineEdit(self._suffix)
         self.suffixEdit.setPlaceholderText(tr("compress.output.suffix_hint"))
         self.suffixEdit.textChanged.connect(self._on_suffix_changed)
-        olv.addWidget(field_row(tr("compress.output.suffix"), self.suffixEdit))
+        # V0.8.21 Bug2：必须持有整行的引用。field_row 产出的是「标签 + 输入框」
+        # 一整行，只隐藏 suffixEdit 会把「文件名后缀」这个标签单独留在行里，
+        # 被布局居中显示成一句莫名其妙的话。
+        self._suffixRow = field_row(tr("compress.output.suffix"), self.suffixEdit)
+        olv.addWidget(self._suffixRow)
         self.folderEdit = QLineEdit(self._folder)
         self.folderEdit.setReadOnly(True)
         self.browseBtn = icon_btn(FIF.FOLDER, self)
@@ -370,7 +374,9 @@ class CompressTaskPanel(QWidget):
         self.outputSwitch.setText(
             tr("compress.output.same") if same else tr("compress.output.fixed")
         )
-        self.suffixEdit.setVisible(same)
+        # 整行显隐，与 _folderRow 对称：后缀只在「保存在源文件旁」时有意义，
+        # 切到「指定文件夹」后连标签一起收掉。
+        self._suffixRow.setVisible(same)
         self._folderRow.setVisible(not same)
 
     def _pick_output(self):
@@ -769,6 +775,12 @@ class CompressTaskPanel(QWidget):
             ctl = self._make_combo(
                 mapping, grp.get(pkey, spec.get("default")), lambda v: grp.__setitem__(pkey, v)
             )
+            # V0.8.21 Bug1：视频编码器下拉必须过硬件门禁。此前静态列出
+            # h264_nvenc / hevc_nvenc，AMD 与 Intel 用户选中后要等到真跑
+            # ffmpeg 才炸 "Could not open encoder"。探测走后台线程 + 缓存，
+            # 不阻塞对话框弹出；结果回来再把用不了的项置灰。
+            if pkey == "ff_v_encoder":
+                self._gate_encoder_combo(ctl)
             return ctl, (lambda v: select_combo_value(ctl, v))
         lo = int(spec.get("min", 0))
         hi = int(spec.get("max", 100))
@@ -786,6 +798,22 @@ class CompressTaskPanel(QWidget):
         row.addWidget(slider, 1)
         row.addWidget(spin)
         return row, (lambda v: (slider.setValue(int(v)), spin.setValue(int(v))))
+
+    def _gate_encoder_combo(self, combo) -> None:
+        """给视频编码器下拉框挂上硬件门禁（异步，结果回来再置灰）。
+
+        Args:
+            combo: 由 ``_make_combo`` 造出的、带 ``._mapping`` 的下拉框。
+        """
+        from .hw_probe import apply_encoder_gate, probe_async
+
+        def _apply(result: dict):
+            try:
+                apply_encoder_gate(combo, result)
+            except RuntimeError:
+                pass  # 静默原因：探测返回时面板可能已关闭销毁
+
+        probe_async(_apply)
 
     def _on_ff_profile(self, category: str, preset: str):
         grp = self._tool_opts["ffmpeg"]

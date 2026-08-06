@@ -152,6 +152,12 @@ class Config(QConfig):
     # - asrServerModel：服务端推理用的模型 id（asr 类且 engine=True）。
     asrServerPort = RangeConfigItem("Asr", "ServerPort", 8000, RangeValidator(1024, 65535))
     asrServerModel = ConfigItem("Asr", "ServerModel", "paraformer-large")
+    # v0.8.22 Bug#2：服务模式独立的三项增强开关，与「ASR 设置」里本地推理的
+    # 同名开关**互不影响**（本地界面转写走 asrStructured/asrPunc/asrEmotion，
+    # HTTP 服务端转写走这三个）。可用性判定复用同一套模型/硬件探测。
+    asrServerStructured = ConfigItem("Asr", "ServerStructured", False)
+    asrServerPunc = ConfigItem("Asr", "ServerPunc", False)
+    asrServerEmotion = ConfigItem("Asr", "ServerEmotion", False)
 
 
 cfg = Config()

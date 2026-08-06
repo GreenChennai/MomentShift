@@ -243,12 +243,13 @@ class AdvancedPanel(QWidget):
                 (tr("advanced.compression.jpegoptim"), "jpegoptim"),
                 (tr("advanced.compression.gifsicle"), "gifsicle"),
                 (tr("advanced.compression.pillow"), "pillow"),
+                (tr("advanced.compression.ffmpeg"), "ffmpeg"),
             ],
             comp.get("backend", "auto"),
             lambda v: comp.__setitem__("backend", v),
         )
         self._backend_combo = backend
-        self._backend_order = ["auto", "oxipng", "jpegoptim", "gifsicle", "pillow"]
+        self._backend_order = ["auto", "oxipng", "jpegoptim", "gifsicle", "pillow", "ffmpeg"]
         fr = field_row(tr("advanced.compression.backend"), backend, label_width=80)
         self._add_help(fr, "advanced.help.backend")
         self.vbox.addWidget(fr)
@@ -511,12 +512,105 @@ class AdvancedPanel(QWidget):
         gs_l.addWidget(fr)
         self.vbox.addWidget(gs_grp)
 
+        # -- FFmpeg 参数组（v0.8.22 UI#2）-------------------------------
+        # 压缩程序下拉新增「FFmpeg 压缩」。只整合图片类别的参数行；
+        # 「输出位置 / 文件名后缀 / 输出文件夹」三件套属于「创建压缩任务」
+        # 面板的定位逻辑，转换流程的图片压缩永远就地替换，这里不整合。
+        ff_grp, ff_l = self._param_group()
+        from ..core import compressor as _compressor
+
+        ff_params = _compressor.FFMPEG_PARAMS_BY_KIND.get("image", {})
+        ff_profile_key = "ff_i_profile"
+        ff_setters: dict = {}
+
+        def _ff_profile_mapping():
+            presets = _compressor.FFMPEG_PRESETS.get("image", {})
+            mapping = [(tr(f"ffmpeg.profile.{name}"), name) for name in presets.keys()]
+            mapping.append((tr("ffmpeg.profile.custom"), "custom"))
+            return mapping
+
+        def _on_ff_profile(preset: str):
+            comp[ff_profile_key] = preset
+            if preset == "custom":
+                return
+            overrides = _compressor.ffmpeg_preset_values("image", preset)
+            for k, v in overrides.items():
+                comp[k] = v
+                setter = ff_setters.get(k)
+                if setter:
+                    setter(v)
+
+        prof = _combo(
+            _ff_profile_mapping(),
+            comp.get(ff_profile_key, "balanced"),
+            _on_ff_profile,
+        )
+        fr = field_row(tr("ffmpeg.ff_i_profile"), prof)
+        self._add_help(fr, "ffmpeg.help.ff_i_profile")
+        ff_l.addWidget(fr)
+
+        for pkey, spec in ff_params.items():
+            if pkey == ff_profile_key:
+                continue
+            t = spec.get("type")
+            if t == "bool":
+                ctl = SwitchButton()
+                ctl.setChecked(bool(comp.get(pkey, spec.get("default", False))))
+                ctl.checkedChanged.connect(
+                    lambda b, k=pkey: comp.__setitem__(k, b)
+                )
+                ff_setters[pkey] = lambda v, c=ctl: c.setChecked(bool(v))
+                fr = field_row(tr(f"ffmpeg.{pkey}"), ctl)
+            elif t == "choice":
+                vals = spec.get("values", [])
+                labels = spec.get("labels") or {}
+                mapping = [
+                    (labels.get(v, _compressor.FFMPEG_VALUE_LABELS.get(v, v)), v)
+                    for v in vals
+                ]
+                ctl = _combo(
+                    mapping,
+                    comp.get(pkey, spec.get("default")),
+                    lambda v, k=pkey: comp.__setitem__(k, v),
+                )
+                ff_setters[pkey] = lambda v, c=ctl: select_combo_value(c, v)
+                fr = field_row(tr(f"ffmpeg.{pkey}"), ctl)
+            else:
+                lo, hi = int(spec.get("min", 0)), int(spec.get("max", 100))
+                slider = QSlider(Qt.Orientation.Horizontal)
+                slider.setRange(lo, hi)
+                slider.setValue(int(comp.get(pkey, spec.get("default", lo)) or lo))
+                spin = QSpinBox()
+                spin.setRange(lo, hi)
+                spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+                spin.setValue(slider.value())
+                slider.valueChanged.connect(
+                    lambda v, k=pkey, s=spin: (comp.__setitem__(k, v), s.setValue(v))
+                )
+                spin.valueChanged.connect(
+                    lambda v, k=pkey, s=slider: (comp.__setitem__(k, v), s.setValue(v))
+                )
+                row = QHBoxLayout()
+                row.addWidget(slider, 1)
+                row.addWidget(spin)
+
+                def _set_int(v, s=slider, sp=spin):
+                    s.setValue(int(v))
+                    sp.setValue(int(v))
+
+                ff_setters[pkey] = _set_int
+                fr = field_row(tr(f"ffmpeg.{pkey}"), row)
+            self._add_help(fr, f"ffmpeg.help.{pkey}")
+            ff_l.addWidget(fr)
+        self.vbox.addWidget(ff_grp)
+
         # -- 按后端显示对应参数组 ----------------------------------------
         self._backend_groups = {
             "oxipng": oxi_grp,
             "jpegoptim": jo_grp,
             "gifsicle": gs_grp,
             "pillow": pil_grp,
+            "ffmpeg": ff_grp,
         }
 
         def _sync(val: str):
@@ -541,51 +635,26 @@ class AdvancedPanel(QWidget):
         return grp, lay
 
     def _add_video(self):
-        """v0.4.2：视频参数直接展开。v0.7.18：分辨率选项按视频文件动态生成。"""
-        adv = advanced.adv["video"]
-        res = _combo(
-            _opt_list(advanced.RESOLUTIONS),
-            adv.get("resolution", "original"),
-            lambda v: adv.__setitem__("resolution", v),
-        )
-        self._res_combo = res  # 保存引用供 set_video_context 动态更新
-        res_row = field_row(tr("advanced.resolution"), res, label_width=80)
-        self.vbox.addWidget(res_row)
-        fps = _combo(
-            _opt_list(advanced.FPS_OPTIONS),
-            adv.get("fps", "original"),
-            lambda v: adv.__setitem__("fps", v),
-        )
-        fps_row = field_row(tr("advanced.fps"), fps, label_width=80)
-        self.vbox.addWidget(fps_row)
-        br = _combo(
-            _opt_list(advanced.VIDEO_BITRATES),
-            adv.get("bitrate", "original"),
-            lambda v: adv.__setitem__("bitrate", v),
-        )
-        br_row = field_row(tr("advanced.bitrate"), br, label_width=80)
-        self.vbox.addWidget(br_row)
-        codec = _combo(
-            [
-                (tr("advanced.original"), "original"),
-                ("H.264", "H.264"),
-                ("H.265", "H.265"),
-                ("copy", "copy"),
-            ],
-            adv.get("codec", "original"),
-            lambda v: adv.__setitem__("codec", v),
-        )
-        codec_row = field_row(tr("advanced.codec"), codec, label_width=80)
-        self.vbox.addWidget(codec_row)
-        merge = SwitchButton()
-        merge.setChecked(bool(adv.get("merge", False)))
-        merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
-        # label_width 需容纳 7 个汉字，否则「合并为单个文件」显示不全
-        merge_row = field_row(tr("advanced.merge"), merge, label_width=132)
-        self.vbox.addWidget(merge_row)
+        """视频高级设置。
 
-        # --- v0.8.3 仅提取音频：开关 + 提示 + 音频格式下拉 ---
-        # 启用后不再转换视频画面，只输出所选格式的音频（见 presets.build_args）。
+        V0.8.21 功能调整 1：原来的「分辨率 / 帧率 / 码率 / 编码器」四个下拉
+        是一套只在转换阶段拼命令行的简化参数，与「创建压缩任务-视频」里的
+        FFmpeg 压缩参数各说各话——同一件事两套 UI、两套默认值、两套预设。
+        现在整体换成后者（质量预设 + 完整 FFmpeg 参数），写入
+        ``adv["video"]["compress"]``，在转换后的压缩阶段生效。
+
+        保留不动的三项（产品要求）：合并为单个文件、仅提取音频、音频格式。
+        不含「输出位置 / 文件名后缀 / 输出文件夹」——那是压缩任务对话框的
+        职责，转换流程的输出位置由转换界面统一决定。
+        """
+        adv = advanced.adv["video"]
+        # v0.7.18 的动态分辨率下拉随参数一起下线；置空防止 _refresh_video_resolution
+        # 摸到上一次 refresh 留下的野指针（控件已 deleteLater）。
+        self._res_combo = None
+
+        # --- v0.8.3 仅提取音频 + 合并为单个文件：水平对齐（仅提取音频在前） ---
+        # 启用「仅提取音频」后不再转换视频画面，只输出所选格式的音频
+        # （见 presets.build_args），视频压缩参数整组失效。
         extract = SwitchButton()
         extract.setChecked(bool(adv.get("extract_audio", False)))
         extract.checkedChanged.connect(
@@ -593,7 +662,20 @@ class AdvancedPanel(QWidget):
         )
         self._extract_switch = extract
         extract_row = field_row(tr("advanced.video.extract_audio"), extract, label_width=132)
-        self.vbox.addWidget(extract_row)
+
+        merge = SwitchButton()
+        merge.setChecked(bool(adv.get("merge", False)))
+        merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
+        # label_width 需容纳 7 个汉字，否则「合并为单个文件」显示不全
+        merge_row = field_row(tr("advanced.merge"), merge, label_width=132)
+
+        # v0.8.22 UI#1：两个开关水平并排（仅提取音频在前），末尾 stretch 保持整体左对齐
+        two = QHBoxLayout()
+        two.setSpacing(24)
+        two.addWidget(extract_row)
+        two.addWidget(merge_row)
+        two.addStretch(1)
+        self.vbox.addLayout(two)
 
         hint = CaptionLabel(tr("advanced.video.extract_audio.hint"))
         hint.setWordWrap(True)
@@ -607,12 +689,17 @@ class AdvancedPanel(QWidget):
             lambda v: adv.__setitem__("audio_format", v),
         )
         self._audio_fmt_combo = fmt
+        # 「音频格式」在「仅提取音频 / 合并为单个文件」下方、整体左对齐
         fmt_row = field_row(tr("advanced.video.audio_format"), fmt, label_width=132)
         self.vbox.addWidget(fmt_row)
         self._audio_fmt_row = fmt_row
 
-        # 提取音频时视频参数（分辨率/帧率/码率/编码器）不再生效，整行禁用
-        self._video_param_rows = [res_row, fps_row, br_row, codec_row]
+        # --- V0.8.21：FFmpeg 视频压缩参数 ---
+        ff_grp = self._add_ff_compress("video", self._ff_comp(adv, "video"))
+        self.vbox.addWidget(ff_grp)
+
+        # 「仅提取音频」时输出的是音频文件，视频压缩参数整组失效
+        self._video_param_rows = [ff_grp]
         self._sync_extract_audio()
 
     def _sync_extract_audio(self):
@@ -628,35 +715,148 @@ class AdvancedPanel(QWidget):
                 row.setEnabled(not enabled)
 
     def _add_audio(self):
-        """v0.4.2：音频参数直接展开。"""
+        """音频高级设置。
+
+        V0.8.21 功能调整 2：同 :meth:`_add_video`，把「码率 / 采样率 / 声道」
+        三个简化下拉换成「创建压缩任务-音频」里那套 FFmpeg 音频压缩参数，
+        只保留「合并为单个文件」。
+        """
         adv = advanced.adv["audio"]
-        br = _combo(
-            _opt_list(advanced.AUDIO_BITRATES),
-            adv.get("bitrate", "original"),
-            lambda v: adv.__setitem__("bitrate", v),
-        )
-        self.vbox.addWidget(field_row(tr("advanced.bitrate"), br, label_width=80))
-        sr = _combo(
-            _opt_list(advanced.SAMPLE_RATES),
-            adv.get("sample_rate", "original"),
-            lambda v: adv.__setitem__("sample_rate", v),
-        )
-        self.vbox.addWidget(field_row(tr("advanced.sample_rate"), sr, label_width=80))
-        ch = _combo(
-            [
-                (tr("advanced.original"), "original"),
-                (tr("advanced.channels.stereo"), "stereo"),
-                (tr("advanced.channels.mono"), "mono"),
-            ],
-            adv.get("channels", "original"),
-            lambda v: adv.__setitem__("channels", v),
-        )
-        self.vbox.addWidget(field_row(tr("advanced.channels"), ch, label_width=80))
         merge = SwitchButton()
         merge.setChecked(bool(adv.get("merge", False)))
         merge.checkedChanged.connect(lambda b: adv.__setitem__("merge", b))
         # label_width 需容纳 7 个汉字
         self.vbox.addWidget(field_row(tr("advanced.merge"), merge, label_width=132))
+
+        # --- V0.8.21：FFmpeg 音频压缩参数 ---
+        self.vbox.addWidget(self._add_ff_compress("audio", self._ff_comp(adv, "audio")))
+
+    # --- V0.8.21：FFmpeg 压缩参数渲染（与 compress_task_panel 同源） ---
+    @staticmethod
+    def _ff_comp(adv: dict, kind: str) -> dict:
+        """取出（必要时补建）该分类的 ``compress`` 子字典。
+
+        ``adv`` 是 :mod:`core.advanced` 里那份实时存储，控件直接就地改它；
+        入队时由 ``advanced.snapshot()`` 深拷贝，因此后续改动不会串台到
+        已入队任务。旧配置里可能没有 ``compress`` 键（或是别的类型），
+        这里统一补成一份带默认值的新字典。
+        """
+        comp = adv.get("compress")
+        if not isinstance(comp, dict) or not comp:
+            comp = advanced.ffmpeg_param_defaults(kind)
+            adv["compress"] = comp
+        return comp
+
+    def _add_ff_compress(self, kind: str, comp: dict) -> QWidget:
+        """按 ``PARAMS_BY_KIND`` 声明式渲染一组 FFmpeg 压缩参数。
+
+        Args:
+            kind: ``"video"`` / ``"audio"``。
+            comp: 目标存储字典（控件就地写入）。
+
+        Returns:
+            承载「质量预设 + 各参数行」的容器控件，由调用方塞进 vbox。
+
+        Notes:
+            与 :meth:`gui.compress_task_panel.CompressTaskPanel._build_ffmpeg`
+            共用同一份参数表 / 预设表 / i18n key，二者永远不会漂移。
+        """
+        from ..core import compressor
+
+        params = compressor.FFMPEG_PARAMS_BY_KIND.get(kind, {})
+        profile_key = {"video": "ff_v_profile", "audio": "ff_a_profile"}[kind]
+        grp, gl = self._param_group()
+
+        setters: dict = {}
+        mapping = [(tr(f"ffmpeg.profile.{n}"), n) for n in compressor.FFMPEG_PRESETS.get(kind, {})]
+        mapping.append((tr("ffmpeg.profile.custom"), "custom"))
+        prof = _combo(
+            mapping,
+            comp.get(profile_key, "balanced"),
+            lambda v: self._apply_ff_profile(kind, comp, profile_key, setters, v),
+        )
+        gl.addWidget(field_row(tr("ffmpeg.quality_preset"), prof, label_width=110))
+
+        for pkey, spec in params.items():
+            if pkey == profile_key:
+                continue
+            ctl, setter = self._build_ff_param(comp, pkey, spec)
+            fr = field_row(tr(f"ffmpeg.{pkey}"), ctl, label_width=110)
+            self._add_help(fr, f"ffmpeg.help.{pkey}")
+            gl.addWidget(fr)
+            setters[pkey] = setter
+        return grp
+
+    def _build_ff_param(self, comp: dict, pkey: str, spec: dict):
+        """按参数声明造一个控件，返回 ``(控件或布局, 回填函数)``。
+
+        回填函数供「质量预设」切换时把预设值刷回 UI；它只动控件，
+        数据由 :meth:`_apply_ff_profile` 直接写 ``comp``。
+        """
+        from ..core import compressor
+
+        t = spec.get("type")
+        if t == "bool":
+            ctl = SwitchButton()
+            ctl.setChecked(bool(comp.get(pkey, spec.get("default", False))))
+            ctl.checkedChanged.connect(lambda b: comp.__setitem__(pkey, b))
+            return ctl, (lambda v: ctl.setChecked(bool(v)))
+        if t == "choice":
+            vals = spec.get("values", [])
+            ov = spec.get("labels") or {}
+            mapping = [(ov.get(v, compressor.FFMPEG_VALUE_LABELS.get(v, v)), v) for v in vals]
+            ctl = _combo(
+                mapping,
+                comp.get(pkey, spec.get("default")),
+                lambda v: comp.__setitem__(pkey, v),
+            )
+            # V0.8.21 Bug1：与压缩任务对话框一致，视频编码器要过硬件门禁，
+            # 否则 AMD/Intel 用户选了 *_nvenc 要等真跑 ffmpeg 才报
+            # "Could not open encoder"。探测走后台线程 + 进程内缓存。
+            if pkey == "ff_v_encoder":
+                self._gate_encoder_combo(ctl)
+            return ctl, (lambda v: select_combo_value(ctl, v))
+        lo = int(spec.get("min", 0))
+        hi = int(spec.get("max", 100))
+        cur = int(comp.get(pkey, spec.get("default", lo)) or lo)
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(lo, hi)
+        slider.setValue(cur)
+        spin = QSpinBox()
+        spin.setRange(lo, hi)
+        spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        spin.setValue(cur)
+        slider.valueChanged.connect(lambda v: (comp.__setitem__(pkey, v), spin.setValue(v)))
+        spin.valueChanged.connect(lambda v: (comp.__setitem__(pkey, v), slider.setValue(v)))
+        row = QHBoxLayout()
+        row.addWidget(slider, 1)
+        row.addWidget(spin)
+        return row, (lambda v: (slider.setValue(int(v)), spin.setValue(int(v))))
+
+    def _gate_encoder_combo(self, combo) -> None:
+        """给视频编码器下拉挂硬件门禁（异步，结果回来再置灰不可用项）。"""
+        from .hw_probe import apply_encoder_gate, probe_async
+
+        def _apply(result: dict):
+            try:
+                apply_encoder_gate(combo, result)
+            except RuntimeError:
+                log.debug("编码器门禁回调时控件已销毁，忽略")
+
+        probe_async(_apply)
+
+    def _apply_ff_profile(self, kind: str, comp: dict, profile_key: str, setters: dict, preset):
+        """切换质量预设：写回预设覆盖值并同步 UI；``custom`` 只记选择。"""
+        from ..core import compressor
+
+        comp[profile_key] = preset
+        if preset == "custom":
+            return
+        for k, v in compressor.ffmpeg_preset_values(kind, preset).items():
+            comp[k] = v
+            fn = setters.get(k)
+            if fn:
+                fn(v)
 
     # --- 状态更新 ---
     def get_args(self, category: str, target: str = "") -> list[str]:
@@ -672,55 +872,15 @@ class AdvancedPanel(QWidget):
         return advanced.build_advanced_args(category, target, advanced.get(category))
 
     def set_video_context(self, video_paths: list[str]):
-        """v0.7.18：设置视频文件上下文，动态决定「分辨率」选项。
+        """记录当前待转换的视频路径。
 
-        - 单个视频：按实际分辨率逐级 ÷1.5 生成可选项（可更改）
-        - 多个视频 / 无法探测：禁用，默认「原始」
+        v0.7.18 时这个方法要按实际分辨率动态重建「分辨率」下拉；V0.8.21
+        视频高级设置整体换成 FFmpeg 压缩参数后，缩放交给 ``ff_v_scale``
+        （按比例，不依赖源分辨率），探测源尺寸不再必要。方法保留是因为
+        ``convert_setup_dialog`` 在两处调用它，且路径上下文后续（如按时长
+        估算输出体积）还用得上。
         """
         self._video_paths = list(video_paths or [])
-        self._refresh_video_resolution()
-
-    def _refresh_video_resolution(self):
-        res = getattr(self, "_res_combo", None)
-        if res is None:
-            return
-        adv = advanced.adv["video"]
-        paths = self._video_paths
-        if len(paths) != 1:
-            # 多视频或未知 → 禁用 + 默认「原始」
-            res.setEnabled(False)
-            try:
-                res.setCurrentText(tr("advanced.original"))
-            except Exception:
-                # 静默原因：控件可能已随界面销毁，此处仅回填默认值即可
-                log.debug("重置分辨率下拉文本失败，忽略")
-            adv["resolution"] = "original"
-            return
-        size = advanced.probe_video_size(paths[0])
-        if not size:
-            res.setEnabled(False)
-            adv["resolution"] = "original"
-            return
-        w, h = size
-        # 逐级 ÷1.5（四舍五入），宽或高 < 320 停止
-        options: list[tuple[str, str]] = [(tr("advanced.original"), "original")]
-        cur_w, cur_h = w, h
-        while True:
-            cur_w = int(cur_w / 1.5 + 0.5)
-            cur_h = int(cur_h / 1.5 + 0.5)
-            if cur_w < 320 or cur_h < 320:
-                break
-            options.append((f"{cur_w}*{cur_h}", f"{cur_w}x{cur_h}"))
-        # 重建下拉选项（保持「原始」选中）
-        res.blockSignals(True)
-        res.clear()
-        for disp, _val in options:
-            res.addItem(disp)
-        bind_combo_mapping(res, options)
-        res.setCurrentText(tr("advanced.original"))
-        res.blockSignals(False)
-        res.setEnabled(True)
-        adv["resolution"] = "original"
 
     def retranslate(self):
         self.refresh(self._categories)
@@ -741,10 +901,6 @@ class AdvancedPanel(QWidget):
                 _clear_layout(lay)
                 lay.deleteLater()
         self._expanders.clear()
-
-
-def _opt_list(values: list[str]):
-    return [(tr("advanced.original") if v == "original" else v, v) for v in values]
 
 
 def _combo(mapping: list[tuple[str, str]], current, on_change) -> ComboBox:

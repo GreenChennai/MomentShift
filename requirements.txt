@@ -10,3 +10,6 @@ Pillow>=10.0.0
 numpy>=1.24.0
 onnxruntime>=1.17.0
 jieba>=0.42.1
+# v0.8.21 「真暂停」：挂起 / 恢复整棵 ffmpeg 进程树。软依赖，缺失时
+# core/proc_control 自动退回「只是不再派发新任务」的软暂停。
+psutil>=5.9.0

@@ -120,6 +120,9 @@ hiddenimports = [
     "momentshift.quick_runner",
     "momentshift.i18n",
     "momentshift.i18n.translator",
+    # v0.8.21：真暂停 / 恢复经 psutil 挂起子进程。proc_control 用惰性 import，
+    # PyInstaller 静态分析抓不到，必须显式声明，否则构建产物缺失 psutil → 降级软暂停。
+    "psutil",
 ]
 
 a = Analysis(

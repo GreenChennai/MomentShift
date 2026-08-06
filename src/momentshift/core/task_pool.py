@@ -75,8 +75,14 @@ class TaskState(str, Enum):
 # 进度回调：``run_fn`` 用它上报 0~100 的百分比。
 ProgressCb = Callable[[int], None]
 
+# 实时统计回调：``run_fn`` 用它上报 ffmpeg 进度快照（速度 / 剩余时间 / 帧率）。
+# 没有 ffmpeg 进度元数据的后端（图片压缩）不会调用，因此允许为 ``None``。
+StatsCb = Callable[[object], None]
+
 # 业务执行体。签名 ``(item, progress_cb, cancel_event) -> (ok, message)``。
 # ``cancel_event`` 被置位表示用户已清空/移除该任务，实现方应尽快收尾并清理临时文件。
+# 实时统计通过 ``item.stats_cb``（可选）下发给执行体，不占用 RunFn 的形参，
+# 这样不持有 ffmpeg 进度元数据的旧执行体（放大）无需改动签名即可共存。
 RunFn = Callable[["PoolItem", ProgressCb, threading.Event], "tuple[bool, str]"]
 
 # 启动前钩子。在池所在线程（GUI 线程）串行调用，返回 False 表示放弃该任务。
@@ -99,6 +105,9 @@ class PoolItem:
     progress: int = 0
     message: str = ""
     result: dict[str, Any] = field(default_factory=dict)
+    # v0.8.22 Bug3-A：实时统计回调（ffmpeg 进度快照）。由 worker 在运行期挂上，
+    # 执行体在收到真实进度时调用；不持有进度元数据的后端留空（None）。
+    stats_cb: "StatsCb | None" = None
 
     @property
     def is_finished(self) -> bool:
@@ -128,6 +137,7 @@ class _WorkerSignals(QObject):
 
     progress = Signal(str, int)  # (iid, 0~100)
     finished = Signal(str, bool, str)  # (iid, ok, message)
+    stats = Signal(str, object)  # (iid, ProgressSnapshot)
 
 
 class _PoolWorker(QRunnable):
@@ -167,7 +177,14 @@ class _PoolWorker(QRunnable):
         def report(pct: int) -> None:
             self._signals.progress.emit(iid, max(0, min(100, int(pct))))
 
+        def report_stats(snap) -> None:
+            # v0.8.22 Bug3-A：ffmpeg 进度快照（速度 / 剩余时间）跨线程转给池所在线程。
+            self._signals.stats.emit(iid, snap)
+
         report(0)
+        # 把 stats 闭包挂到条目上，执行体（run_fn）在第一个参数 `item` 上即可取到。
+        # 退出后清空，避免任务回收后还能被误调到野指针。
+        self.item.stats_cb = report_stats
         try:
             ok, message = self._run_fn(self.item, report, self._cancel)
         except Exception:
@@ -175,6 +192,8 @@ class _PoolWorker(QRunnable):
             # 队列也永远不会收敛（_active 里的坑位不会释放）。
             log.exception("[task_pool] task %s raised", iid)
             ok, message = False, "exception (see log)"
+        finally:
+            self.item.stats_cb = None
         self._signals.finished.emit(iid, bool(ok), str(message or ""))
 
 
@@ -199,6 +218,7 @@ class TaskPool(QObject):
     itemAdded = Signal(str, str)  # (iid, display_name)
     itemStarted = Signal(str)  # (iid)
     itemProgress = Signal(str, int)  # (iid, 0~100)
+    itemStats = Signal(str, object)  # (iid, ProgressSnapshot) v0.8.22 Bug3-A
     itemFinished = Signal(str, str, str)  # (iid, TaskState.value, message)
     stateChanged = Signal()  # 运行/暂停/空闲或条目集合发生变化
     allFinished = Signal()  # 整队收敛（从「有活干」变成「没活干」）
@@ -234,6 +254,7 @@ class TaskPool(QObject):
         # 的崩溃。跨线程发射走队列连接，槽函数回到池所在线程执行。
         self._signals = _WorkerSignals(self)
         self._signals.progress.connect(self._on_worker_progress)
+        self._signals.stats.connect(self._on_worker_stats)
         self._signals.finished.connect(self._on_worker_finished)
 
         # v0.8.2 Bug3：假进度条驱动。压缩 / 放大任务（没有 ffmpeg 进度元
@@ -451,6 +472,16 @@ class TaskPool(QObject):
             return
         # v0.8.2 Bug3：交给假进度条合并后发出，避免「半天不动、完成瞬跳」。
         self._fake.merge(iid, pct)
+
+    def _on_worker_stats(self, iid: str, snap) -> None:
+        """v0.8.22 Bug3-A：ffmpeg 实时统计（速度 / 剩余时间）转发给界面。
+
+        迟到的快照在任务已离开「运行中」时丢弃，避免终态详情行被旧 ETA 污染。
+        """
+        item = self._items.get(iid)
+        if item is None or item.state is not TaskState.RUNNING:
+            return
+        self.itemStats.emit(iid, snap)
 
     def _on_fake_progress(self, iid: str, pct: int) -> None:
         """假进度条 → 写回条目进度并发出 ``itemProgress``。"""

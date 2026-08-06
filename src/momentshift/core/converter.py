@@ -13,6 +13,8 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
+from . import proc_control
+from .ffmpeg_progress import FFmpegProgressParser, probe_duration_ms
 from .logger import get_logger
 from .platform import popen_silent
 from .presets import build_args
@@ -102,6 +104,8 @@ def run_conversion(
     on_progress: ProgressCallback | None = None,
     on_log: LogCallback | None = None,
     cancel_event: object | None = None,
+    on_stats=None,
+    on_proc=None,
 ) -> tuple[int | None, str]:
     """执行一次转换。
 
@@ -112,6 +116,13 @@ def run_conversion(
         on_progress: 进度回调，参数为 0..100 的百分比。
         on_log: 行日志回调，收到 ffmpeg 的每行输出。
         cancel_event: 置位后中止转换的事件对象。
+        on_stats: 可选，收 :class:`~core.ffmpeg_progress.ProgressSnapshot`，
+            用于展示编码速度与预计剩余时间（V0.8.21 新增）。
+        on_proc: 可选，子进程刚启动时回调一次 ``on_proc(Popen)``；进程结束时
+            再回调一次 ``on_proc(None)``。队列据此实现真正的暂停（psutil
+            挂起整棵进程树，见 :mod:`core.proc_control`）。硬件降级重试会
+            起第二个进程，因此这个回调**可能被调用多轮**，接收方要按
+            「后来者覆盖」处理。
     Returns:
         ``(returncode, 错误文本)``，其中 returncode 含义为：
         ``0`` 成功；``None`` 被 ``cancel_event`` 取消；``<0`` 连 ffmpeg 都没能
@@ -138,7 +149,17 @@ def run_conversion(
             log.error("Failed to launch ffmpeg: %s", exc)
             return (-1, f"failed to launch ffmpeg: {exc}")
 
-        duration_ms: int | None = None
+        if on_proc:
+            on_proc(proc)  # V0.8.21 E4：交出句柄，队列暂停时挂起它
+
+        # V0.8.21：分母走 ffprobe 预取。ffmpeg 的 -progress **不输出总时长**，
+        # 旧实现在等一个永远不会来的 ``duration_ms`` 键，导致 out_time 分支
+        # 永远进不去、中间进度一次都不上报，进度条只能靠 fake_progress 糊。
+        parser = FFmpegProgressParser(
+            duration_ms=probe_duration_ms(task.input_path, ffmpeg_path)
+        )
+        if parser.duration_ms:
+            task.duration_ms = parser.duration_ms
         last_lines: list[str] = []
         # RISK-05：用 with 托管子进程。原先各条 return 路径都没有显式关掉
         # proc.stdout，管道句柄只能等 GC；取消分支还要先 terminate 再等满 5 秒
@@ -149,7 +170,13 @@ def run_conversion(
             try:
                 while True:
                     if cancel_event is not None and cancel_event.is_set():
+                        # V0.8.21 E4：进程可能正被 psutil 挂起，挂起态收不到
+                        # terminate 的礼貌退出，必须先解挂再 _stop，否则一定
+                        # 白等满一个宽限期才走到 kill。
+                        proc_control.resume_then(proc)
                         _stop(proc)
+                        if on_proc:
+                            on_proc(None)
                         return (None, "canceled")
 
                     line = proc.stdout.readline()
@@ -159,20 +186,17 @@ def run_conversion(
                     if not line:
                         continue
 
-                    if "=" in line and not line.startswith(" "):
-                        key, _, val = line.partition("=")
-                        key, val = key.strip(), val.strip()
-                        if key == "duration_ms" and val.isdigit():
-                            duration_ms = int(val)
-                            task.duration_ms = duration_ms
-                        elif key == "out_time_ms" and val.isdigit() and duration_ms:
-                            pct = min(100, int(int(val) / duration_ms * 100))
-                            if on_progress:
-                                on_progress(pct)
-                        elif key == "progress" and val == "end":
-                            if on_progress:
-                                on_progress(100)
-                    else:
+                    is_kv = "=" in line and not line.startswith(" ")
+                    snap = parser.feed(line)
+                    if snap is not None:
+                        if on_progress and snap.pct is not None:
+                            on_progress(snap.pct)
+                        if on_stats:
+                            on_stats(snap)
+                        # 横幅补到的时长回写任务，供 UI 展示总时长
+                        if parser.duration_ms and not task.duration_ms:
+                            task.duration_ms = parser.duration_ms
+                    if not is_kv:
                         if on_log:
                             on_log(line)
                         last_lines.append(line)
@@ -180,10 +204,16 @@ def run_conversion(
                             last_lines.pop(0)
             except Exception as exc:  # pragma: no cover - defensive
                 log.exception("Error while reading ffmpeg output: %s", exc)
+                proc_control.resume_then(proc)
                 _stop(proc, grace=0)
+                if on_proc:
+                    on_proc(None)
                 return (-3, f"internal error reading ffmpeg output: {exc}")
 
             returncode = proc.wait()
+
+        if on_proc:
+            on_proc(None)  # 进程已退出，撤销队列侧的句柄登记
 
         log.info(
             "ffmpeg finished: returncode=%s input=%s output=%s",

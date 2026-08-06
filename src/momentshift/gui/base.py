@@ -446,6 +446,22 @@ class QueueListBase(QWidget):
         if w:
             w.set_progress(pct)
 
+    def set_stats(self, key: str, snap) -> None:
+        """把 ffmpeg 实时统计（速度 / 剩余时间）转交给对应行（v0.8.21 E1）。
+
+        Args:
+            key: 行的唯一标识。
+            snap: :class:`~core.ffmpeg_progress.ProgressSnapshot`。
+
+        Notes:
+            行控件没实现 ``set_stats`` 就静默跳过 —— 压缩 / 放大队列的行还没
+            接真实统计，放在基类里是为了它们接上时不用再改一遍列表层。
+        """
+        w = self.items.get(key)
+        setter = getattr(w, "set_stats", None)
+        if setter is not None:
+            setter(snap)
+
     def retranslate(self) -> None:
         """语言切换后回填所有行、空态文案与统计文案。"""
         for w in self.items.values():

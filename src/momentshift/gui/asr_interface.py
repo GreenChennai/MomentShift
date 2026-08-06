@@ -676,6 +676,61 @@ class AudioTranscribeInterface(InterfaceBase):
         self._serverModelCombo.currentIndexChanged.connect(self._on_server_model_changed)
         svb.addWidget(field_row(tr("asr.service.model"), self._serverModelCombo, label_width=132))
 
+        # v0.8.22 Bug#2：服务模式同样提供「结构化输出 / 标点恢复 / 情感识别」
+        # 三项增强开关。语义与「ASR 设置」里的同名开关一致，但配置项独立
+        # （cfg.asrServer*），互不影响；可用性判定复用同一套模型/硬件探测，
+        # 不满足条件时灰显禁用并给出原因。
+        self._serverStructuredSwitch = SwitchButton()
+        self._serverStructuredSwitch.setChecked(bool(cfg.asrServerStructured.value))
+        self._serverStructuredSwitch.checkedChanged.connect(
+            lambda checked: self._on_server_option(cfg.asrServerStructured, checked)
+        )
+        self._serviceStructuredRow = field_row(
+            tr("asr.settings.structured"),
+            self._serverStructuredSwitch,
+            label_width=132,
+            label_wrap=True,
+        )
+        svb.addWidget(self._serviceStructuredRow)
+        self._serverStructuredHint = self._make_option_hint()
+        svb.addWidget(self._serverStructuredHint)
+
+        self._serverPuncSwitch = SwitchButton()
+        self._serverPuncSwitch.setChecked(bool(cfg.asrServerPunc.value))
+        self._serverPuncSwitch.checkedChanged.connect(
+            lambda checked: self._on_server_option(cfg.asrServerPunc, checked)
+        )
+        self._servicePuncRow = field_row(
+            tr("asr.settings.punctuation"),
+            self._serverPuncSwitch,
+            label_width=132,
+            label_wrap=True,
+        )
+        svb.addWidget(self._servicePuncRow)
+        self._serverPuncHint = self._make_option_hint()
+        svb.addWidget(self._serverPuncHint)
+
+        self._serverEmotionSwitch = SwitchButton()
+        self._serverEmotionSwitch.setChecked(bool(cfg.asrServerEmotion.value))
+        self._serverEmotionSwitch.checkedChanged.connect(
+            lambda checked: self._on_server_option(cfg.asrServerEmotion, checked)
+        )
+        self._serviceEmotionRow = field_row(
+            tr("asr.settings.emotion"),
+            self._serverEmotionSwitch,
+            label_width=132,
+            label_wrap=True,
+        )
+        svb.addWidget(self._serviceEmotionRow)
+        self._serverEmotionHint = self._make_option_hint()
+        svb.addWidget(self._serverEmotionHint)
+
+        self._serviceOptionsNote = CaptionLabel(tr("asr.service.options.note"))
+        self._serviceOptionsNote.setWordWrap(True)
+        apply_text(self._serviceOptionsNote, muted_text(), transparent=True)
+        svb.addWidget(self._serviceOptionsNote)
+        self._refresh_server_option_hints()
+
         # v0.8.10 Bug3-三件套③：可选 api_key（Bearer 鉴权，留空不校验）
         self._apiKeyEdit = PasswordLineEdit()
         self._apiKeyEdit.setText(cfg.asrApiKey.value)
@@ -750,20 +805,102 @@ class AudioTranscribeInterface(InterfaceBase):
             and spec.get("engine")
             and fe.is_model_ready(spec["id"], spec["quantize"])
         ]
-        combo.clear()
-        if not ready_items:
-            combo.addItem(tr("asr.settings.model.none"))
-            combo.items[0].isEnabled = False
-            cfg.asrServerModel.value = ""
-            return
+        # v0.8.22 Bug#1：cur 必须在 clear() **之前**读取。
+        # clear() 会发 currentIndexChanged(-1) → _on_server_model_changed 把
+        # cfg.asrServerModel 写成空串，若之后再读就永远拿不到用户的旧选择。
+        # 同时整段重填过程屏蔽信号，避免中间态污染配置。
         cur = cfg.asrServerModel.value
-        for mid in ready_items:
-            combo.addItem(mid)
-        combo.setCurrentText(cur if cur in ready_items else ready_items[0])
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            if not ready_items:
+                combo.addItem(tr("asr.settings.model.none"))
+                combo.items[0].isEnabled = False
+                cfg.asrServerModel.value = ""
+                return
+            for mid in ready_items:
+                combo.addItem(mid)
+            combo.setCurrentText(cur if cur in ready_items else ready_items[0])
+        finally:
+            combo.blockSignals(False)
         cfg.asrServerModel.value = combo.currentText()
 
     def _on_server_model_changed(self, _index: int):
         cfg.asrServerModel.value = self._serverModelCombo.currentText()
+
+    # -- v0.8.22 Bug#2：服务模式三项增强开关 --------------------------------
+    def _make_option_hint(self) -> CaptionLabel:
+        """生成一个自动换行的灰色说明标签（三项开关共用样式）。"""
+        hint = CaptionLabel("")
+        hint.setWordWrap(True)
+        hint.setMinimumWidth(0)
+        hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        apply_text(hint, muted_text(), transparent=True)
+        return hint
+
+    def _on_server_option(self, item, checked: bool) -> None:
+        """服务模式开关切换：落盘 → 刷新提示 → 若服务在跑则热应用新配置。"""
+        setattr(item, "value", bool(checked))
+        self._refresh_server_option_hints()
+        if self._server.running:
+            # 服务端把开关存在实例上，重启一次即可让新配置生效（端口/模型不变）
+            self._restart_server_quiet()
+
+    def _restart_server_quiet(self) -> None:
+        """静默重启内置服务端，用于开关变更后的热应用（失败则关掉开关）。"""
+        self._server.stop()
+        ok, msg = self._server.start(
+            int(cfg.asrServerPort.value),
+            cfg.asrServerModel.value or fe.DEFAULT_MODEL_ID,
+            api_key=cfg.asrApiKey.value,
+            structured=bool(cfg.asrServerStructured.value),
+            punc=bool(cfg.asrServerPunc.value),
+            emotion=bool(cfg.asrServerEmotion.value),
+        )
+        if ok:
+            self._serverStatusLabel.setText(tr("asr.service.running", url=self._server.url))
+            apply_text(self._serverStatusLabel, tokens.ACCENT, transparent=True)
+        else:
+            self._serviceSwitch.blockSignals(True)
+            self._serviceSwitch.setChecked(False)
+            self._serviceSwitch.blockSignals(False)
+            self._serverStatusLabel.setText(tr("asr.service.failed", msg=msg))
+            apply_text(self._serverStatusLabel, tokens.DANGER_STRONG, transparent=True)
+
+    def _refresh_server_option_hints(self) -> None:
+        """按模型/硬件可用性刷新三项开关的可用状态与说明文案。
+
+        判定逻辑与「ASR 设置」完全一致（VAD / ct-punc / emotion2vec+CUDA），
+        不满足时灰显禁用，避免用户开了却静默不生效。
+        """
+        if not hasattr(self, "_serverStructuredHint"):
+            return
+        # ① 结构化输出：需 FSMN-VAD
+        vad_ready = fe.find_ready_vad_model() is not None
+        self._serverStructuredSwitch.setEnabled(vad_ready)
+        self._serverStructuredHint.setText(
+            tr("asr.settings.structured.hint")
+            if vad_ready
+            else tr("asr.settings.structured.hint.no_vad")
+        )
+        # ② 标点恢复：需 ct-punc
+        punc_ready = fe.is_model_ready("ct-punc", None)
+        self._serverPuncSwitch.setEnabled(punc_ready)
+        if not cfg.asrServerPunc.value:
+            self._serverPuncHint.setText(tr("asr.settings.punctuation.hint.off"))
+        elif punc_ready:
+            self._serverPuncHint.setText(tr("asr.settings.punctuation.hint.on_ready"))
+        else:
+            self._serverPuncHint.setText(tr("asr.settings.punctuation.hint.on_missing"))
+        # ③ 情感识别：需 emotion2vec+large + CUDA + 完整 funasr
+        emo_ok, _reason = fe.emotion_available()
+        self._serverEmotionSwitch.setEnabled(emo_ok)
+        if not cfg.asrServerEmotion.value:
+            self._serverEmotionHint.setText(tr("asr.settings.emotion.hint.off"))
+        elif emo_ok:
+            self._serverEmotionHint.setText(tr("asr.settings.emotion.hint.on_ready"))
+        else:
+            self._serverEmotionHint.setText(tr("asr.settings.emotion.hint.on_missing"))
 
     def _on_server_port_changed(self, text: str):
         """端口变化：写配置 + 联动更新服务地址显示。"""
@@ -791,9 +928,13 @@ class AudioTranscribeInterface(InterfaceBase):
         for row in self._model_rows:
             row.refresh()
         self._refresh_model_combo()
+        # v0.8.22 Bug#1：服务模式的「模型」下拉同样要跟着新下载的模型刷新，
+        # 否则用户装好模型后服务端下拉仍是旧列表（此前只有 retranslateUi 会刷）。
+        self._refresh_server_model_combo()
         self._refresh_structured_hint()
         self._refresh_punc_hint()
         self._refresh_emotion_hint()
+        self._refresh_server_option_hints()
         self._sync_controls()
 
     def _on_service_mode(self, checked: bool):
@@ -812,6 +953,10 @@ class AudioTranscribeInterface(InterfaceBase):
                 int(cfg.asrServerPort.value),
                 model_id,
                 api_key=cfg.asrApiKey.value,
+                # v0.8.22 Bug#2：把服务模式的三项增强开关一并交给服务端
+                structured=bool(cfg.asrServerStructured.value),
+                punc=bool(cfg.asrServerPunc.value),
+                emotion=bool(cfg.asrServerEmotion.value),
             )
             if ok:
                 self._serverStatusLabel.setText(tr("asr.service.running", url=self._server.url))
@@ -832,9 +977,12 @@ class AudioTranscribeInterface(InterfaceBase):
         for row in self._model_rows:
             row.refresh()
         self._refresh_model_combo()
+        # v0.8.22 Bug#1：下载完成的回调也要刷新服务模式模型下拉。
+        self._refresh_server_model_combo()
         self._refresh_structured_hint()
         self._refresh_punc_hint()
         self._refresh_emotion_hint()
+        self._refresh_server_option_hints()
         if ok:
             self._append_cmd(tr("asr.model.download.done"))
         else:
@@ -1376,6 +1524,8 @@ class AudioTranscribeInterface(InterfaceBase):
             self._settingsSegmentRow.fieldLabel.setText(tr("asr.settings.segment"))
             self._settingsStructuredRow.fieldLabel.setText(tr("asr.settings.structured"))
             self._settingsPuncRow.fieldLabel.setText(tr("asr.settings.punctuation"))
+            # v0.8.22：情感识别行此前漏了 retranslate，切语言后仍是旧文案
+            self._settingsEmotionRow.fieldLabel.setText(tr("asr.settings.emotion"))
             self._settingsDeviceRow.fieldLabel.setText(tr("asr.settings.device"))
             self._settingsOutputModeRow.fieldLabel.setText(tr("asr.settings.output"))
             self._settingsOutputRow.fieldLabel.setText(tr("asr.settings.output.folder"))
@@ -1397,6 +1547,13 @@ class AudioTranscribeInterface(InterfaceBase):
         self.cmdEdit.setPlaceholderText(tr("asr.cmd.ready"))
         self._serviceSwitch.setText(tr("asr.service.enable"))
         self._serviceHint.setText(tr("asr.service.hint"))
+        # v0.8.22 Bug#2：服务模式三项增强开关的标签与说明也要跟随语言
+        if hasattr(self, "_serviceStructuredRow"):
+            self._serviceStructuredRow.fieldLabel.setText(tr("asr.settings.structured"))
+            self._servicePuncRow.fieldLabel.setText(tr("asr.settings.punctuation"))
+            self._serviceEmotionRow.fieldLabel.setText(tr("asr.settings.emotion"))
+            self._serviceOptionsNote.setText(tr("asr.service.options.note"))
+            self._refresh_server_option_hints()
         self._refresh_server_model_combo()
         if self._server.running:
             self._serverStatusLabel.setText(tr("asr.service.running", url=self._server.url))

@@ -39,7 +39,9 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
+from . import proc_control
 from .ffmpeg import find_ffmpeg
+from .ffmpeg_progress import FFmpegProgressParser, probe_duration_ms
 from .logger import get_logger
 from .platform import popen_silent
 
@@ -605,14 +607,57 @@ def _ext(path: str) -> str:
     return Path(path or "").suffix.lower().lstrip(".")
 
 
-def pick_video_encoder(container: str, requested: str | None = None) -> str:
-    """按容器纠正视频编码器选择。
+def _hw_encoder_ok(encoder: str) -> bool:
+    """实测某个硬件编码器在本机能否真正打开。
 
-    ``requested`` 为 ``auto`` / 空 / 与容器不兼容时，回落到容器默认编码器。
+    Args:
+        encoder: 编码器名，如 ``h264_nvenc``。
+    Returns:
+        能用为 ``True``。探测本身出错时**保守返回 True**，把判断权交还给
+        ffmpeg——宁可让它自己报错走降级重试，也不要因为探测环境异常就
+        把本来可用的 GPU 编码器误杀。
+    Notes:
+        延迟导入 :mod:`core.hardware`：它会拉起 subprocess 探测，模块级导入
+        会让所有引用 ffmpeg_compress 的地方都白等一次。结果有
+        ``hardware._PROBE_CACHE`` 缓存，同一编码器只实测一次。
+    """
+    try:
+        from .hardware import encoder_usable
+
+        exe = find_ffmpeg()
+        if not exe:
+            return True
+        return bool(encoder_usable(exe, encoder))
+    except Exception:  # pragma: no cover - defensive
+        log.debug("硬件编码器探测异常，交由 ffmpeg 自行判断：%s", encoder)
+        return True
+
+
+def pick_video_encoder(container: str, requested: str | None = None) -> str:
+    """按容器与**本机硬件能力**纠正视频编码器选择。
+
+    Args:
+        container: 输出容器后缀，如 ``mp4`` / ``webm``。
+        requested: 用户请求的编码器；``auto`` / 空 / 与容器不兼容时回落。
+    Returns:
+        最终使用的编码器名。
+    Notes:
+        V0.8.21 修复：此前只按容器判断，不问显卡。用户选了 ``h264_nvenc``
+        但机器是 AMD 显卡时，参数会原样传给 ffmpeg，直到运行期才炸
+        ``Could not open encoder``。现在先用
+        :func:`core.hardware.encoder_usable` 实测（跑一帧 nullsrc 试编码，
+        结果带缓存），不可用就直接降级到等价 CPU 编码器。
     """
     c = (container or "").lower().lstrip(".")
     req = (requested or "auto").lower()
     fallback = _VIDEO_CONTAINER_DEFAULT.get(c, "libx264")
+
+    # ---- 硬件门禁：请求的是 GPU 编码器就先实测能不能用 ----
+    if req in HW_TO_CPU_ENCODER:
+        if not _hw_encoder_ok(req):
+            cpu = HW_TO_CPU_ENCODER[req]
+            log.warning("本机无法使用硬件编码器 %s，自动降级为 %s", req, cpu)
+            req = cpu
 
     if req in ("", "auto"):
         return fallback
@@ -963,6 +1008,8 @@ def run(
     on_progress: ProgressCallback | None = None,
     cancel_event: object | None = None,
     ffmpeg_path: str | None = None,
+    on_stats=None,
+    on_proc=None,
 ) -> tuple[bool, str]:
     """执行一次 FFmpeg 压缩。
 
@@ -974,16 +1021,24 @@ def run(
         on_progress: 0..100 的进度回调。图片没有时长，只会收到 0 与 100。
         cancel_event: 置位后中止（需实现 ``is_set()``）。
         ffmpeg_path: 显式指定 ffmpeg；``None`` 时自动查找。
+        on_stats: 可选，收 :class:`ProgressSnapshot`（速度 / 剩余时间 / 帧率）。
+        on_proc: 可选，子进程启动/退出时各回调一次，供队列真暂停。两级重试
+            会各起一个新进程，因此可能被回调多轮。
     Returns:
         ``(ok, detail)``。``ok=False`` 时 ``detail`` 是可直接展示的错误摘要。
+    Notes:
+        两级重试，都只在命中特定错误特征时才走，避免真错误被白跑两遍：
+
+        1. **硬件编码器打不开** → 剥掉 GPU 编码器换 CPU 重试（V0.8.21 新增）。
+        2. **选项不被识别** → 换保守参数重试。
     """
     exe = ffmpeg_path or find_ffmpeg()
     if not exe:
         return False, "未找到 ffmpeg，请先在「关于」页下载"
 
-    def _build(safe: bool) -> list[str] | None:
+    def _build(safe: bool, o: dict | None = None) -> list[str] | None:
         try:
-            return build_args(src, dst, opts, kind, safe=safe)
+            return build_args(src, dst, o if o is not None else opts, kind, safe=safe)
         except Exception as exc:  # pragma: no cover - defensive
             log.exception("构建 ffmpeg 压缩参数失败：%s", Path(src).name)
             nonlocal build_err
@@ -995,16 +1050,44 @@ def run(
     if args is None:
         return False, build_err
 
-    ok, detail = _execute(exe, args, src, dst, on_progress, cancel_event)
+    # 分母只探一次，重试时复用，别让 ffprobe 白跑第二遍。
+    duration_ms = probe_duration_ms(src, exe)
+
+    ok, detail = _execute(
+        exe, args, src, dst, on_progress, cancel_event, on_stats, duration_ms, on_proc
+    )
     if ok or detail == "canceled":
         return ok, detail
 
-    # ---- 保守重试：只在「像是选项不被识别」时才走，避免真错误被跑两遍 ----
+    # ---- 重试一：硬件编码器打不开 → 降级 CPU ----
+    # 典型场景：用户机器是 AMD/Intel 显卡却选了 h264_nvenc，或 NVIDIA 驱动
+    # 版本过旧。ffmpeg 此时报 "Could not open encoder"，不是选项语法问题，
+    # 保守重试救不了，必须换编码器。
+    if _looks_like_encoder_error(detail):
+        cpu_opts = _strip_hw_encoder(opts)
+        if cpu_opts is not None:
+            log.warning(
+                "硬件编码器无法打开，降级 CPU 重试：%s（%s → %s）",
+                Path(src).name,
+                (opts or {}).get("ff_v_encoder"),
+                cpu_opts.get("ff_v_encoder"),
+            )
+            args = _build(False, cpu_opts)
+            if args is not None:
+                ok, detail = _execute(
+                    exe, args, src, dst, on_progress, cancel_event, on_stats, duration_ms, on_proc
+                )
+                if ok or detail == "canceled":
+                    return ok, detail
+
+    # ---- 重试二：保守参数 ----
     if _looks_like_option_error(detail):
         log.warning("ffmpeg 拒绝了某个调优选项，改用保守参数重试：%s", Path(src).name)
         args = _build(True)
         if args is not None:
-            return _execute(exe, args, src, dst, on_progress, cancel_event)
+            return _execute(
+                exe, args, src, dst, on_progress, cancel_event, on_stats, duration_ms, on_proc
+            )
     return False, detail
 
 
@@ -1019,6 +1102,73 @@ _OPTION_ERROR_MARKERS: tuple[str, ...] = (
     "no such option",
 )
 
+# ffmpeg 打不开硬件编码器时的典型措辞。命中后剥掉 GPU 编码器换 CPU 重试。
+# 注意 "error while opening encoder" 后面常跟一句误导性的
+# "maybe incorrect parameters such as bit_rate, rate, width or height"，
+# 实际原因往往只是这台机器根本没有对应的 GPU。
+_ENCODER_ERROR_MARKERS: tuple[str, ...] = (
+    "could not open encoder",
+    "error while opening encoder",
+    "cannot load nvcuda",
+    "cannot load libcuda",
+    "no capable devices found",
+    "openencodesessionex failed",
+    "driver does not support",
+    "function not implemented",
+    "generic error in an external library",
+)
+
+# 硬件编码器 → 等价 CPU 编码器。降级重试时按这张表替换。
+HW_TO_CPU_ENCODER: dict[str, str] = {
+    "h264_nvenc": "libx264",
+    "hevc_nvenc": "libx265",
+    "h264_qsv": "libx264",
+    "hevc_qsv": "libx265",
+    "h264_amf": "libx264",
+    "hevc_amf": "libx265",
+    "h264_videotoolbox": "libx264",
+    "hevc_videotoolbox": "libx265",
+}
+
+
+def _looks_like_encoder_error(detail: str) -> bool:
+    """判断 ffmpeg 的失败摘要是否属于「硬件编码器打不开」。
+
+    Args:
+        detail: ffmpeg 的 stderr 尾巴。
+    Returns:
+        命中任一特征串即为 ``True``。
+    """
+    lowered = (detail or "").lower()
+    return any(m in lowered for m in _ENCODER_ERROR_MARKERS)
+
+
+def _strip_hw_encoder(opts: dict | None) -> dict | None:
+    """把参数里的硬件编码器换成等价 CPU 编码器。
+
+    Args:
+        opts: 原始 ``ff_*`` 参数字典。
+    Returns:
+        替换后的**新字典**；原本就没用硬件编码器（无需降级）时返回 ``None``。
+    Notes:
+        同时要清掉 NVENC 专属的码率控制参数——``-rc vbr -cq N`` 这套
+        libx264 不认识，留着会让降级重试也一起失败。
+    """
+    if not opts:
+        return None
+    enc = str(opts.get("ff_v_encoder") or "")
+    if enc in HW_TO_CPU_ENCODER:
+        new = dict(opts)
+        new["ff_v_encoder"] = HW_TO_CPU_ENCODER[enc]
+        return new
+    if enc in ("auto", ""):
+        # auto 由 pick_video_encoder 决定，它已带硬件门禁；真走到这里说明
+        # 挑出来的仍打不开，强制钉死到最稳的 libx264。
+        new = dict(opts)
+        new["ff_v_encoder"] = "libx264"
+        return new
+    return None
+
 
 def _looks_like_option_error(detail: str) -> bool:
     lowered = (detail or "").lower()
@@ -1032,10 +1182,39 @@ def _execute(
     dst: str,
     on_progress: ProgressCallback | None,
     cancel_event: object | None,
+    on_stats=None,
+    duration_ms: int | None = None,
+    on_proc=None,
 ) -> tuple[bool, str]:
-    """跑一次 ffmpeg，解析 ``-progress`` 输出上报百分比。"""
+    """跑一次 ffmpeg，解析 ``-progress`` 输出上报真实百分比。
+
+    Args:
+        exe: ffmpeg 路径。
+        args: 已构建好的参数（含 ``-progress pipe:1``）。
+        src: 输入文件，仅用于日志与时长预取。
+        dst: 输出文件，用于收尾校验。
+        on_progress: 0..100 的进度回调。
+        cancel_event: 置位后中止。
+        on_stats: 可选，收 :class:`ProgressSnapshot`，用于展示速度/剩余时间。
+        duration_ms: 调用方已知的总时长；``None`` 时本函数自行用 ffprobe 预取。
+        on_proc: 可选，子进程启动/退出时各回调一次（退出传 ``None``），
+            供队列做 psutil 真暂停（V0.8.21 E4）。
+    Returns:
+        ``(ok, detail)``。
+
+    Notes:
+        V0.8.21 修复：原实现在等一个 ffmpeg **从不输出**的键 ``duration_ms``，
+        导致分母恒为 None、中间进度一次都不上报（即所谓「假进度条」）。
+        现在统一交给 :class:`FFmpegProgressParser`，分母走 ffprobe 预取 +
+        ``Duration:`` 横幅兜底。
+    """
     cmd = [exe, *args]
     log.info("ffmpeg 压缩命令：%s", " ".join(cmd))
+
+    # 分母：ffmpeg 的 -progress 不输出总时长，必须外部取。图片没有时长，
+    # 探测返回 None 时解析器只会在结束时给 100，与旧行为一致。
+    if duration_ms is None:
+        duration_ms = probe_duration_ms(src, exe)
 
     try:
         proc = popen_silent(
@@ -1049,14 +1228,21 @@ def _execute(
         log.error("启动 ffmpeg 失败：%s", exc)
         return False, f"启动 ffmpeg 失败: {exc}"
 
-    duration_ms: int | None = None
+    if on_proc:
+        on_proc(proc)  # V0.8.21 E4：交出句柄，队列暂停时挂起它
+
+    parser = FFmpegProgressParser(duration_ms=duration_ms)
     tail: list[str] = []
 
     with proc:
         try:
             while True:
                 if cancel_event is not None and cancel_event.is_set():
+                    # 挂起态的进程收不到 terminate，先解挂再停（见 proc_control）
+                    proc_control.resume_then(proc)
                     _stop(proc)
+                    if on_proc:
+                        on_proc(None)
                     return (False, "canceled")
 
                 line = proc.stdout.readline()
@@ -1066,29 +1252,31 @@ def _execute(
                 if not line:
                     continue
 
-                if "=" in line and not line.startswith(" "):
-                    key, _, val = line.partition("=")
-                    key, val = key.strip(), val.strip()
-                    if key == "duration_ms" and val.isdigit():
-                        duration_ms = int(val)
-                    elif key == "out_time_ms" and val.isdigit() and duration_ms:
-                        pct = min(100, int(int(val) / duration_ms * 100))
-                        if on_progress:
-                            on_progress(pct)
-                    elif key == "progress" and val == "end":
-                        if on_progress:
-                            on_progress(100)
-                    continue
+                is_kv = "=" in line and not line.startswith(" ")
+                snap = parser.feed(line)
+                if snap is not None:
+                    if on_progress and snap.pct is not None:
+                        on_progress(snap.pct)
+                    if on_stats:
+                        on_stats(snap)
+                if is_kv:
+                    continue  # 进度行不进 tail，避免错误摘要被进度刷没
 
                 tail.append(line)
                 if len(tail) > 40:
                     tail.pop(0)
         except Exception as exc:  # pragma: no cover - defensive
             log.exception("读取 ffmpeg 输出失败：%s", exc)
+            proc_control.resume_then(proc)
             _stop(proc, grace=0)
+            if on_proc:
+                on_proc(None)
             return False, f"读取 ffmpeg 输出失败: {exc}"
 
         rc = proc.wait()
+
+    if on_proc:
+        on_proc(None)  # 进程已退出，撤销队列侧的句柄登记
 
     if rc != 0:
         detail = "\n".join(tail[-12:]) or f"ffmpeg 退出码 {rc}"

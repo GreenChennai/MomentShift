@@ -61,6 +61,8 @@ from .queue_widget import (
     ScrollAutoFollow,
     StatusPill,
     format_size_compare,
+    format_stats,
+    join_detail,
 )
 from .theme import (
     ThemedCard,
@@ -133,6 +135,20 @@ def run_compress_task(
         except Exception:  # 静默原因：进度上报失败不应中断压缩本身
             log.debug("[compress] 进度回调失败 id=%s", item.iid)
 
+    # v0.8.22 Bug3-A：ffmpeg 实时统计（速度 / 剩余时间）回调。
+    # 仅 ffmpeg 后端（音视频 / FFmpeg 压缩）会调用；图片后端不产生进度快照，
+    # 此时 item.stats_cb 为 None，这里也就不挂 on_stats。
+    on_stats = None
+    stats_cb = getattr(item, "stats_cb", None)
+    if stats_cb is not None:
+        def _on_stats(snap) -> None:
+            try:
+                stats_cb(snap)
+            except Exception:
+                log.debug("[compress] 统计回调失败 id=%s", item.iid)
+    else:
+        _on_stats = None
+
     try:
         if compressor.needs_conversion(src_ext, effective):
             ok, detail, saved = compressor.transcode_and_compress(
@@ -145,6 +161,7 @@ def run_compress_task(
                 preferred=backend,
                 on_progress=_on_progress,
                 cancel_event=cancel,
+                on_stats=_on_stats,
             )
         else:
             ok, detail, saved = compressor.compress_auto(
@@ -156,6 +173,7 @@ def run_compress_task(
                 preferred=backend,
                 on_progress=_on_progress,
                 cancel_event=cancel,
+                on_stats=_on_stats,
             )
     except Exception:
         log.exception("[compress] task %s raised an exception", item.iid)
@@ -203,6 +221,9 @@ class CompressItemWidget(ThemedCard):
         self._selected = selected  # 用户选择的压缩程序（用于判断是否"自动切换"）
         self._target = target
         self._src_size = self._read_src_size()
+        # v0.8.22 Bug3-A：实时统计（速度 / 剩余时间）与运行态百分比。
+        self._stats_text = ""
+        self._run_pct = 0
 
         vb = build_row_layout(self)
 
@@ -251,6 +272,24 @@ class CompressItemWidget(ThemedCard):
     # -- 状态 -----------------------------------------------------------
     def set_progress(self, pct: int):
         self.prog.set_value(pct)
+        self._run_pct = int(pct)
+        # v0.8.22 Bug3-A：进度条动了，详情行的「45%   ·   1.53x   ·   剩余 02:31」
+        # 也得跟着动，否则进度条和文字长期对不上。
+        if self._status == "running":
+            self._refresh_live()
+
+    def _refresh_live(self) -> None:
+        """运行态重绘详情行：``{pct}%   ·   {速度}   ·   剩余 {ETA}``。
+
+        仅在 ``running`` 调用；终态由 :meth:`set_status` 独占，避免旧 ETA 残留。
+        """
+        if self._status == "running":
+            self.detailLbl.setText(join_detail(f"{self._run_pct}%", self._stats_text))
+
+    def set_stats(self, snap) -> None:
+        """v0.8.22 Bug3-A：接收 ffmpeg 实时统计（速度 / 剩余时间）刷新详情行。"""
+        self._stats_text = format_stats(snap)
+        self._refresh_live()
 
     def set_status(self, status: str, saved: int = 0, detail: str = "", backend: str = ""):
         self._status = status
@@ -279,8 +318,10 @@ class CompressItemWidget(ThemedCard):
             if status == "failed":
                 self.detailLbl.setText((detail or tr("compress.failed"))[:80])
             elif status == "running":
-                self.detailLbl.setText("")
+                # v0.8.22 Bug3-A：运行中详情行由 _refresh_live 实时刷新。
+                self._refresh_live()
             else:
+                self._stats_text = ""
                 self.prog.set_value(0)
                 self.detailLbl.setText("")
 
@@ -353,6 +394,7 @@ class CompressInterface(InterfaceBase):
         self._pool.itemAdded.connect(self._on_pool_added)
         self._pool.itemStarted.connect(self._on_pool_started)
         self._pool.itemProgress.connect(self._on_pool_progress)
+        self._pool.itemStats.connect(self._on_pool_stats)
         self._pool.itemFinished.connect(self._on_pool_finished)
         self._pool.stateChanged.connect(self._update_controls)
         self._pool.allFinished.connect(self._on_pool_all_finished)
@@ -689,6 +731,10 @@ class CompressInterface(InterfaceBase):
     def _on_pool_progress(self, iid: str, pct: int) -> None:
         self.listWidget.set_progress(iid, pct)
         self.taskProgress.emit(iid, pct)
+
+    def _on_pool_stats(self, iid: str, snap) -> None:
+        """v0.8.22 Bug3-A：ffmpeg 实时统计（速度 / 剩余时间）转发到对应行。"""
+        self.listWidget.set_stats(iid, snap)
 
     def _on_pool_finished(self, iid: str, state: str, message: str) -> None:
         """把池里的结束状态渲染到列表行。

@@ -104,6 +104,23 @@ def probe_video_size(path: str) -> tuple[int, int] | None:
     return None
 
 
+def ffmpeg_param_defaults(kind: str) -> dict:
+    """取某类媒体的 FFmpeg 压缩参数默认值（V0.8.21 新增）。
+
+    Args:
+        kind: ``video`` / ``audio`` / ``image``。
+    Returns:
+        ``{参数键: 默认值}`` 的新字典，键即 ``ff_v_*`` / ``ff_a_*`` / ``ff_i_*``。
+    Notes:
+        默认值从 :mod:`core.ffmpeg_compress` 的参数规格表现取，不在这里另抄
+        一份——两处硬编码迟早会漂移。延迟导入避免 core 内部循环依赖。
+    """
+    from .ffmpeg_compress import PARAMS_BY_KIND
+
+    specs = PARAMS_BY_KIND.get(kind, {})
+    return {key: spec.get("default") for key, spec in specs.items()}
+
+
 def default_options() -> dict:
     """返回一份全新的、覆盖所有分类的高级参数默认值。
 
@@ -147,25 +164,27 @@ def default_options() -> dict:
                 "pil_optimize": True,
                 "pil_progressive": True,
                 "pil_subsampling": "4:4:4",
+                # v0.8.22：图片「压缩程序」新增 FFmpeg 后端，参数默认值从
+                # ffmpeg_compress 规格表现取，避免在此另抄一份。
+                **ffmpeg_param_defaults("image"),
             },
             "compress_mode": "lossless",
         },
+        # V0.8.21：视频/音频的高级设置改为「转换编排 + FFmpeg 压缩」两段式。
+        # 原先那套 resolution / fps / bitrate / codec / crf 与「压缩」大模块里
+        # 的 FFmpeg 参数是两套并行且能力更弱的旋钮，用户要压体积得跑两个界面。
+        # 现在只保留**编排类**开关（合并 / 仅提取音频 / 音频格式），画质与体积
+        # 统一交给 compress 子字典里的 ff_* 参数，在转换完成后的压缩阶段生效。
         "video": {
-            "resolution": "original",
-            "fps": "original",
-            "bitrate": "original",
-            "codec": "original",
-            "crf": 18,
             "merge": False,
             # v0.8.3：「仅提取音频」——启用后不再转换视频画面，只输出音频。
             "extract_audio": False,
             "audio_format": "mp3",
+            "compress": ffmpeg_param_defaults("video"),
         },
         "audio": {
-            "bitrate": "original",
-            "sample_rate": "original",
-            "channels": "original",
             "merge": False,
+            "compress": ffmpeg_param_defaults("audio"),
         },
     }
 
@@ -279,43 +298,17 @@ def build_advanced_args(category: str, target: str, options: dict | None = None)
             extra += ["-compression_algo", "deflate"]
         # bmp 无可调参数，故意不加任何编码选项
 
-    elif category == "video":
-        codec = options.get("codec", "original")
-        if codec and codec != "original":
-            codec_map = {"H.264": "libx264", "H.265": "libx265", "copy": "copy"}
-            mapped = codec_map.get(codec, "libx264")
-            extra += ["-c:v", mapped]
-        vf_parts: list[str] = []
-        res = options.get("resolution", "original")
-        if res and res != "original":
-            vf_parts.append(f"scale={res.split('x')[0]}:{res.split('x')[1]}")
-        fps = options.get("fps", "original")
-        if fps and fps != "original":
-            vf_parts.append(f"fps={fps}")
-        if vf_parts:
-            extra += ["-vf", ",".join(vf_parts)]
-        bitrate = options.get("bitrate", "original")
-        if bitrate and bitrate != "original":
-            extra += [
-                "-b:v",
-                str(bitrate),
-                "-maxrate",
-                str(bitrate),
-                "-bufsize",
-                str(int(int(bitrate.rstrip("Mk")) * 2)) + bitrate[-1],
-            ]
-
-    elif category == "audio":
-        bitrate = options.get("bitrate", "original")
-        if bitrate and bitrate != "original":
-            extra += ["-b:a", str(bitrate)]
-        sample_rate = options.get("sample_rate", "original")
-        if sample_rate and sample_rate != "original":
-            extra += ["-ar", str(sample_rate)]
-        channels = options.get("channels", "original")
-        if channels and channels != "original":
-            ch_map = {"mono": "1", "stereo": "2"}
-            extra += ["-ac", ch_map.get(channels, "2")]
+    # V0.8.21：video / audio 不再在**转换阶段**下发画质参数。
+    #
+    # 这两类的高级设置已改为 FFmpeg 压缩参数（存在 options["compress"] 里的
+    # ff_v_* / ff_a_*），由「转换 → 压缩」两段式的第二段
+    # （core.queue.compress_after_conversion）执行，走 ffmpeg_compress.build_args。
+    # 转换阶段保持预设表的原样输出，避免同一个旋钮在两处各拧一半：
+    # 早期实现同时下发 -c:v 与 -b:v，再叠加压缩阶段的 -crf，实际结果取决于
+    # 谁最后覆盖谁，用户完全无法预期。
+    #
+    # 这里刻意不返回任何东西，而不是删掉分支——留着这段注释，免得后来者
+    # 看到 video/audio 没有处理就"顺手补上"，把两段式又搅回一段。
 
     return extra
 

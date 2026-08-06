@@ -7,7 +7,7 @@
 </h1>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
-  <img src="https://img.shields.io/badge/version-0.8.20-brightgreen.svg" alt="Version 0.8.20">
+  <img src="https://img.shields.io/badge/version-0.8.22--d4977c6-brightgreen.svg" alt="Version 0.8.22-d4977c6">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/UI-PyQt6%20%2B%20Fluent--Widgets-238636.svg" alt="UI">
 </p>
@@ -188,7 +188,7 @@ MomentShift/
 
 ## 📝 日志
 
-软件在**程序根目录下的 `logs/`** 自动记录运行日志（按天滚动，仅保留最近 7 天，启动时自动清理）。
+软件在**程序根目录下的 `logs/`** 自动记录运行日志（按天新建、`DEBUG` 级落盘，单文件超过 8 MB 自动滚动出 `.1`/`.2`/`.3` 备份、最多保留 4 份约 32 MB，并仅保留最近 7 天的文件，启动时自动清理）。
 转换失败、异常、闪退等信息都会写入 `logs/momentshift-YYYY-MM-DD.log`，便于排查问题。
 如遇异常，请将对应的日志文件随 Issue 一并提交。
 
@@ -215,6 +215,32 @@ MomentShift/
 > ffmpeg 及其静态构建由第三方提供，遵循各自的开源许可；本软件仅对其作调用封装，相关权利归原作者所有。
 
 > 如有遗漏未标注的开源项目请提醒 :)
+
+---
+
+## 📌 更新日志 / Changelog
+
+### V0.8.22
+
+- **Bug 修复**
+  - **「音频转文字 → 服务模式配置」模型下拉不同步**：此前下载"有主要模型"后，只有「ASR 设置」里的推理模型下拉会随模型增加刷新，「服务模式配置」里的模型下拉不更新。已让模型增删、下载完成两条路径都刷新服务模式模型下拉；同时修复刷新时 `clear()` 触发 `currentIndexChanged` 把已选模型配置清空的隐性 bug。
+  - **「服务模式配置」缺三项功能开关**：补齐「结构化输出（时间戳+说话人）」「标点恢复（CPU）」「情感识别（emotion2vec）」三个可调用开关，与「ASR 设置」同名开关相互独立；服务端按开关启用对应处理（无模型/无硬件自动降级），请求也可用 `structured` / `punc` / `emotion` 表单字段单次覆盖。
+  - **压缩 / 放大队列仍是假进度条**：V0.8.21 的真进度条（ffmpeg `-progress` 快照、速度、剩余时间 ETA）与实时数据只接进了转换队列，压缩、放大两个队列还是线性假进度。已把统计通道贯通两个队列：压缩队列经 `itemStats` 信号在队列行显示「速度 · 剩余时间」（真实快照到达即接管假进度）；放大队列运行中实时显示「已用 / 剩余」时间（由进度与已用时间推算）。
+- **UI 调整**
+  - **转换设置-视频 → 高级设置**：「仅提取音频」与「合并为单个文件」水平对齐（仅提取音频在前），「音频格式」在其下方，整体左对齐。
+  - **转换设置-图片 → 高级设置**：「压缩程序」新增「FFmpeg 压缩」选项（同「创建压缩任务」窗口），接入图片类别 FFmpeg 参数（预设 / 编码器 / 质量 / CRF / 强度 / 无损 / 最大宽度）；不整合「输出位置」「文件名后缀」「输出文件夹」三项。
+
+### V0.8.21
+
+- **Bug 修复**
+  - **压缩视频选 nvenc 必失败**：压缩链路的视频编码器此前静态写死含 `h264_nvenc`/`hevc_nvenc`，在非 NVIDIA 设备（如 AMD 显卡）上会报「Could not open encoder」。现已补齐三层防护：UI 下拉按本机硬件可用性灰显不可用项、核心层 `pick_video_encoder()` 加可用性守卫并自动回落 `libx264`/`libx265`、执行层安全重试识别「编码器打不开」后剥掉硬件编码器改走 CPU。
+  - **「文件名后缀」标签残留**：压缩任务窗口从「保存在源文件旁」切到「指定文件夹」时，会多出一个居中的无意义字符串。已持有整行引用并整行隐藏，与文件夹行对称。
+- **功能调整**：「创建压缩任务 - 视频 / 音频」里的 FFmpeg 压缩参数，已同步进「转换设置 - 视频 / 音频 → 高级设置」。视频新增 11 项（profile / encoder / crf / preset / tune / pixfmt / maxwidth / fps / audio / abr / faststart），音频新增 7 项（profile / encoder / bitrate / mp3q / flac_level / channels / samplerate）；不含输出位置、文件名后缀、输出文件夹。
+- **真进度条**：修复 ffmpeg `-progress` 解析里 `duration_ms` 键错误（ffmpeg 从不输出该键）与 `out_time_ms` 单位误用（实为微秒），改为以 `out_time` 为主、`out_time_us` 为辅；总时长由 ffprobe 预取（兜底从 ffmpeg 的 `Duration:` 行正则抓取）；解析 `speed` 计算剩余时间（ETA），保留「假进度兜底」合并策略（图片压缩等无时长场景继续用假进度）。
+- **队列行实时数据**（吸收 FFmpegFreeUI）：转换 / 压缩两阶段的速度、ETA、已处理时长经 `task_stats` 信号呈现到队列行详情；真进度接管后进度条与文字实时对齐。
+- **日志内存管理**（吸收 FFmpegFreeUI）：日志改为按体积滚动（8 MB × 4 份约 32 MB 封顶），超限时仅丢弃进度行、保留错误行，避免批量转码时单日日志涨到几百 MB。
+- **防竞态 epoch token**：取消后立刻重试、清空队列、删除运行中任务等场景，异步回调携带世代号，过期回调自动作废并回收残留，不再因「WorkerSignals has been deleted」崩溃。
+- **真暂停 / 恢复**：新增软依赖 `psutil`（缺失自动降级为软暂停），暂停时经 `psutil` 挂起转码子进程，恢复时继续，长任务可中途打断而不丢进度。
 
 ---
 

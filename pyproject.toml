@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "momentshift"
 # 与 src/momentshift/metadata.py 的 VERSION 保持一致，改版本号必须同时改两处。
-version = "0.8.20"
+version = "0.8.22-d4977c6"
 description = "瞬变工坊 - 傻瓜式 ffmpeg 多媒体格式转换工具"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,9 +29,13 @@ classifiers = [
 #   7.x 是不兼容大版本，封顶避免自动升级把 GUI 打崩。
 # - qfluentwidgets 1.11 起 setBorderRadius / singledispatchmethod 构造签名固定，
 #   低于该版本会在启动阶段直接 TypeError。
+# - psutil 供 v0.8.21 的「真暂停」用（挂起/恢复整棵 ffmpeg 进程树）。
+#   它是**软依赖**：core/proc_control 惰性导入，缺失时自动退回旧的软暂停语义，
+#   不装也能跑，所以不封顶大版本。
 dependencies = [
     "PyQt6>=6.6,<7",
     "PyQt6-Fluent-Widgets>=1.11,<2",
+    "psutil>=5.9",
 ]
 
 [project.optional-dependencies]

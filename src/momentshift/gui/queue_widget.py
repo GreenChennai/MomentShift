@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QSizePolicy
 from qfluentwidgets import BodyLabel
 from qfluentwidgets import FluentIcon as FIF
 
+from ..core.ffmpeg_progress import format_eta, format_speed
 from ..core.logger import get_logger
 from ..core.qt_compat import QApplication, QWidget, Signal
 from ..i18n.translator import tr
@@ -53,10 +54,51 @@ from .theme import (
 
 log = get_logger("queue_widget")
 
+# 详情行里各段之间的分隔符。用全角间距而不是 " | "：详情行是 CaptionLabel 小字，
+# 竖线在小字号下会和相邻数字糊成一团，中点加宽间距在视觉上更松弛。
+DETAIL_SEP = "   ·   "
+
 
 # --------------------------------------------------------------------------
 # 格式化辅助函数
 # --------------------------------------------------------------------------
+def join_detail(*parts: str) -> str:
+    """把详情行的若干片段用 :data:`DETAIL_SEP` 连接，自动跳过空串。
+
+    Args:
+        *parts: 片段文本，``None`` / 空串会被丢弃。
+    Returns:
+        连接后的字符串；全为空时返回空串。
+    """
+    return DETAIL_SEP.join(p for p in parts if p)
+
+
+def format_stats(snap) -> str:
+    """把一次 :class:`~core.ffmpeg_progress.ProgressSnapshot` 渲染成
+    ``1.53x   ·   剩余 02:31``。
+
+    Args:
+        snap: 进度快照；``None`` 或跑完（``finished``）时返回空串。
+    Returns:
+        可直接拼进详情行的文本；速度与剩余时间都拿不到时返回空串。
+
+    Notes:
+        **跑完就不显示**：``progress=end`` 那一帧的 ETA 恒为 0、速度是全程均值，
+        贴在「已完成」旁边只会误导，所以直接吐空串让详情行回落到大小对比。
+    """
+    if snap is None or getattr(snap, "finished", False):
+        return ""
+    parts: list[str] = []
+    spd = format_speed(getattr(snap, "speed", None))
+    if spd != "--":
+        parts.append(spd)
+    eta = getattr(snap, "eta_sec", None)
+    if eta is not None and eta >= 0:
+        parts.append(tr("convert.label.eta", t=format_eta(eta)))
+    return join_detail(*parts)
+
+
+
 def human_size(n: int) -> str:
     n = int(n or 0)
     if n <= 0:
@@ -345,6 +387,16 @@ class QueueItemWidget(ThemedCard):
     def __init__(self, task, parent=None):
         super().__init__(parent)
         self._task = task
+        # v0.8.21 E1：实时统计片段（速度 / 剩余时间），由 set_stats 刷新。
+        self._stats_text = ""
+        # 转换 / 压缩两阶段各自的百分比，都只存在视图里。
+        # 刻意**不**回写 task.progress：那是 core 侧的字段，GUI 线程反向写它
+        # 会和调度线程抢同一个属性，且真正的真相源始终在 manager 那边。
+        self._run_pct = int(getattr(task, "progress", 0) or 0)
+        self._comp_pct = 0
+        # 当前**展示**中的状态。不能直接读 task.status：压缩态刻意不写回
+        # task.status（见 set_status），只看 task 会把压缩中误判成 done。
+        self._disp_status = task.status
         self._build()
 
     def _build(self):
@@ -388,6 +440,12 @@ class QueueItemWidget(ThemedCard):
 
     def set_progress(self, pct: int):
         self.prog.set_value(pct)
+        self._run_pct = int(pct)
+        # 进度条动了，详情行里的「45%   ·   1.53x   ·   剩余 02:31」也得跟着动。
+        # 改造前详情行的百分比只在 set_status 里写一次，之后一路停在旧值，
+        # 进度条和文字长期对不上（真进度接上后这个偏差尤其扎眼）。
+        if self._disp_status == "running":
+            self._refresh_live()
 
     # -- 详情行 ---------------------------------------------------------
     def _convert_sizes(self) -> tuple[int, int]:
@@ -424,6 +482,37 @@ class QueueItemWidget(ThemedCard):
 
         return "<br>".join(parts)
 
+    # -- 实时统计（v0.8.21 E1） -------------------------------------------
+    def _refresh_live(self) -> None:
+        """按当前展示状态重绘详情行的「运行态」内容。
+
+        Notes:
+            只处理 ``running`` / ``compressing`` 两个进行态。终态（done /
+            failed / canceled）的详情行由 :meth:`set_status` 独占，这里不碰，
+            否则速度片段会在任务结束后残留在大小对比旁边。
+        """
+        if self._disp_status == "running":
+            self.detailLbl.setText(join_detail(f"{self._run_pct}%", self._stats_text))
+        elif self._disp_status == "compressing":
+            self.detailLbl.setText(
+                join_detail(self._detail_text(), f"{self._comp_pct}%", self._stats_text)
+            )
+
+    def set_stats(self, snap) -> None:
+        """接收 ffmpeg 实时统计（速度 / 剩余时间）并刷新详情行。
+
+        Args:
+            snap: :class:`~core.ffmpeg_progress.ProgressSnapshot`；``None``
+                表示清空统计片段。
+
+        Notes:
+            转换阶段与压缩阶段共用这一个入口 —— 两条执行链都把快照发到
+            ``ConversionManager.task_stats``，行控件只按「当前是哪个阶段」
+            决定把片段拼到哪一行，不需要区分来源。
+        """
+        self._stats_text = format_stats(snap)
+        self._refresh_live()
+
     # -- 状态 -----------------------------------------------------------
     def set_status(self, status: str, error: str = ""):
         """更新状态胶囊与详情行。
@@ -437,18 +526,26 @@ class QueueItemWidget(ThemedCard):
 
         if status not in ("compressing", "compress_done"):
             self._task.status = status
+        self._disp_status = status
         self.pill.set_status(status)
         self.prog.set_error(status == "failed")
         self.retryBtn.setVisible(status in ("failed", "canceled"))
+
+        # 离开进行态就把速度/剩余时间清掉，避免「已完成」旁边挂着一个
+        # 早已过期的 ETA。转换→压缩的切换不清（那是换阶段不是结束）。
+        if status not in ("running", "compressing"):
+            self._stats_text = ""
+        if status in ("pending", "running"):
+            # 重试会把 core 侧的 progress 归零，这里跟着同步，否则详情行会先
+            # 闪一下上一轮残留的「100%」再被首个进度回调刷掉。
+            self._run_pct = int(getattr(self._task, "progress", 0) or 0)
 
         if status in ("done", "compress_done"):
             self.detailLbl.setText(self._detail_text())
         elif status == "failed":
             self.detailLbl.setText((error or tr("convert.status.failed"))[:80])
-        elif status == "running":
-            self.detailLbl.setText(f"{self._task.progress}%")
-        elif status == "compressing":
-            self.detailLbl.setText(self._detail_text())
+        elif status in ("running", "compressing"):
+            self._refresh_live()
         else:
             self.detailLbl.setText("")
 
@@ -457,11 +554,14 @@ class QueueItemWidget(ThemedCard):
         self.prog.set_value(pct)
         self.prog.set_error(False)
         self.pill.set_status("compress_done" if done else "compressing")
+        self._comp_pct = int(pct)
         if done:
+            self._disp_status = "compress_done"
+            self._stats_text = ""
             self.detailLbl.setText(self._detail_text())
         else:
-            base = self._detail_text()
-            self.detailLbl.setText(f"{base}   ·   {pct}%" if base else f"{pct}%")
+            self._disp_status = "compressing"
+            self._refresh_live()
 
     def restore_after_compress(self):
         """回到「已完成」态（压缩过的任务保持蓝色压缩完成）。"""
@@ -521,6 +621,10 @@ class QueueListWidget(QueueListBase):
     def update_progress(self, task_id: str, pct: int):
         """转换队列的历史方法名，语义同基类的 ``set_progress``。"""
         self.set_progress(task_id, pct)
+
+    def update_stats(self, task_id: str, snap):
+        """接 ``ConversionManager.task_stats``，语义同基类的 ``set_stats``。"""
+        self.set_stats(task_id, snap)
 
     def update_status(self, task_id: str, status: str, error: str = ""):
         w = self.items.get(task_id)

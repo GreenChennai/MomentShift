@@ -162,6 +162,8 @@ class ConvertInterface(InterfaceBase):
         # =====================================================================
         self.manager.queue_changed.connect(self._sync_queue)
         self.manager.progress_updated.connect(self.queueList.update_progress)
+        # v0.8.21 E1：ffmpeg 真实统计（速度 / 剩余时间）落到队列行详情
+        self.manager.task_stats.connect(self.queueList.update_stats)
         self.manager.task_finished.connect(self._on_finished)
         self.manager.compress_started.connect(self.queueList.update_compress_start)
         self.manager.compress_progress.connect(self.queueList.update_compress)
