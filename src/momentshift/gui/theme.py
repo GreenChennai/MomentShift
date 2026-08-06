@@ -20,9 +20,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QPropertyAnimation, QSize, Qt, pyqtProperty
+from PyQt6.QtCore import QPropertyAnimation, QSize, Qt, pyqtProperty, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -314,29 +314,34 @@ class ThemedCard(CardWidget):
 # =============================================================================
 # CollapsibleCard — 折叠卡片（带动效）
 # =============================================================================
-class _ArrowToggle(QPushButton):
+class _ArrowToggle(QWidget):
     """自绘折叠箭头按钮（V0.8.20 动画优化）。
 
-    为什么自绘而不是用 SVG 图标按钮：widget 无法直接旋转
+    为什么自绘而不是 SVG 图标按钮：widget 无法直接旋转
     （``QGraphicsRotation`` 是 ``QGraphicsTransform``，``setGraphicsEffect``
     不接受），瞬时换图又不够精致。改为自绘 chevron + ``angle`` 属性
     （``pyqtProperty``），由 :func:`animations.animate_value` 平滑旋转。
+
+    V0.8.20 Bug1 修复：**不能继承 QPushButton**。QPushButton 一旦设置了
+    样式表就由 ``QStyleSheetStyle`` 接管绘制，自绘 ``paintEvent`` 的内容
+    会被吞掉（Qt 官方文档原话："paintEvent() 中的 QPainter 绘图代码不再
+    显示"）——表现就是折叠箭头完全消失。改继承 ``QWidget`` 全自绘
+    （箭头 + 悬停/按下背景都在 ``paintEvent`` 里画），与 FormatCard 同一
+    已被验证可靠的模式；点击信号由鼠标事件自行发出。
 
     ``angle`` 语义：0° = 箭头向下（卡片收起，提示可展开）；180° = 箭头向上
     （卡片展开，提示可收起）。收起↔展开互为 180° 旋转。
     """
 
+    clicked = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(30, 30)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        # 透明底 + 极淡 hover/pressed（与其它图标按钮一致的克制风格）
-        self.setStyleSheet(
-            "QPushButton{background:transparent;border:none;border-radius:6px;}"
-            "QPushButton:hover{background:rgba(0,0,0,0.05);}"
-            "QPushButton:pressed{background:rgba(0,0,0,0.09);}"
-        )
         self._angle = 0.0
+        self._hover = False
+        self._pressed = False
 
     def _get_angle(self) -> float:
         return self._angle
@@ -347,20 +352,60 @@ class _ArrowToggle(QPushButton):
 
     angle = pyqtProperty(float, fget=_get_angle, fset=_set_angle)
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True
+            self.update()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        was_pressed = self._pressed
+        self._pressed = False
+        self.update()
+        if (
+            was_pressed
+            and event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self._pressed = False
+        self.update()
+        super().leaveEvent(event)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(
-            QColor(tokens.TEXT_STRONG),
-            2,
-            Qt.PenStyle.SolidLine,
-            Qt.PenCapStyle.RoundCap,
-            Qt.PenJoinStyle.RoundJoin,
+        w, h = self.width(), self.height()
+        # 悬停 / 按下反馈：浅黑底圆角（QSS 与自绘冲突，故在 paintEvent 里画）
+        if self._pressed:
+            painter.setBrush(QColor(0, 0, 0, 22))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(1, 1, w - 2, h - 2, 6, 6)
+        elif self._hover:
+            painter.setBrush(QColor(0, 0, 0, 12))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(1, 1, w - 2, h - 2, 6, 6)
+        # 箭头（chevron：两条线段汇聚成 V 形）
+        painter.setPen(
+            QPen(
+                QColor(tokens.TEXT_STRONG),
+                2,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
         )
-        painter.setPen(pen)
-        painter.translate(self.width() / 2.0, self.height() / 2.0)
+        painter.translate(w / 2.0, h / 2.0)
         painter.rotate(self._angle)
-        # chevron：两条线段汇聚成 V 形箭头
         painter.drawLine(-5.0, -2.0, 0.0, 3.0)
         painter.drawLine(5.0, -2.0, 0.0, 3.0)
 
@@ -496,6 +541,15 @@ class CollapsibleCard(ThemedCard):
         real_target = target_h
         if target_h <= 0:
             real_target = 0
+            # V0.8.20 Bug2：收起动画的起点必须是「当前实际高度」。
+            # 展开完成后 _on_anim_finished 会把 maximumHeight 解除为 16777215；
+            # 若直接用那个值做起点，动画前 99.998% 的时间都停在「看不见」的
+            # 高位区间（16777215 降到实际高度这段 maximumHeight 根本没限制住
+            # body），视觉上变成「顿一下然后瞬间收起」。用实际高度做起点，
+            # 收缩动画才流畅（与展开动画从 0 起同理）。
+            h = self._body.height()
+            if h > 0 and cur > h:
+                cur = h
         elif target_h == 16777215:
             if self._content_height > 0:
                 real_target = self._content_height
