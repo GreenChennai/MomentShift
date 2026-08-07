@@ -1134,12 +1134,11 @@ def _run_image_padded(
             # v0.8.31：PNG 中转用最快压缩（compress_level=1）。默认 6 对大图
             # 编码极慢（4000×3000 要几秒/张），批量放大时总耗时被拖到「慢非常多」。
             canvas.save(pad_in, compress_level=1)
-        # v0.8.31：**显式把 tile 写进命令**——只 pad 到 360 整数倍还不够，
-        # 若引擎默认 tile 不是 360（不同版本不同），pad 后尺寸仍非引擎实际
-        # tile 的整数倍 → 方块依旧。显式 ``-t <tile>`` 让引擎分块与 pad 严格
-        # 一致，无论引擎默认值如何。
-        values = dict(values or {})
-        values["tile"] = _effective_tile(values)
+        # v0.8.32：**不要显式传 -t**。真实引擎实测（AMD RX 9070 GRE +
+        # realesrgan-ncnn-vulkan）：显式 ``-t 360`` 会触发该引擎版本的
+        # partial-tile 拼接错位（360×360 方块回归）；``-t 0``（auto）模式
+        # 引擎内部自动对齐、边缘处理正确，无错位。pad 保留（兼容旧引擎的
+        # auto=360 场景），tile 保持用户设置（默认 0=auto）。
         cmd, err = build_command(eid, str(pad_in), str(pad_out), values)
         if err:
             return False, err
@@ -1316,12 +1315,8 @@ def run_frames(
             return False, "未从源文件抽取到任何帧"
 
         fps = _probe_fps(ffmpeg, src) or 25.0
-        # v0.8.31：pad 路径把 tile 显式写进引擎命令（见 _run_image_padded 注释）：
-        # 引擎实际 tile 与 pad 严格一致，杜绝「pad 到 360 但引擎按别的值分块」
-        # 导致方块仍在。
-        if pad_filter:
-            values = dict(values or {})
-            values["tile"] = _effective_tile(values)
+        # v0.8.32：不显式写 tile（见 _run_image_padded 注释）——显式 -t 会
+        # 触发新版引擎的 partial-tile 错位，auto（-t 0）模式引擎自己处理正确。
         cmd, err = build_command(eid, str(frames_in), str(frames_out), values)
         if err:
             return False, err
