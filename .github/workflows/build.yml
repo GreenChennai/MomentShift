@@ -76,6 +76,7 @@ jobs:
           prerelease: true
           overwrite: true
           name: ${{ github.ref_name }} (测试版)
+          body_path: RELEASE_NOTES.md
           fail_on_unmatched_files: false
           files: |
             dist/MomentShift-Windows-Portable.zip
@@ -128,6 +129,7 @@ jobs:
           prerelease: true
           overwrite: true
           name: ${{ github.ref_name }} (测试版)
+          body_path: RELEASE_NOTES.md
           fail_on_unmatched_files: false
           files: dist/MomentShift-macOS.zip
 
@@ -181,5 +183,6 @@ jobs:
           prerelease: true
           overwrite: true
           name: ${{ github.ref_name }} (测试版)
+          body_path: RELEASE_NOTES.md
           fail_on_unmatched_files: false
           files: dist/MomentShift-Linux.zip
