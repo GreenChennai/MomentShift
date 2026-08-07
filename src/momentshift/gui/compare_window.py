@@ -1,31 +1,24 @@
 """放大前后对比弹窗。
 
 职责边界：
-- 做：以独立弹窗展示放大前后对比；图片走 QPixmap 分割，视频 / GIF 走 Qt
-  内置 QtMultimedia 真实解码播放（v0.8.29 起弃用 python-mpv / libmpv）。
+- 做：以独立弹窗展示放大前后对比；图片走 QPixmap，视频走 QtMultimedia
+  （QMediaPlayer + QVideoSink 逐帧解码），GIF 走 QMovie；三类媒体统一画在
+  普通 QLabel 上，叠放分割用 ``setMask`` 裁剪，分割线由独立 overlay 绘制。
 - 不做：不解析媒体元数据；不管理下载。
 
 依赖：gui/theme、i18n/translator；被依赖：gui/upscale_interface。
 
-v0.8.24：支持视频 / GIF 对比；删除窗口内自定义标题栏；窗口 1280×720。
-v0.8.25：FFmpeg 抽帧播放（循环）；叠放分割 / 左右并排双模式。
-v0.8.26：视频 QMediaPlayer + QVideoWidget，GIF QMovie；ffplay 按钮；setMask。
-v0.8.27：python-mpv（libmpv）嵌入播放；分割线恢复；GIF 帧控制走 frame-step。
-v0.8.29 重构（轻量化）：
-- **弃用 python-mpv / libmpv**（112MB 依赖太重，且需系统装有 mpv）。改用
-  **Qt 内置 QtMultimedia**——它就是 Qt 官方的「FFmpeg-Qt」封装（PyQt6 自带、
-  零额外打包、底层 FFmpeg 解码，画质与 mpv 同源）：
-  - 视频：``QMediaPlayer`` + ``QVideoSink``，``videoFrameChanged`` 每帧转
-    ``QImage`` 显示到普通 ``QLabel``（进度 / 暂停 / seek / 循环原生支持）；
-  - GIF：``QMovie`` 播放，暂停态 ``jumpToFrame`` 做上一帧 / 下一帧
-    （V0.8.26 帧控制无效的根因是**播放中**跳帧被 Qt 忽略，必须暂停后跳）；
-  - 图片：``QPixmap``。
-  三类媒体最终都画在**普通 QLabel** 上 → 父容器 ``setMask`` 分割对比对
-  视频 / GIF / 图片统一可靠（不再有 QVideoWidget 原生窗口 / mpv 渲染面的
-  层级问题）。
-- 分割线交互：默认在中间；鼠标进入对比区 → 光标隐藏、分割线跟随鼠标左右
-  移动；鼠标离开对比区（含移入下方功能栏）→ 光标恢复、分割线回到中间。
-- 删除 mpv_player 依赖与「libmpv 缺失」提示（QtMultimedia 内置，永不缺失）。
+v0.8.24~v0.8.29 历次迭代：支持视频/GIF 对比；抽帧 → mpv → QtMultimedia。
+v0.8.30 完全重写（用户实测反馈 Bug 太多，要求重写整个模块）：
+- 分割线没有绘制 → 独立 ``_SplitOverlay`` 透明层画线（不再画在父控件
+  paintEvent 里被全窗口媒体视图遮挡）。
+- 分割线不跟随鼠标（要按住左键）→ overlay 全程 ``setMouseTracking`` 捕获
+  ``mouseMoveEvent``，悬停即跟随。
+- 「叠放分割/左右并排」按钮黑字灰底看不清 → QSS 改为背景 ``#333333`` 白字。
+- 左右并排只显示左边 → 模式切换时 ``clearMask()`` 清除叠放残留的裁剪
+  mask（旧实现切 side 后右侧仍被 mask 裁没）。
+- 叠放分割鼠标移动鬼畜 + 布局仍并排 → 模式切换彻底重建（side 布局摘除 /
+  overlay 显隐 / 视图 reparent），状态不再残留。
 """
 
 from __future__ import annotations
@@ -58,6 +51,15 @@ _VIDEO_EXTS = {
 _MODE_SPLIT = "split"  # 叠放分割（默认）
 _MODE_SIDE = "side"    # 左右并排
 
+# 工具条按钮（v0.8.30：深底白字，用户反馈灰底黑字看不清）
+_BTN_QSS = (
+    "QPushButton{background:#333333;color:white;border:none;"
+    "border-radius:6px;padding:5px 14px;font-size:12px;}"
+    "QPushButton:hover{background:#4a4a4a;}"
+    "QPushButton:checked{background:#238636;color:white;}"
+    "QPushButton:disabled{background:#555555;color:#bbbbbb;}"
+)
+
 
 def _is_video(path: str) -> bool:
     return Path(path).suffix.lower() in _VIDEO_EXTS
@@ -71,9 +73,9 @@ def _is_gif(path: str) -> bool:
 class _MediaView(QWidget):
     """单侧画面容器：图片 / 视频帧 / GIF 帧统一画在普通 QLabel 上。
 
-    v0.8.29：视频用 ``QMediaPlayer + QVideoSink`` 实时解码（QtMultimedia =
-    FFmpeg 解码，画质准确、零额外依赖），每帧 ``toImage()`` 显示到 QLabel；
-    GIF 用 ``QMovie``。QLabel 是普通控件 → 父容器 ``setMask`` 分割可靠。
+    视频用 ``QMediaPlayer + QVideoSink`` 实时解码（QtMultimedia = FFmpeg
+    解码，零额外依赖），每帧 ``toImage()`` 显示到 QLabel；GIF 用 ``QMovie``。
+    QLabel 是普通控件 → 父容器 ``setMask`` 分割可靠。
     """
 
     def __init__(self, parent=None):
@@ -83,9 +85,7 @@ class _MediaView(QWidget):
         self._movie: QMovie | None = None
         self._label = QLabel(self)
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._label.setStyleSheet(
-            f"background: black; color:{tokens.COMPARE_TEXT}; border: none;"
-        )
+        self._label.setStyleSheet("background: black; color: #cccccc; border: none;")
         self._label.setWordWrap(True)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -96,16 +96,15 @@ class _MediaView(QWidget):
         """静态图片（单帧）。"""
         self._clear_media()
         pm = QPixmap(path) if path else QPixmap()
-        if pm.isNull():
-            self._label.setPixmap(QPixmap())
-        else:
-            self._label.setPixmap(
-                pm.scaled(
-                    self._label.size(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
+        self._label.setPixmap(
+            pm.scaled(
+                self._label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
             )
+            if not pm.isNull()
+            else QPixmap()
+        )
         self._label.show()
 
     def set_video(self, path: str) -> None:
@@ -178,15 +177,11 @@ class _MediaView(QWidget):
 
     def duration(self) -> float:
         """时长（秒）。"""
-        if self._player is not None:
-            return self._player.duration() / 1000.0
-        return 0.0
+        return self._player.duration() / 1000.0 if self._player is not None else 0.0
 
     def time_pos(self) -> float:
         """当前位置（秒）。"""
-        if self._player is not None:
-            return self._player.position() / 1000.0
-        return 0.0
+        return self._player.position() / 1000.0 if self._player is not None else 0.0
 
     def seek(self, seconds: float) -> None:
         if self._player is not None:
@@ -231,12 +226,59 @@ class _MediaView(QWidget):
 
 
 # --------------------------------------------------------------------------
+class _SplitOverlay(QWidget):
+    """叠放分割的透明覆盖层：画分割线 + 捕获鼠标（v0.8.30 重写）。
+
+    旧实现把分割线画在父控件 paintEvent 里，被全窗口的媒体视图盖住看不
+    见；鼠标事件也被子视图吃掉（要按住左键才触发 move）。本覆盖层浮在所有
+    媒体视图之上：透明、全窗口、``setMouseTracking`` 悬停即跟随。
+    """
+
+    def __init__(self, area: "_CompareArea"):
+        super().__init__(area)
+        self._area = area
+        self.setMouseTracking(True)
+        self.setStyleSheet("background: transparent;")
+
+    def paintEvent(self, _event):
+        x = int(self.width() * self._area.split_value())
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(accent_color().name()), 2)
+        painter.setPen(pen)
+        painter.drawLine(x, 0, x, self.height())
+        painter.end()
+
+    def mouseMoveEvent(self, event):
+        # 悬停即跟随（不需要按住左键）
+        w = self.width()
+        if w > 0:
+            self._area.set_split(event.position().x() / w)
+        super().mouseMoveEvent(event)
+
+    def enterEvent(self, _event):
+        # 进入对比区：隐藏光标，分割线随鼠标移动（纯对比体验）
+        self.setCursor(Qt.CursorShape.BlankCursor)
+        super().enterEvent(_event)
+
+    def leaveEvent(self, _event):
+        # 离开对比区（含移入下方功能栏）：恢复光标、分割线回中间
+        self.unsetCursor()
+        self._area.set_split(0.5)
+        super().leaveEvent(_event)
+
+
+# --------------------------------------------------------------------------
 class _CompareArea(QWidget):
     """对比显示区：两种模式共用。
 
     - ``split``：src / out 两个视图叠放，各自 ``setMask`` 裁剪到分割线
-      左右半。三类媒体都画在普通 QLabel 上，mask 裁剪统一可靠。
-    - ``side``：左右各一个视图并排。
+      左右半；``_SplitOverlay`` 浮在最上层画分割线并接收鼠标。
+    - ``side``：左右各一个视图并排（无 overlay、无 mask）。
+
+    模式切换做**彻底重建**（v0.8.30）：先摘除 side 布局中的视图、
+    ``clearMask()`` 清除叠放残留裁剪、再按目标模式挂载——杜绝旧实现
+    「切 side 右侧被 mask 裁没 / 切回 split 布局仍残留并排」的状态污染。
     """
 
     def __init__(self, parent=None):
@@ -244,19 +286,17 @@ class _CompareArea(QWidget):
         self._mode = _MODE_SPLIT
         self._split = 0.5
         self.setStyleSheet(f"background: {tokens.COMPARE_BG};")
-        self.setMouseTracking(True)
 
-        # 叠放分割：out 在下层、src 在上层，各自 mask 到左右半
         self._out_view = _MediaView(self)
         self._src_view = _MediaView(self)
-        self._out_view.show()
-        self._src_view.show()
-        self._src_view.raise_()
 
-        # 左右并排：两个视图各占一半
+        # 左右并排布局
         self._side_layout = QHBoxLayout(self)
         self._side_layout.setContentsMargins(0, 0, 0, 0)
         self._side_layout.setSpacing(4)
+
+        # 叠放分割覆盖层（画线 + 鼠标）
+        self._overlay = _SplitOverlay(self)
 
         self._apply_mode()
 
@@ -267,7 +307,6 @@ class _CompareArea(QWidget):
         self._side_layout.removeWidget(self._out_view)
         self._src_view.setParent(self)
         self._out_view.setParent(self)
-
         if kind == "video":
             self._src_view.set_video(src or "")
             self._out_view.set_video(out or "")
@@ -312,6 +351,8 @@ class _CompareArea(QWidget):
 
     # -- 模式 -------------------------------------------------------------
     def set_mode(self, mode: str) -> None:
+        if mode == self._mode:
+            return
         self._mode = mode
         self._apply_mode()
 
@@ -319,8 +360,14 @@ class _CompareArea(QWidget):
         return self._mode
 
     def _apply_mode(self) -> None:
+        # 1) 先彻底清理：摘除 side 布局中的视图、清除叠放 mask、隐藏 overlay
+        self._side_layout.removeWidget(self._src_view)
+        self._side_layout.removeWidget(self._out_view)
+        self._src_view.clearMask()
+        self._out_view.clearMask()
+        self._overlay.hide()
         if self._mode == _MODE_SIDE:
-            # 并排：摘下来重挂到 side 布局
+            # 2a) 左右并排：视图重挂到 side 布局
             self._src_view.setParent(None)
             self._out_view.setParent(None)
             self._side_layout.addWidget(self._src_view, 1)
@@ -328,18 +375,21 @@ class _CompareArea(QWidget):
             self._src_view.show()
             self._out_view.show()
         else:
-            # 叠放：直接叠在本控件上，src 在上层
+            # 2b) 叠放分割：视图叠在本控件上 + overlay 浮顶
             self._src_view.setParent(self)
             self._out_view.setParent(self)
             self._src_view.show()
             self._out_view.show()
             self._src_view.raise_()
+            self._overlay.raise_()
+            self._overlay.show()
             self._layout_split()
 
     def set_split(self, val: float) -> None:
         self._split = max(0.0, min(1.0, val))
         if self._mode == _MODE_SPLIT:
             self._layout_split()
+            self._overlay.update()
 
     def split_value(self) -> float:
         return self._split
@@ -355,35 +405,22 @@ class _CompareArea(QWidget):
         self._src_view.setMask(QRegion(QRect(0, 0, max(1, split_x), h)))
         self._out_view.setMask(QRegion(QRect(split_x, 0, max(1, w - split_x), h)))
         self._src_view.raise_()
-        self.update()
+        self._overlay.raise_()
+        self._overlay.setGeometry(0, 0, w, h)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._mode == _MODE_SPLIT:
             self._layout_split()
 
-    def paintEvent(self, _event):
-        if self._mode != _MODE_SPLIT:
-            return
-        x = int(self.width() * self._split)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor(accent_color().name()), 2)
-        painter.setPen(pen)
-        painter.drawLine(x, 0, x, self.height())
-        painter.end()
-
 
 # --------------------------------------------------------------------------
 class CompareWindow(QDialog):
     """放大前后对比窗口。
 
-    v0.8.29：
-    - 视频 / GIF 用 Qt 内置 QtMultimedia（FFmpeg 解码，零额外依赖）播放，
-      循环 + 进度 / 暂停 / 帧步进原生支持；
-    - 分割线对比对所有媒体类型生效（全部画在普通 QLabel，setMask 可靠）；
-    - 分割线交互：默认中间，鼠标进入对比区跟随移动（光标隐藏），离开恢复；
-    - 不再依赖 libmpv / python-mpv。
+    v0.8.30 完全重写：分割线由独立 overlay 绘制且悬停跟随；模式切换彻底
+    重建（无 mask/布局残留）；工具条按钮深底白字；视频 / GIF / 图片统一
+    QtMultimedia / QMovie / QPixmap，分割对比全部生效。
     """
 
     def __init__(self, src: str, out: str, parent=None):
@@ -392,7 +429,7 @@ class CompareWindow(QDialog):
         self._out_path = out
         self._kind = "image"
         self.setWindowTitle(tr("upscale.compare.title"))
-        # v0.8.26 对比#4：显式补上最小化/最大化，恢复原生 -、口、X
+        # 显式补上最小化/最大化，恢复原生 -、口、X
         self.setWindowFlags(
             Qt.WindowType.Window
             | Qt.WindowType.WindowSystemMenuHint
@@ -429,6 +466,8 @@ class CompareWindow(QDialog):
         self._sideBtn = QPushButton(tr("upscale.compare.mode.side"))
         self._sideBtn.setCheckable(True)
         self._sideBtn.clicked.connect(lambda: self._set_mode(_MODE_SIDE))
+        for b in (self._splitBtn, self._sideBtn):
+            b.setStyleSheet(_BTN_QSS)
         tb.addWidget(self._splitBtn)
         tb.addWidget(self._sideBtn)
 
@@ -445,7 +484,7 @@ class CompareWindow(QDialog):
         self._stepFwdBtn = QPushButton(tr("upscale.compare.next"))
         self._stepFwdBtn.clicked.connect(lambda: self._on_frame_step(1))
         for b in (self._pauseBtn, self._stepBackBtn, self._stepFwdBtn):
-            b.setStyleSheet(self._btn_style())
+            b.setStyleSheet(_BTN_QSS)
 
         self._mediaControls = QWidget(self)
         mc = QHBoxLayout(self._mediaControls)
@@ -465,50 +504,17 @@ class CompareWindow(QDialog):
         self._prog_timer.setInterval(200)
         self._prog_timer.timeout.connect(self._sync_progress)
 
-        # 鼠标事件（叠放分割模式用）
-        self._area.mouseMoveEvent = self._on_mouse_move
-        self._area.leaveEvent = self._on_mouse_leave
-        self._area.enterEvent = self._on_mouse_enter
-
-    def _btn_style(self) -> str:
-        return (
-            f"QPushButton{{background:{tokens.COMPARE_BORDER};"
-            f"color:{tokens.COMPARE_TEXT};border:none;"
-            f"border-radius:{tokens.RADIUS_SM}px;padding:4px 12px;"
-            f"font-size:{tokens.FONT_SMALL}px;}}"
-            f"QPushButton:hover{{background:{tokens.COMPARE_BTN_HOVER};}}"
-            f"QPushButton:checked{{background:{accent_color().name()};color:white;}}"
-        )
-
     def showEvent(self, event):
         super().showEvent(event)
         if not hasattr(self, "_loaded"):
             self._loaded = True
             self._load_media()
 
-    # -- 模式与鼠标 -------------------------------------------------------
+    # -- 模式 -------------------------------------------------------------
     def _set_mode(self, mode: str) -> None:
         self._area.set_mode(mode)
         self._splitBtn.setChecked(mode == _MODE_SPLIT)
         self._sideBtn.setChecked(mode == _MODE_SIDE)
-
-    def _on_mouse_move(self, event):
-        if self._area.mode() != _MODE_SPLIT:
-            return
-        w = self._area.width()
-        if w <= 0:
-            return
-        self._area.set_split(event.pos().x() / max(1, w))
-
-    def _on_mouse_enter(self, _event):
-        # 进入对比区：隐藏光标，分割线随鼠标移动（纯对比体验）
-        if self._area.mode() == _MODE_SPLIT:
-            self._area.setCursor(Qt.CursorShape.BlankCursor)
-
-    def _on_mouse_leave(self, _event):
-        # 离开对比区（含移入下方功能栏）：恢复光标、分割线回中间
-        self._area.unsetCursor()
-        self._area.set_split(0.5)
 
     # -- 媒体装载 ---------------------------------------------------------
     def _load_media(self):

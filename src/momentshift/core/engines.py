@@ -870,6 +870,105 @@ def build_command(eid: str, src: str, dst: str, values: dict) -> tuple[list, str
     return cmd, ""
 
 
+# ==========================================================================
+# v0.8.30 Bug1：tile 整数倍 pad / crop（移植 v0.8.2 修复，V0.7.5 重构时丢失）
+# ==========================================================================
+def _tile_default() -> int:
+    """ncnn-vulkan 引擎在 ``-t 0``（未传 tile）时的默认分块大小。
+
+    引擎 main.cpp 显式赋值 ``tile_size = 360``；输入分辨率不能被该值整除时，
+    边缘的 partial-tile 复制回原位会偏移出错，画面被切成 360×360 方块且
+    各块内容错位（v0.8.2 Bug1 / v0.8.30 回归的根因）。
+    """
+    return 360
+
+
+def _effective_tile(values: dict) -> int:
+    """values 里的 tile（0 / auto 时回退引擎默认 360）。"""
+    try:
+        t = int(values.get("tile", 0))
+    except (TypeError, ValueError):
+        t = 0
+    return t if t > 0 else _tile_default()
+
+
+def _tile_pad(width: int, height: int, tile: int) -> tuple[int, int]:
+    """把 ``(width, height)`` 向上取整到 ``tile`` 的整数倍。
+
+    已经是整数倍时返回原值。``tile <= 0`` 时按引擎默认 360。
+    """
+    t = tile if tile > 0 else _tile_default()
+    pad_w = ((int(width) + t - 1) // t) * t
+    pad_h = ((int(height) + t - 1) // t) * t
+    return pad_w, pad_h
+
+
+def _pad_offset(width: int, height: int, pad_w: int, pad_h: int) -> tuple[int, int]:
+    """居中 pad 偏移 ``(x, y)``，向下取偶对齐（4:2:0 色度采样要求偶数）。"""
+    x = (int(pad_w) - int(width)) // 2
+    y = (int(pad_h) - int(height)) // 2
+    return x - (x % 2), y - (y % 2)
+
+
+def _crop_box(
+    width: int, height: int, pad_w: int, pad_h: int, scale: int, pad_x: int, pad_y: int
+) -> tuple[int, int, int, int]:
+    """放大后把 padded 图像 crop 回 ``scale × (width, height)`` 的偏移矩形。
+
+    偏移与 ``_pad_offset`` 严格对应（``crop_x = pad_x * scale``），把 pad 的
+    黑边全部裁掉。返回 ``(crop_w, crop_h, crop_x, crop_y)``。
+    """
+    return (
+        int(width) * scale,
+        int(height) * scale,
+        int(pad_x) * scale,
+        int(pad_y) * scale,
+    )
+
+
+def _probe_size(ffmpeg: str, src: str) -> tuple[int, int] | None:
+    """ffprobe 探测媒体画布尺寸 ``(w, h)``。失败返回 None（调用方降级不 pad）。"""
+    ffprobe = shutil.which("ffprobe") or str(Path(ffmpeg).parent / binary_name("ffprobe"))
+    if not ffprobe or not Path(ffprobe).is_file():
+        return None
+    try:
+        proc = run_silent(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0:s=x",
+                src,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        val = proc.stdout.strip()
+        if "x" in val:
+            w, h = val.split("x")[:2]
+            return int(w), int(h)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass  # 静默原因：探测失败回退旧路径（不 pad）
+    return None
+
+
+def _probe_image_size(src: str) -> tuple[int, int] | None:
+    """Pillow 探测图片尺寸。失败返回 None。"""
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        with Image.open(src) as im:
+            return im.size
+    except Exception:  # noqa: BLE001 - 探测失败回退旧路径
+        return None
+
+
 # 进度解析：引擎常在 stdout/stderr 打印百分比或 "当前/总数"
 _PROG_PCT = re.compile(r"(\d{1,3})\s*%")
 _PROG_FRAC = re.compile(r"(\d+)\s*/\s*(\d+)")
@@ -975,7 +1074,26 @@ def run_image(
     eid: str, src: str, dst: str, values: dict, progress_cb: Callable[[int], None] | None = None,
     on_proc: Callable[[object], None] | None = None,
 ) -> tuple[bool, str]:
-    """单张图片（或整个图片目录）走一次引擎调用。"""
+    """单张图片（或整个图片目录）走一次引擎调用。
+
+    v0.8.30 Bug1：ncnn-vulkan 引擎按 tile（默认 360）分块推理，输入尺寸
+    非 tile 整数倍时边缘分块拼接错位成 360×360 方块（图片同样中招）。
+    尺寸不可整除时：Pillow 先 pad 到 tile 整数倍 → 引擎处理 → crop 回
+    ``scale × 原尺寸``（与 v0.8.2 修复一致）。
+    """
+    size = _probe_image_size(src)
+    tile = _effective_tile(values)
+    try:
+        scale = max(1, int(values.get("scale", 2)))
+    except (TypeError, ValueError):
+        scale = 2
+    if size is not None and tile > 0:
+        w, h = size
+        pad_w, pad_h = _tile_pad(w, h, tile)
+        if (pad_w, pad_h) != (w, h):
+            return _run_image_padded(
+                eid, src, dst, values, progress_cb, on_proc, (w, h), (pad_w, pad_h), scale
+            )
     cmd, err = build_command(eid, src, dst, values)
     if err:
         return False, err
@@ -987,6 +1105,54 @@ def run_image(
     if progress_cb is not None:
         progress_cb(3)  # 起步进度，避免进度条一直停在 0
     return _run(cmd, progress_cb=progress_cb, on_proc=on_proc)
+
+
+def _run_image_padded(
+    eid: str,
+    src: str,
+    dst: str,
+    values: dict,
+    progress_cb,
+    on_proc,
+    size: tuple[int, int],
+    pad_size: tuple[int, int],
+    scale: int,
+) -> tuple[bool, str]:
+    """pad → 引擎 → crop 的图片放大路径（v0.8.30 Bug1）。"""
+    from PIL import Image  # noqa: PLC0415
+
+    w, h = size
+    pad_w, pad_h = pad_size
+    pad_x, pad_y = _pad_offset(w, h, pad_w, pad_h)
+    tmp = tempfile.mkdtemp(prefix="ms_eng_")
+    try:
+        pad_in = Path(tmp) / "in.png"
+        pad_out = Path(tmp) / "out.png"
+        with Image.open(src) as im:
+            canvas = Image.new(im.mode, (pad_w, pad_h), (0, 0, 0))
+            canvas.paste(im, (pad_x, pad_y))
+            canvas.save(pad_in)
+        cmd, err = build_command(eid, str(pad_in), str(pad_out), values)
+        if err:
+            return False, err
+        ext = Path(dst).suffix.lower().lstrip(".")
+        eng = ENGINE_BY_ID[eid]
+        if ext in ("jpg", "jpeg", "png", "webp") and eng.eid.endswith("ncnn-vulkan"):
+            cmd += ["-f", "png"]
+        if progress_cb is not None:
+            progress_cb(3)
+        ok, msg = _run(cmd, progress_cb=progress_cb, on_proc=on_proc)
+        if not ok:
+            return False, f"放大失败: {msg}"
+        if not pad_out.is_file():
+            return False, "引擎未生成输出文件"
+        cw, ch, cx, cy = _crop_box(w, h, pad_w, pad_h, scale, pad_x, pad_y)
+        with Image.open(pad_out) as im:
+            box = (cx, cy, cx + cw, cy + ch)
+            im.crop(box).save(dst)
+        return True, ""
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _probe_fps(ffmpeg: str, src: str) -> float:
@@ -1022,9 +1188,16 @@ def _probe_fps(ffmpeg: str, src: str) -> float:
     return 25.0
 
 
-def _recombine(ffmpeg: str, frames_out: Path, src: str, dst: str, fps: float) -> tuple[bool, str]:
+def _recombine(
+    ffmpeg: str, frames_out: Path, src: str, dst: str, fps: float, crop_filter: str = ""
+) -> tuple[bool, str]:
     out_ext = Path(dst).suffix.lower().lstrip(".")
     if out_ext == "gif":
+        # v0.8.30 Bug1：GIF 调色板在 crop 后尺寸上跑（先 crop 再 palette，
+        # 避免 pad 黑边污染调色板）。
+        vf = (
+            f"{crop_filter}," if crop_filter else ""
+        ) + "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse"
         return _run(
             [
                 ffmpeg,
@@ -1034,37 +1207,38 @@ def _recombine(ffmpeg: str, frames_out: Path, src: str, dst: str, fps: float) ->
                 "-i",
                 str(frames_out / "%06d.png"),
                 "-vf",
-                "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+                vf,
                 dst,
             ],
             timeout=900,
         )
-    return _run(
-        [
-            ffmpeg,
-            "-y",
-            "-framerate",
-            f"{fps:g}",
-            "-i",
-            str(frames_out / "%06d.png"),
-            "-i",
-            src,
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a?",
-            "-c:v",
-            "libx264",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "copy",
-            dst,
-        ],
-        timeout=1800,
-    )
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-framerate",
+        f"{fps:g}",
+        "-i",
+        str(frames_out / "%06d.png"),
+        "-i",
+        src,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a?",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "copy",
+    ]
+    if crop_filter:
+        # 视频：编码前 crop 掉 pad 黑边（v0.8.30 Bug1）
+        cmd += ["-vf", crop_filter]
+    cmd.append(dst)
+    return _run(cmd, timeout=1800)
 
 
 def run_frames(
@@ -1091,10 +1265,36 @@ def run_frames(
     frames_out = Path(tmp) / "out"
     frames_in.mkdir(parents=True, exist_ok=True)
     frames_out.mkdir(parents=True, exist_ok=True)
+    # v0.8.30 Bug1：探测画布尺寸并 pad 到 tile 整数倍（ncnn-vulkan 分块
+    # 推理在输入尺寸非 tile 整数倍时拼接错位成 360×360 方块）。抽帧时
+    # pad、合成前 crop 回 scale×原尺寸。探测失败则降级旧路径。
+    crop_filter = ""
+    pad_filter = ""
+    try:
+        size = _probe_size(ffmpeg, src)
+    except Exception:  # noqa: BLE001
+        size = None
+    if size is not None:
+        try:
+            scale = max(1, int(values.get("scale", 2)))
+        except (TypeError, ValueError):
+            scale = 2
+        tile = _effective_tile(values)
+        w, h = size
+        pad_w, pad_h = _tile_pad(w, h, tile)
+        if (pad_w, pad_h) != (w, h):
+            pad_x, pad_y = _pad_offset(w, h, pad_w, pad_h)
+            pad_filter = f"pad={pad_w}:{pad_h}:{pad_x}:{pad_y}:black"
+            cw, ch, cx, cy = _crop_box(w, h, pad_w, pad_h, scale, pad_x, pad_y)
+            crop_filter = f"crop={cw}:{ch}:{cx}:{cy}"
     try:
         if progress_cb is not None:
             progress_cb(2)
-        ok, msg = _run([ffmpeg, "-y", "-i", src, str(frames_in / "%06d.png")], timeout=1800)
+        cmd = [ffmpeg, "-y", "-i", src]
+        if pad_filter:
+            cmd += ["-vf", pad_filter]
+        cmd.append(str(frames_in / "%06d.png"))
+        ok, msg = _run(cmd, timeout=1800)
         if not ok:
             return False, f"抽帧失败: {msg}"
         in_frames = sorted(frames_in.glob("*.png"))
@@ -1164,7 +1364,7 @@ def run_frames(
 
         if progress_cb is not None:
             progress_cb(92)  # 帧处理完成，进入合成阶段
-        ok, msg = _recombine(ffmpeg, frames_out, src, dst, fps)
+        ok, msg = _recombine(ffmpeg, frames_out, src, dst, fps, crop_filter=crop_filter)
         if not ok:
             return False, f"合成失败: {msg}"
         return True, ""
