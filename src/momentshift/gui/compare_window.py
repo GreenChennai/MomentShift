@@ -304,6 +304,26 @@ class _MediaView(QWidget):
         cur = self._movie.currentFrameNumber()
         self._movie.jumpToFrame((cur + delta) % n)
 
+    # -- 同步（v0.8.35：视频/GIF 左右对齐）--------------------------------
+    def frame_number(self) -> int:
+        """GIF 当前帧号；非 GIF 返回 -1。"""
+        if self._movie is not None and self._movie.frameCount() > 0:
+            return self._movie.currentFrameNumber()
+        return -1
+
+    def jump_to_frame(self, n: int, keep_state: bool = True) -> None:
+        """GIF 跳帧并尽量保持播放状态（QMovie 播放中 jump 无效 → 先暂停再恢复）。"""
+        if self._movie is None:
+            return
+        cnt = self._movie.frameCount()
+        if cnt <= 0:
+            return
+        was_playing = self._movie.state() == QMovie.MovieState.Running
+        self._movie.setPaused(True)
+        self._movie.jumpToFrame(n % cnt)
+        if was_playing and keep_state:
+            self._movie.start()
+
     def _clear_media(self) -> None:
         if self._player is not None:
             self._player.stop()
@@ -418,6 +438,19 @@ class _CompareArea(QWidget):
         self._refresh_timer.setInterval(60)
         self._refresh_timer.timeout.connect(self._refresh_all)
 
+        # v0.8.35：
+        # - 缩放期间暂停视频（只显示当前帧），停止缩放 500ms 后恢复播放；
+        # - 1s 轮询把左右播放位置/帧号对齐（切模式/缩放后容易漂移）。
+        self._resume_timer = QTimer(self)
+        self._resume_timer.setSingleShot(True)
+        self._resume_timer.setInterval(500)
+        self._resume_timer.timeout.connect(self._resume_after_zoom)
+        self._zoom_paused = False
+        self._was_playing = False
+        self._sync_timer = QTimer(self)
+        self._sync_timer.setInterval(1000)
+        self._sync_timer.timeout.connect(self._sync_sides)
+
         # 左右并排布局
         self._side_layout = QHBoxLayout(self)
         self._side_layout.setContentsMargins(0, 0, 0, 0)
@@ -441,6 +474,9 @@ class _CompareArea(QWidget):
         self._src_view.set_zoom(self._zoom)
         self._out_view.set_zoom(self._zoom)
         self._refresh_timer.start()
+        # v0.8.35：缩放交互 → 视频/GIF 先暂停（只显示当前帧），
+        # 停止缩放 500ms 后恢复播放——彻底消除滚轮期间的解码/缩放压力。
+        self._on_zoom_interaction()
 
     def _refresh_all(self) -> None:
         self._src_view.refresh_display()
@@ -451,6 +487,46 @@ class _CompareArea(QWidget):
 
     def reset_zoom(self) -> None:
         self.set_zoom(1.0)
+
+    # -- v0.8.35：缩放暂停 + 延迟恢复 -------------------------------------
+    def _on_zoom_interaction(self) -> None:
+        """缩放期间暂停动态媒体（视频/GIF），500ms 无新缩放后恢复。"""
+        if self._src_view.is_dynamic() and self.is_playing():
+            if not self._zoom_paused:
+                self._zoom_paused = True
+                self._was_playing = True
+            self.pause()  # 两侧暂停，停在当前帧
+        self._resume_timer.start()  # 每次滚轮重置 500ms
+
+    def _resume_after_zoom(self) -> None:
+        if not self._zoom_paused:
+            return
+        self._zoom_paused = False
+        if self._was_playing:
+            self._was_playing = False
+            self.play()  # play 内部先同步再播放
+        self._force_sync()
+
+    # -- v0.8.35：左右播放同步 --------------------------------------------
+    def _sync_sides(self) -> None:
+        """把 out（从）对齐到 src（主）：视频按时间位置，GIF 按帧号。"""
+        sv, ov = self._src_view, self._out_view
+        if sv._player is not None and ov._player is not None:
+            try:
+                p1, p2 = sv.time_pos(), ov.time_pos()
+                if abs(p1 - p2) > 0.15:  # 漂移超 150ms 才对齐，避免频繁跳变
+                    ov.seek(p1)
+            except Exception:  # noqa: BLE001 - seek 失败忽略，下次轮询再试
+                pass
+        elif sv._movie is not None and ov._movie is not None:
+            f1, f2 = sv.frame_number(), ov.frame_number()
+            if f1 >= 0 and f2 >= 0 and abs(f1 - f2) > 1:
+                ov.jump_to_frame(f1)
+
+    def _force_sync(self) -> None:
+        """立即对齐一次（切模式 / 恢复播放后调用）。"""
+        if self._src_view.is_dynamic() and self._out_view.is_dynamic():
+            self._sync_sides()
 
     # -- 内容 -------------------------------------------------------------
     def set_content(self, src: str | None, out: str | None, kind: str) -> None:
@@ -472,6 +548,8 @@ class _CompareArea(QWidget):
 
     # -- 播放（同步两侧） -------------------------------------------------
     def play(self) -> None:
+        # v0.8.35：先对齐再播，保证恢复/重新播放时左右起点一致
+        self._force_sync()
         self._src_view.play()
         self._out_view.play()
 
@@ -536,6 +614,8 @@ class _CompareArea(QWidget):
             self._overlay.raise_()
             self._overlay.show()
             self._layout_split()
+        # v0.8.35：切模式可能让播放器/布局重排 → 立即对齐一次左右
+        self._force_sync()
 
     def set_split(self, val: float) -> None:
         self._split = max(0.0, min(1.0, val))
@@ -751,6 +831,8 @@ class CompareWindow(QDialog):
             self._pauseBtn.setText(tr("upscale.compare.pause"))
             if self._kind == "video":
                 self._prog_timer.start()
+            # v0.8.35：动态媒体开启左右同步轮询（1s 对齐漂移）
+            self._area._sync_timer.start()
         self._area.set_content(src, out, self._kind)
         if dynamic:
             self._area.play()
