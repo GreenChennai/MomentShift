@@ -151,10 +151,6 @@ class AboutInterface(InterfaceBase):
         self._ff_section = self._build_env_section("FFmpeg", "")
         env_vb.addWidget(self._ff_section)
 
-        # v0.8.28：libmpv 状态行（视频 / GIF 对比播放用；信息性状态，无按钮）
-        self._mpv_row = self._build_status_row(tr("about.env.mpv"))
-        env_vb.addWidget(self._mpv_row)
-
         self.vbox.addWidget(env_card)
 
         self._refresh_env()
@@ -170,24 +166,6 @@ class AboutInterface(InterfaceBase):
         up = getattr(win, "upscaleInterface", None)
         if up is not None and hasattr(up, "reload_engines"):
             up.reload_engines()
-
-    def _build_status_row(self, name: str):
-        """构建单条纯状态行（v0.8.28：libmpv 用，无下载按钮）。"""
-        sec = QWidget()
-        row = QHBoxLayout(sec)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-        dot = QLabel()
-        dot.setFixedSize(8, 8)
-        dot.setStyleSheet("border-radius: 4px;")
-        row.addWidget(dot)
-        name_lbl = StrongBodyLabel(name)
-        row.addWidget(name_lbl, 1)
-        status_lbl = CaptionLabel("")
-        row.addWidget(status_lbl)
-        sec._dot = dot
-        sec._status = status_lbl
-        return sec
 
     def _build_env_section(self, name: str, ok_text: str):
         """构建单条环境（v0.3.6：上下结构，按钮移入内部）。"""
@@ -308,19 +286,6 @@ class AboutInterface(InterfaceBase):
         except (TypeError, RuntimeError):  # 静默原因：按钮尚未连接任何槽时 disconnect 会抛错
             pass
         self._ff_section._btn.clicked.connect(self._download_ffmpeg)
-
-        # v0.8.28：libmpv 状态（视频 / GIF 对比播放用；缺失只是功能降级，不标红）
-        from ..core.mpv_player import mpv_available  # noqa: PLC0415
-
-        mpv_ok = mpv_available()
-        self._mpv_row._status.setText(
-            tr("about.env.mpv.ok") if mpv_ok else tr("about.env.mpv.missing")
-        )
-        color = success_color().name() if mpv_ok else muted_text()
-        self._mpv_row._status.setStyleSheet(
-            f"color:{color};font-size:{tokens.FONT_SMALL}px;"
-        )
-        self._mpv_row._dot.setStyleSheet(tokens.dot_qss(color, 4))
 
     def _download_ffmpeg(self):
         from ..core.ffmpeg_download import FfmpegDownloadWorker

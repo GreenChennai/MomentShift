@@ -123,10 +123,6 @@ hiddenimports = [
     # v0.8.21：真暂停 / 恢复经 psutil 挂起子进程。proc_control 用惰性 import，
     # PyInstaller 静态分析抓不到，必须显式声明，否则构建产物缺失 psutil → 降级软暂停。
     "psutil",
-    # v0.8.27：对比窗口视频 / GIF 播放走 python-mpv。mpv_player 在函数内
-    # 延迟 ``import mpv``，静态分析抓不到；libmpv-2.dll 由交付脚本复制到
-    # exe 同目录（_internal 不在 Windows DLL 搜索路径）。
-    "mpv",
 ]
 
 a = Analysis(
