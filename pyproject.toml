@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "momentshift"
 # 与 src/momentshift/metadata.py 的 VERSION 保持一致，改版本号必须同时改两处。
-version = "0.8.30-c949892"
+version = "0.8.31-1684725"
 description = "瞬变工坊 - 傻瓜式 ffmpeg 多媒体格式转换工具"
 readme = "README.md"
 requires-python = ">=3.10"
