@@ -7,7 +7,7 @@
 </h1>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
-  <img src="https://img.shields.io/badge/version-0.8.26--b696e94-brightgreen.svg" alt="Version 0.8.26-b696e94">
+  <img src="https://img.shields.io/badge/version-0.8.27--9672d92-brightgreen.svg" alt="Version 0.8.27-9672d92">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/UI-PyQt6%20%2B%20Fluent--Widgets-238636.svg" alt="UI">
 </p>
