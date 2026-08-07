@@ -142,12 +142,17 @@ class FakeProgressTracker:
         # 已 finish 的任务：fake / merge 必须返回 100，防止驱动器在
         # finish 后被某个漏调的 merge 自动重启假进度条。
         self._finished: set[str] = set()
+        # v0.8.23：真实进度已接管的任务。fake() 对它们固定返回 last（不再
+        # 线性增长），显示完全由 merge 进来的真实值推进——真进度一到，
+        # 假进度永久让位，不再出现「卡在 85%」的假进度主导观感。
+        self._real: set[str] = set()
 
     # ----- 生命周期 -----
     def start(self, task_id: str, estimate_seconds: float) -> None:
         """开始计时并把进度锚定 :data:`START_PCT` (5%)。"""
         # 允许对已 finish 的任务重新 start（retry 路径）。
         self._finished.discard(task_id)
+        self._real.discard(task_id)  # 新一轮任务重新允许假进度兜底
         self._starts[task_id] = self._clock()
         self._estimates[task_id] = max(0.5, float(estimate_seconds))
         self._last[task_id] = int(START_PCT)
@@ -158,6 +163,7 @@ class FakeProgressTracker:
         self._estimates.pop(task_id, None)
         self._last.pop(task_id, None)
         self._finished.discard(task_id)
+        self._real.discard(task_id)
 
     def finish(self, task_id: str) -> int:
         """任务完成，归 100 并标记终止。
@@ -169,6 +175,7 @@ class FakeProgressTracker:
         self._finished.add(task_id)
         self._starts.pop(task_id, None)
         self._estimates.pop(task_id, None)
+        self._real.discard(task_id)
         self._last[task_id] = 100
         return 100
 
@@ -177,10 +184,14 @@ class FakeProgressTracker:
         """当前假进度（0..100）。
 
         已 ``finish`` 的任务固定返回 100；未开始返回 0；超过预计时间封顶
-        :data:`CAP_PCT`。
+        :data:`CAP_PCT`。已被真实进度接管（``_real``）的任务返回最近一次
+        合并值，不再线性增长。
         """
         if task_id in self._finished:
             return 100
+        if task_id in self._real:
+            # 真进度接管：假进度冻结在最近值，避免反超真实进度
+            return self._last.get(task_id, 0)
         start = self._starts.get(task_id)
         est = self._estimates.get(task_id)
         if start is None or est is None:
@@ -190,27 +201,24 @@ class FakeProgressTracker:
         return int(START_PCT + frac * (CAP_PCT - START_PCT))
 
     def merge(self, task_id: str, real_pct: int) -> int:
-        """合并真实进度：``max(fake, real, last)``，clamp 0..100。
+        """合并真实进度：真实值到达即接管该任务，显示只由真实值推进。
 
-        三层 ``max`` 的语义：
-
-        * ``max(fake, real)`` —— 真实追上假进度后自然接管显示；
-        * ``max(..., last)`` —— 即便真实进度偶发回退（迟到的旧值 / 网络抖动），
-          显示值也**永不回退**，修复用户报告的「涨满又归零」。
-
-        已 ``finish`` 的任务返回 100（合并值不会超过终态）。
+        接管语义（v0.8.23）：首个真实进度到来时把任务记入 ``_real``，
+        ``fake()`` 对该任务冻结，此后显示值 = ``max(last, real)`` ——
+        单调不回退、不会反超真实进度，也不再有「假进度封顶 85% 盖住
+        真进度」的问题。已 ``finish`` 的任务返回 100。
         """
         if task_id in self._finished:
             self._last[task_id] = 100
             return 100
         real = max(0, min(100, int(real_pct)))
-        candidate = max(self.fake(task_id), real)
+        # 真实进度可用 → 永久接管（无论它当前是否追上假进度）
+        self._real.add(task_id)
         last_val = self._last.get(task_id, -1)
         if last_val < 0:
-            # merge 早于 start（驱动器会兜底自动 start，此分支仅兜底纯逻辑调用）
-            merged = candidate
+            merged = real
         else:
-            merged = max(last_val, candidate)
+            merged = max(last_val, real)
         self._last[task_id] = merged
         return merged
 

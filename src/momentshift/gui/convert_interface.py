@@ -302,22 +302,31 @@ class ConvertInterface(InterfaceBase):
         self._update_controls()
 
     def _follow_running(self, task_id: str):
-        """v0.7.4 Adj2：将队列滚动到正在转换的任务。"""
+        """v0.7.4 Adj2：将队列滚动到正在转换的任务。
+
+        v0.8.23 FF-Bug#1：此处同时把该行的状态胶囊刷成「转换中」。
+        此前 ``task_started`` 只连到这里做滚动，pill 停在构建时的
+        「等待中」，要到任务结束才翻成完成/失败——运行中一直是灰色。
+        """
+        self.queueList.update_status(task_id, "running")
         w = self.queueList.items.get(task_id)
         if w:
             self._queue_auto_follow.ensure(w)
 
     def _update_controls(self):
-        """根据 manager 状态刷新各按钮的启用/文案。"""
+        """根据 manager 状态刷新各按钮的启用/文案/图标。"""
         running = self.manager.is_running
         has = bool(self.manager.tasks)
         self.startBtn.setEnabled(not running and has and self.manager.has_ffmpeg)
         self.pauseBtn.setEnabled(running)
         self.clearBtn.setEnabled(has)
         if running and self.manager.is_paused:
+            # v0.8.23 FF-Bug#3：暂停态图标随文案一起切（暂停 → 继续）
             self.pauseBtn.setText(tr("convert.resume"))
+            self.pauseBtn.setIcon(FIF.PLAY)
         else:
             self.pauseBtn.setText(tr("convert.pause"))
+            self.pauseBtn.setIcon(FIF.PAUSE)
 
     def _on_start(self):
         """开始转换：检查 ffmpeg 就绪 + 同格式警告后启动。"""

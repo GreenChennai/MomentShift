@@ -52,6 +52,13 @@ from .fake_progress import FakeProgressDriver, estimate_seconds
 from .logger import get_logger
 from .qt_compat import QObject, QRunnable, QThreadPool, Signal
 
+# proc_control 惰性导入：它内部惰性引入 psutil，且与部分执行体存在间接依赖，
+# 模块级导入会让 task_pool 无条件拖起整个 psutil 探测链。
+def _proc_control():
+    from . import proc_control  # noqa: PLC0415 - 延迟导入
+
+    return proc_control
+
 log = get_logger("task_pool")
 
 __all__ = ["PoolItem", "TaskPool", "TaskState"]
@@ -78,6 +85,11 @@ ProgressCb = Callable[[int], None]
 # 实时统计回调：``run_fn`` 用它上报 ffmpeg 进度快照（速度 / 剩余时间 / 帧率）。
 # 没有 ffmpeg 进度元数据的后端（图片压缩）不会调用，因此允许为 ``None``。
 StatsCb = Callable[[object], None]
+
+# 子进程句柄回调（v0.8.23 FF-Bug#3）：``run_fn`` 启动外部程序时上报
+# ``Popen``，退出时上报 ``None``。池据此用 psutil 挂起/恢复进程树，实现
+# 「暂停真的停」而不是只停派发。不启动子进程的执行体留空（None）。
+ProcCb = Callable[[object], None]
 
 # 业务执行体。签名 ``(item, progress_cb, cancel_event) -> (ok, message)``。
 # ``cancel_event`` 被置位表示用户已清空/移除该任务，实现方应尽快收尾并清理临时文件。
@@ -108,6 +120,9 @@ class PoolItem:
     # v0.8.22 Bug3-A：实时统计回调（ffmpeg 进度快照）。由 worker 在运行期挂上，
     # 执行体在收到真实进度时调用；不持有进度元数据的后端留空（None）。
     stats_cb: "StatsCb | None" = None
+    # v0.8.23 FF-Bug#3：子进程句柄回调。由 worker 在运行期挂上，执行体启动
+    # 外部程序时上报 Popen、退出时上报 None；池用它做 psutil 真暂停。
+    proc_cb: "ProcCb | None" = None
 
     @property
     def is_finished(self) -> bool:
@@ -138,6 +153,7 @@ class _WorkerSignals(QObject):
     progress = Signal(str, int)  # (iid, 0~100)
     finished = Signal(str, bool, str)  # (iid, ok, message)
     stats = Signal(str, object)  # (iid, ProgressSnapshot)
+    proc = Signal(str, object)  # (iid, Popen | None) v0.8.23 FF-Bug#3
 
 
 class _PoolWorker(QRunnable):
@@ -181,10 +197,16 @@ class _PoolWorker(QRunnable):
             # v0.8.22 Bug3-A：ffmpeg 进度快照（速度 / 剩余时间）跨线程转给池所在线程。
             self._signals.stats.emit(iid, snap)
 
+        def report_proc(proc) -> None:
+            # v0.8.23 FF-Bug#3：子进程句柄（Popen / None）跨线程转给池所在线程，
+            # 池登记后用 psutil 挂起/恢复，实现真暂停。
+            self._signals.proc.emit(iid, proc)
+
         report(0)
-        # 把 stats 闭包挂到条目上，执行体（run_fn）在第一个参数 `item` 上即可取到。
-        # 退出后清空，避免任务回收后还能被误调到野指针。
+        # 把 stats / proc 闭包挂到条目上，执行体（run_fn）在第一个参数 `item`
+        # 上即可取到。退出后清空，避免任务回收后还能被误调到野指针。
         self.item.stats_cb = report_stats
+        self.item.proc_cb = report_proc
         try:
             ok, message = self._run_fn(self.item, report, self._cancel)
         except Exception:
@@ -194,6 +216,7 @@ class _PoolWorker(QRunnable):
             ok, message = False, "exception (see log)"
         finally:
             self.item.stats_cb = None
+            self.item.proc_cb = None
         self._signals.finished.emit(iid, bool(ok), str(message or ""))
 
 
@@ -250,11 +273,18 @@ class TaskPool(QObject):
         self._started_at = 0.0
         self._elapsed_ms = 0
 
+        # v0.8.23 FF-Bug#3：正在跑任务的子进程登记表（iid -> Popen），
+        # 暂停时用 psutil 挂起整棵进程树，恢复时解挂。worker 线程写入，
+        # 池所在线程读取，故全程持锁。
+        self._procs: dict[str, object] = {}
+        self._procs_lock = threading.Lock()
+
         # parent=self：随池同生共死，杜绝  /  那种「信号对象先没了」
         # 的崩溃。跨线程发射走队列连接，槽函数回到池所在线程执行。
         self._signals = _WorkerSignals(self)
         self._signals.progress.connect(self._on_worker_progress)
         self._signals.stats.connect(self._on_worker_stats)
+        self._signals.proc.connect(self._on_worker_proc)
         self._signals.finished.connect(self._on_worker_finished)
 
         # v0.8.2 Bug3：假进度条驱动。压缩 / 放大任务（没有 ffmpeg 进度元
@@ -372,17 +402,26 @@ class TaskPool(QObject):
         self._launch_next()
 
     def pause(self) -> None:
-        """暂停调度。已经在跑的任务跑完为止，不会被打断。"""
+        """暂停队列。
+
+        v0.8.23 FF-Bug#3 之前只是「不再派发新任务」的软暂停——正在跑的外部
+        程序照样吃满 CPU/GPU 跑到底。现在改为：置暂停位（拦住后续派发）并
+        用 psutil 挂起所有在跑的子进程树。psutil 不可用时自动退回软暂停。
+        """
         if not self._running or self._paused:
             return
         self._paused = True
+        n = self._suspend_all()
+        if n:
+            log.info("[task_pool] 队列暂停：已挂起 %d 个子进程", n)
         self.stateChanged.emit()
 
     def resume(self) -> None:
-        """从暂停恢复。"""
+        """从暂停恢复：先解挂已有进程，再继续派发新任务。"""
         if not self._paused:
             return
         self._paused = False
+        self._resume_all()
         self.stateChanged.emit()
         if self._running:
             self._launch_next()
@@ -482,6 +521,39 @@ class TaskPool(QObject):
         if item is None or item.state is not TaskState.RUNNING:
             return
         self.itemStats.emit(iid, snap)
+
+    def _on_worker_proc(self, iid: str, proc) -> None:
+        """v0.8.23 FF-Bug#3：登记 / 注销某任务当前的子进程句柄。
+
+        由 worker 线程经信号投递到此（池所在线程）。``proc`` 传 ``None`` 表示
+        进程已退出，注销登记。登记瞬间若队列已处于暂停态，新起的进程要立刻
+        挂起——否则「暂停中点了重试 / 暂停前一刹那刚启动的任务」会带着一个
+        满速跑的外部程序溜过去。
+        """
+        with self._procs_lock:
+            if proc is None:
+                self._procs.pop(iid, None)
+                return
+            self._procs[iid] = proc
+            paused = self._paused
+        if paused:
+            try:
+                _proc_control().suspend(proc)
+            except Exception:  # noqa: BLE001 - 挂起失败不能拖垮登记
+                log.debug("[task_pool] 登记即挂起失败：%s", iid)
+
+    def _suspend_all(self) -> int:
+        """挂起全部在跑的子进程，返回成功挂起个数（v0.8.23 FF-Bug#3）。"""
+        with self._procs_lock:
+            procs = list(self._procs.values())
+        return sum(1 for p in procs if _proc_control().suspend(p))
+
+    def _resume_all(self) -> None:
+        """解挂全部被挂起的子进程（v0.8.23 FF-Bug#3）。"""
+        with self._procs_lock:
+            procs = list(self._procs.values())
+        for p in procs:
+            _proc_control().resume(p)
 
     def _on_fake_progress(self, iid: str, pct: int) -> None:
         """假进度条 → 写回条目进度并发出 ``itemProgress``。"""

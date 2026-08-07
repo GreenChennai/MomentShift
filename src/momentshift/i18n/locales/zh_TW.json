@@ -189,7 +189,6 @@
   "upscale.staging.add": "加入放大佇列（{n}）",
   "upscale.btn.add": "新增檔案",
   "upscale.add_folder": "新增資料夾",
-  "upscale.compress.none": "不壓縮",
   "upscale.queue.title": "放大佇列",
   "upscale.queue.hint": "",
   "upscale.queue.empty": "",

@@ -20,19 +20,16 @@
 
 from __future__ import annotations
 
-import copy
 import threading
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QDoubleSpinBox,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
-    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -40,14 +37,13 @@ from PyQt6.QtWidgets import (
 from qfluentwidgets import (
     CaptionLabel,
     ComboBox,
-    StrongBodyLabel,
     SwitchButton,
 )
 from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
-from ..core import compressor, engines as eng_mod
+from ..core import engines as eng_mod
 from ..core.config import cfg
 from ..core.logger import get_logger
 from ..core.output_path import unique_output_path
@@ -64,7 +60,6 @@ from .base import (
     build_row_header,
     build_row_layout,
     combo_mapping,
-    select_combo_value,
 )
 from .compare_window import CompareWindow
 from .drop_area import DropArea
@@ -86,7 +81,6 @@ from .theme import (
     icon_btn,
     muted_text,
     primary_btn,
-    sub_text,
 )
 
 log = get_logger("upscale")
@@ -244,54 +238,37 @@ def _scaled_report(report: ProgressCb, lo: int, hi: int):
 def run_upscale_task(
     item: PoolItem, report: ProgressCb, cancel: threading.Event
 ) -> tuple[bool, str]:
-    """跑一条放大 / 插帧任务，可选地在其后跑一道压缩（V0.8.16）。
+    """跑一条放大 / 插帧任务。
 
     喂给 :class:`TaskPool` 的业务执行体。``payload`` 由
-    :meth:`UpscaleInterface._prepare_item` 在 GUI 线程冻结。``program`` 为
-    ``"none"`` 时只做放大；否则放大产物会被 :func:`compressor.compress_auto`
-    就地再压缩一道（走 compressor 路由，FFmpeg 压缩用界面里的参数面板值）。
+    :meth:`UpscaleInterface._prepare_item` 在 GUI 线程冻结。
 
-    进度：放大阶段 0~90，压缩阶段 90~100，避免两阶段互相覆盖看着像卡死。
+    进度：放大阶段 0~90，压缩阶段 90~100 已随 V0.8.23 移除（不再放大后自动
+    压缩），放大阶段走完整 0~100。
     """
     params = item.payload or {}
     src: str = params["src"]
     out: str = params["out"]
     engine_id: str = params["engine_id"]
     values: dict = params["values"]
-    program: str = params.get("program", "none")
-    mode: str = params.get("mode", "lossless")
-    quality: int = int(params.get("quality", 95) or 95)
-    opts: dict = params.get("opts") or {}
 
     item.result["out"] = out
     item.result["saved"] = 0
 
-    up_report = _scaled_report(report, 0, 90)
-    cmp_report = _scaled_report(report, 90, 100)
+    up_report = _scaled_report(report, 0, 100)
+
+    # v0.8.23 FF-Bug#3：子进程句柄上报 → 池做 psutil 真暂停
+    proc_cb = getattr(item, "proc_cb", None)
 
     try:
-        ok, detail = eng_mod.process_media(engine_id, src, out, values, progress_cb=up_report)
+        ok, detail = eng_mod.process_media(
+            engine_id, src, out, values, progress_cb=up_report, on_proc=proc_cb
+        )
     except Exception as exc:
         # 保留 str(exc) 作为展示文案：引擎抛出的多是「模型文件缺失」这类
         # 用户能看懂并自行修复的错误，换成通用文案反而帮倒忙。
         log.exception("[upscale] task %s raised", item.iid)
         ok, detail = False, str(exc)
-
-    if ok and program not in (None, "", "none"):
-        try:
-            cok, cdetail, _csaved = compressor.compress_auto(
-                out, out, mode=mode, quality=quality, opts=opts,
-                preferred=program, on_progress=cmp_report, cancel_event=cancel,
-            )
-        except Exception as exc:
-            log.exception("[upscale] 后处理压缩异常：%s", item.iid)
-            cok, cdetail = False, str(exc)
-        if cok:
-            detail = cdetail or detail
-        else:
-            # 放大已成功：压缩失败不丢弃产物，仅在明细里标注，让用户仍能拿到放大结果。
-            log.warning("[upscale] 后处理压缩未应用：%s", cdetail)
-            detail = f"{detail} | 压缩未应用：{cdetail}"
 
     if ok:
         report(100)
@@ -315,7 +292,6 @@ def run_upscale_task(
                 target.unlink()
         except OSError:
             log.warning("[upscale] 残留文件清理失败：%s", out)
-    # 放大成功、压缩失败仍算成功（产物保留），故按 ok 返回。
     return bool(ok), str(detail or "")
 
 
@@ -559,23 +535,6 @@ class UpscaleInterface(InterfaceBase):
         self._suffix = cfg.upscaleSuffix.value
         self._folder = cfg.upscaleFolder.value or ""
 
-        # 放大后压缩（V0.8.16）：压缩程序 + 各后端参数。仅 ffmpeg 暴露参数面板，
-        # 其余后端（oxipng / jpegoptim / gifsicle / Pillow）走 compressor 默认行为。
-        self._up_program = "none"
-        self._up_opts = {
-            "oxipng": {},
-            "jpegoptim": {},
-            "gifsicle": {},
-            "pillow": {},
-            "ffmpeg": compressor.ffmpeg_param_defaults(),
-        }
-        self._param_rows: list[tuple] = []
-        self._switches: list = []
-        self._ff_setters: dict = {}
-        self._ff_cat_headers: dict = {}
-        self._ff_profile_labels: dict = {}
-        self._ff_profile_combos: dict = {}
-
         # =====================================================================
         # 输入卡片
         # =====================================================================
@@ -591,6 +550,15 @@ class UpscaleInterface(InterfaceBase):
         vb.addLayout(tools)
         self.vbox.addWidget(card)
         self._inputCard = card
+
+        # =====================================================================
+        # 超分辨率 / 插帧引擎卡片（v0.8.23：从「关于」页移入，默认折叠）
+        # 放在「放大设置」上方：模型下拉的可选项来自这里的引擎安装状态。
+        # =====================================================================
+        from .engine_card import EnginesCard
+
+        self.enginesCard = EnginesCard(self, on_changed=self._on_engines_changed)
+        self.vbox.addWidget(self.enginesCard)
 
         # =====================================================================
         # 放大设置卡片（：引擎驱动的动态参数面板）
@@ -616,7 +584,9 @@ class UpscaleInterface(InterfaceBase):
         apply_text(self.noEngineHint, muted_text(), transparent=True)
         nb.addWidget(self.noEngineHint)
         self.detectBtn = primary_btn(tr("upscale.engine.detect"), icon=FIF.SEARCH)
-        self.detectBtn.clicked.connect(self._goto_about)
+        # v0.8.23 Bug4：无引擎时点「检测环境」改为就地展开引擎卡（可下载/查看），
+        # 不再跳转「关于」页。
+        self.detectBtn.clicked.connect(self._open_engines_card)
         nb.addWidget(self.detectBtn)
         setvb.addWidget(self.noEngineBox)
 
@@ -664,47 +634,6 @@ class UpscaleInterface(InterfaceBase):
         self.folderRow = field_row(tr("upscale.output.folder"), frow)
         ob.addWidget(self.folderRow)
         setvb.addWidget(self.outputBox)
-
-        # =====================================================================
-        # 放大后压缩（V0.8.16）：压缩程序下拉 + FFmpeg 压缩参数面板
-        # =====================================================================
-        self.upCompressBox = QWidget(self)
-        apply_transparent(self.upCompressBox)
-        ucb = QVBoxLayout(self.upCompressBox)
-        ucb.setContentsMargins(0, 0, 0, 0)
-        ucb.setSpacing(10)
-        # 分隔线，与上方「输出位置」区分
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background: {tokens.BORDER}; border: none;")
-        ucb.addWidget(sep)
-        self.programCombo = self._make_combo(
-            [
-                (tr("upscale.compress.none"), "none"),
-                (tr("advanced.compression.auto"), "auto"),
-                (tr("advanced.compression.oxipng"), "oxipng"),
-                (tr("advanced.compression.jpegoptim"), "jpegoptim"),
-                (tr("advanced.compression.gifsicle"), "gifsicle"),
-                (tr("advanced.compression.pillow"), "pillow"),
-                (tr("advanced.compression.ffmpeg"), "ffmpeg"),
-            ],
-            self._up_program,
-            lambda v: self._on_up_program(v),
-        )
-        self.upBackendRow = field_row(tr("advanced.compression.backend"), self.programCombo)
-        attach_help(self.upBackendRow, "advanced.help.backend")
-        ucb.addWidget(self.upBackendRow)
-        self.upRouteHint = CaptionLabel(tr("advanced.compression.route"))
-        apply_text(self.upRouteHint, muted_text(), transparent=True)
-        self.upRouteHint.setWordWrap(True)
-        ucb.addWidget(self.upRouteHint)
-        self.upFfmpegGroup = self._backend_section("ffmpeg", self._build_ffmpeg())
-        ucb.addWidget(self.upFfmpegGroup)
-        setvb.addWidget(self.upCompressBox)
-
-        self._on_up_program(self._up_program)
-        self._restyle_switches()
 
         self._apply_output_mode()
         self.vbox.addWidget(setc)
@@ -818,8 +747,6 @@ class UpscaleInterface(InterfaceBase):
             "suffix": self._suffix,
             "folder": self._folder,
             "run_values": run_values,
-            "program": self._up_program,
-            "up_opts": copy.deepcopy(self._up_opts),
         }
 
     def apply_settings(self, settings: dict) -> None:
@@ -833,10 +760,6 @@ class UpscaleInterface(InterfaceBase):
         run_values = settings.get("run_values")
         if run_values is not None:
             self._run_values = run_values
-        self._up_program = settings.get("program", self._up_program)
-        up_opts = settings.get("up_opts")
-        if up_opts is not None:
-            self._up_opts = copy.deepcopy(up_opts)
 
     def enqueue_and_start(self, paths: list[str]) -> None:
         """把 ``paths`` 加进放大队列并立即开始（右键菜单入口用）。"""
@@ -866,7 +789,6 @@ class UpscaleInterface(InterfaceBase):
             self.paramPanel.build(None)
             self.paramPanel.setVisible(False)
             self.outputBox.setVisible(False)
-            self.upCompressBox.setVisible(False)
             self.noEngineBox.setVisible(True)
             self._update_controls()
             return
@@ -891,7 +813,6 @@ class UpscaleInterface(InterfaceBase):
         self.noEngineBox.setVisible(False)
         self.paramPanel.setVisible(True)
         self.outputBox.setVisible(True)
-        self.upCompressBox.setVisible(True)
         self._rebuild_params()
         self._update_controls()
 
@@ -909,195 +830,27 @@ class UpscaleInterface(InterfaceBase):
         # 插帧引擎不吃静态图片，输出格式行没有意义
         self.fmtRow.setVisible(not (engine and engine.is_interp))
 
-    def _goto_about(self) -> None:
-        win = self.window()
-        if hasattr(win, "goto_about"):
-            win.goto_about()
-
-    # =========================================================================
-    # 放大后压缩：压缩程序 + FFmpeg 参数面板
-    # =========================================================================
-    def _backend_section(self, key: str, inner: QWidget) -> QWidget:
-        """给后端参数组包一层带小标题的分区（标题仅 auto 模式显示）。"""
-        w = QWidget()
-        apply_transparent(w)
-        ly = QVBoxLayout(w)
-        ly.setContentsMargins(0, 0, 0, 0)
-        ly.setSpacing(10)
-        hdr = StrongBodyLabel(tr(f"advanced.compression.{key}"))
-        apply_text(hdr, sub_text(), transparent=True)
-        ly.addWidget(hdr)
-        rule = QFrame()
-        rule.setFrameShape(QFrame.Shape.HLine)
-        rule.setFixedHeight(1)
-        rule.setStyleSheet(f"background: {tokens.BORDER}; border: none;")
-        ly.addWidget(rule)
-        ly.addWidget(inner)
-        w._header = hdr
-        w._rule = rule
-        return w
-
-    def _param_row(self, key: str, control, label_width: int = 96):
-        """建一个后端参数行，并把 ``(row, i18n_key)`` 登记进 ``_param_rows``。"""
-        fr = field_row(tr(key), control, label_width=label_width)
-        self._param_rows.append((fr, key))
-        return fr
-
-    def _ff_profile_mapping(self, kind: str) -> list:
-        """某类别的预设下拉项：翻译后的展示名 → 预设名（末项永远是「自定义」）。"""
-        presets = compressor.FFMPEG_PRESETS.get(kind, {})
-        mapping = [(tr(f"ffmpeg.profile.{name}"), name) for name in presets.keys()]
-        mapping.append((tr("ffmpeg.profile.custom"), "custom"))
-        return mapping
-
-    def _ff_profile_key(self, kind: str) -> str:
-        return {"video": "ff_v_profile", "audio": "ff_a_profile", "image": "ff_i_profile"}[kind]
-
-    def _build_ffmpeg(self):
-        """FFmpeg 压缩参数面板：视频 / 音频 / 图片 三个独立分区。"""
-        grp = self._up_opts["ffmpeg"]
-        w = QWidget()
-        apply_transparent(w)
-        ly = QVBoxLayout(w)
-        ly.setContentsMargins(0, 0, 0, 0)
-        ly.setSpacing(18)
-        for kind in ("video", "audio", "image"):
-            ly.addWidget(self._build_ffmpeg_category(kind, grp))
-        return w
-
-    def _build_ffmpeg_category(self, kind: str, grp: dict):
-        params = compressor.FFMPEG_PARAMS_BY_KIND.get(kind, {})
-        profile_key = self._ff_profile_key(kind)
-
-        w = QWidget()
-        apply_transparent(w)
-        ly = QVBoxLayout(w)
-        ly.setContentsMargins(0, 0, 0, 0)
-        ly.setSpacing(10)
-
-        # 分区头：类别名 + 质量预设标签 + 预设档下拉
-        hdr = QHBoxLayout()
-        cat_lbl = StrongBodyLabel(tr(f"ffmpeg.cat.{kind}"))
-        apply_text(cat_lbl, sub_text(), transparent=True)
-        prof_label = QLabel(tr("ffmpeg.quality_preset"))
-        apply_text(prof_label, sub_text(), transparent=True)
-        prof_combo = self._make_combo(
-            self._ff_profile_mapping(kind),
-            grp.get(profile_key, "balanced"),
-            lambda v: self._on_ff_profile(kind, v),
-        )
-        hdr.addWidget(cat_lbl)
-        hdr.addStretch(1)
-        hdr.addWidget(prof_label)
-        hdr.addWidget(prof_combo)
-        ly.addLayout(hdr)
-        self._ff_cat_headers[kind] = cat_lbl
-        self._ff_profile_labels[kind] = prof_label
-        self._ff_profile_combos[kind] = prof_combo
-
-        setters: dict = {}
-        for pkey, spec in params.items():
-            if pkey == profile_key:
-                continue
-            control, setter = self._build_ff_param(grp, pkey, spec)
-            fr = self._param_row(f"ffmpeg.{pkey}", control)
-            ly.addWidget(fr)
-            attach_help(fr, f"ffmpeg.help.{pkey}")
-            setters[pkey] = setter
-        self._ff_setters[kind] = setters
-        return w
-
-    def _build_ff_param(self, grp: dict, pkey: str, spec: dict):
-        """构建一个 ffmpeg 参数控件，返回 (控件, 设值函数)。
-
-        设值函数供「预设档」一键套用时回写控件显示。
-        """
-        t = spec.get("type")
-        if t == "bool":
-            ctl = SwitchButton()
-            ctl.setChecked(bool(grp.get(pkey, spec.get("default", False))))
-            ctl.checkedChanged.connect(lambda b: grp.__setitem__(pkey, b))
-            self._switches.append(ctl)
-            return ctl, (lambda v: ctl.setChecked(bool(v)))
-        if t == "choice":
-            vals = spec.get("values", [])
-            # 选项显示双语：中文 (技术值)，技术值仍作为数据写入 opts。
-            ov = spec.get("labels") or {}
-            mapping = [(ov.get(v, compressor.FFMPEG_VALUE_LABELS.get(v, v)), v) for v in vals]
-            ctl = self._make_combo(
-                mapping, grp.get(pkey, spec.get("default")), lambda v: grp.__setitem__(pkey, v)
-            )
-            return ctl, (lambda v: select_combo_value(ctl, v))
-        # int（含带范围的数字参数）
-        lo = int(spec.get("min", 0))
-        hi = int(spec.get("max", 100))
-        cur = int(grp.get(pkey, spec.get("default", lo)) or lo)
-        slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setRange(lo, hi)
-        slider.setValue(cur)
-        spin = QSpinBox()
-        spin.setRange(lo, hi)
-        spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-        spin.setValue(cur)
-        slider.valueChanged.connect(lambda v: (grp.__setitem__(pkey, v), spin.setValue(v)))
-        spin.valueChanged.connect(lambda v: (grp.__setitem__(pkey, v), slider.setValue(v)))
-        row = QHBoxLayout()
-        row.addWidget(slider, 1)
-        row.addWidget(spin)
-        return row, (lambda v: (slider.setValue(int(v)), spin.setValue(int(v))))
-
-    def _on_ff_profile(self, kind: str, preset: str):
-        """切换预设档：自定义则保留当前各参数；否则把预设覆盖写回控件与 opts。"""
-        grp = self._up_opts["ffmpeg"]
-        grp[self._ff_profile_key(kind)] = preset
-        if preset == "custom":
+    def _open_engines_card(self) -> None:
+        """展开「超分辨率 / 插帧引擎」卡片（v0.8.23 Bug4：替代原跳转关于页）。"""
+        card = getattr(self, "enginesCard", None)
+        if card is None:
             return
-        overrides = compressor.ffmpeg_preset_values(kind, preset)
-        setters = self._ff_setters.get(kind, {})
-        for k, v in overrides.items():
-            if k in grp:
-                grp[k] = v
-            s = setters.get(k)
-            if s:
-                s(v)
+        card.setCollapsed(False)
+        # 滚动到引擎卡位置，让用户看到下载/检测入口（等展开动画启动后再滚）
+        QTimer.singleShot(0, lambda: self._ensure_visible(card))
 
-    def _on_up_program(self, p: str):
-        self._up_program = p
-        show_ff = p in ("auto", "ffmpeg")
-        self.upFfmpegGroup.setVisible(show_ff)
-        self.upRouteHint.setVisible(p == "auto")
-        card = getattr(self, "_settingsCard", None)
+    def _ensure_visible(self, widget) -> None:
+        try:
+            self.ensureWidgetVisible(widget)
+        except RuntimeError:
+            pass  # 静默原因：控件可能已随界面销毁
+
+    def _on_engines_changed(self) -> None:
+        """引擎安装状态变化 → 重建设置面板（v0.8.23：引擎卡已在本界面）。"""
+        self.reload_engines()
+        card = getattr(self, "enginesCard", None)
         if card is not None:
             card.refresh_content_height()
-
-    def _up_compress_mode(self, program: str) -> str:
-        if program in (None, "", "none"):
-            return "lossless"
-        if program in ("auto", "oxipng", "gifsicle"):
-            return "lossless"
-        return "lossy"
-
-    def _up_compress_quality(self, program: str) -> int:
-        if program == "jpegoptim":
-            return 85
-        if program in ("pillow", "ffmpeg"):
-            return 95
-        return 100
-
-    def _up_compress_opts(self, program: str) -> dict:
-        if program == "auto":
-            merged: dict = {}
-            for g in self._up_opts.values():
-                merged.update(g)
-            return merged
-        if program == "ffmpeg":
-            return dict(self._up_opts.get("ffmpeg", {}))
-        return {}
-
-    def _restyle_switches(self):
-        for sw in getattr(self, "_switches", []):
-            sw.setOnText(tr("common.on"))
-            sw.setOffText(tr("common.off"))
 
     # =========================================================================
     # 设置交互
@@ -1184,12 +937,6 @@ class UpscaleInterface(InterfaceBase):
             # 拷一份：参数面板的 values() 每次返回新字典，但调用方可能传的是
             # apply_settings 塞进来的外部字典，别让工作线程读到 UI 侧的活对象。
             "values": dict(values or {}),
-            # 放大后压缩（V0.8.16）：把「压缩程序」与对应参数快照冻结进任务，
-            # 运行途中改设置不影响已派发出去的任务。
-            "program": self._up_program,
-            "mode": self._up_compress_mode(self._up_program),
-            "quality": self._up_compress_quality(self._up_program),
-            "opts": copy.deepcopy(self._up_compress_opts(self._up_program)),
         }
         return True
 
@@ -1248,11 +995,13 @@ class UpscaleInterface(InterfaceBase):
         self.startBtn.setEnabled(ready and has_items and not self._pool.is_busy)
         self.pauseBtn.setEnabled(self._pool.is_running)
         self.clearBtn.setEnabled(has_items)
-        self.pauseBtn.setText(
-            tr("convert.resume")
-            if (self._pool.is_running and self._pool.is_paused)
-            else tr("convert.pause")
-        )
+        if self._pool.is_running and self._pool.is_paused:
+            # v0.8.23 FF-Bug#3：暂停态图标随文案一起切（暂停 → 继续）
+            self.pauseBtn.setText(tr("convert.resume"))
+            self.pauseBtn.setIcon(FIF.PLAY)
+        else:
+            self.pauseBtn.setText(tr("convert.pause"))
+            self.pauseBtn.setIcon(FIF.PAUSE)
 
     # =========================================================================
     # 主题 / i18n
@@ -1280,30 +1029,9 @@ class UpscaleInterface(InterfaceBase):
         self.outputModeRow.fieldLabel.setText(tr("upscale.output.mode"))
         self.suffixRow.fieldLabel.setText(tr("upscale.output.suffix"))
         self.folderRow.fieldLabel.setText(tr("upscale.output.folder"))
-        # V0.8.16 放大后压缩：压缩程序下拉 / 路由提示 / FFmpeg 分区标题与预设 /
-        # 参数行标签同步语言
-        self.upBackendRow.fieldLabel.setText(tr("advanced.compression.backend"))
-        self.upRouteHint.setText(tr("advanced.compression.route"))
-        self._repopulate_combo(
-            self.programCombo,
-            [
-                (tr("upscale.compress.none"), "none"),
-                (tr("advanced.compression.auto"), "auto"),
-                (tr("advanced.compression.oxipng"), "oxipng"),
-                (tr("advanced.compression.jpegoptim"), "jpegoptim"),
-                (tr("advanced.compression.gifsicle"), "gifsicle"),
-                (tr("advanced.compression.pillow"), "pillow"),
-                (tr("advanced.compression.ffmpeg"), "ffmpeg"),
-            ],
-        )
-        for kind, lbl in self._ff_cat_headers.items():
-            lbl.setText(tr(f"ffmpeg.cat.{kind}"))
-        for kind, lbl in self._ff_profile_labels.items():
-            lbl.setText(tr("ffmpeg.quality_preset"))
-        for kind, combo in self._ff_profile_combos.items():
-            self._repopulate_combo(combo, self._ff_profile_mapping(kind))
-        for fr, key in self._param_rows:
-            fr.fieldLabel.setText(tr(key))
+        card = getattr(self, "enginesCard", None)
+        if card is not None:
+            card.retranslateUi()
         self.reload_engines()
         self._apply_output_mode()
         self.startBtn.setText(tr("convert.start"))

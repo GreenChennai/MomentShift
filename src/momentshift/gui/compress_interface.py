@@ -149,6 +149,18 @@ def run_compress_task(
     else:
         _on_stats = None
 
+    # v0.8.23 FF-Bug#3：子进程句柄回调 → 池做 psutil 真暂停。仅 ffmpeg 后端
+    # 有 Popen 可上报；图片后端不启动长时子进程，item.proc_cb 留空即可。
+    proc_cb = getattr(item, "proc_cb", None)
+    if proc_cb is not None:
+        def _on_proc(proc) -> None:
+            try:
+                proc_cb(proc)
+            except Exception:
+                log.debug("[compress] 子进程回调失败 id=%s", item.iid)
+    else:
+        _on_proc = None
+
     try:
         if compressor.needs_conversion(src_ext, effective):
             ok, detail, saved = compressor.transcode_and_compress(
@@ -162,6 +174,7 @@ def run_compress_task(
                 on_progress=_on_progress,
                 cancel_event=cancel,
                 on_stats=_on_stats,
+                on_proc=_on_proc,
             )
         else:
             ok, detail, saved = compressor.compress_auto(
@@ -174,6 +187,7 @@ def run_compress_task(
                 on_progress=_on_progress,
                 cancel_event=cancel,
                 on_stats=_on_stats,
+                on_proc=_on_proc,
             )
     except Exception:
         log.exception("[compress] task %s raised an exception", item.iid)
@@ -776,11 +790,13 @@ class CompressInterface(InterfaceBase):
         self.startBtn.setEnabled(has_items and not self._pool.is_busy)
         self.pauseBtn.setEnabled(self._pool.is_running)
         self.clearBtn.setEnabled(has_items)
-        self.pauseBtn.setText(
-            tr("compress.resume")
-            if (self._pool.is_running and self._pool.is_paused)
-            else tr("compress.pause")
-        )
+        if self._pool.is_running and self._pool.is_paused:
+            # v0.8.23 FF-Bug#3：暂停态图标随文案一起切（暂停 → 继续）
+            self.pauseBtn.setText(tr("compress.resume"))
+            self.pauseBtn.setIcon(FIF.PLAY)
+        else:
+            self.pauseBtn.setText(tr("compress.pause"))
+            self.pauseBtn.setIcon(FIF.PAUSE)
 
     # =========================================================================
     # 主题 / i18n

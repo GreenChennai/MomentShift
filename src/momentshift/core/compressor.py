@@ -625,6 +625,7 @@ def compress(
     on_progress=None,
     cancel_event=None,
     on_stats=None,
+    on_proc=None,
 ) -> bool:
     """压缩单个媒体文件，``src`` → ``dst``。返回 ``True`` 表示成功。
 
@@ -633,6 +634,8 @@ def compress(
             一次性调用外部程序，中途没有可上报的进度。
         on_stats: ffmpeg 进度快照（速度 / 剩余时间）回调，**仅 ffmpeg 后端**会
             调用；图片后端（oxipng/jpegoptim/gifsicle/pillow）不调用。
+        on_proc: 子进程句柄回调（v0.8.23 FF-Bug#3），启动/退出各回调一次，
+            供队列 psutil 真暂停；仅 ffmpeg 后端会调用。
         cancel_event: 需实现 ``is_set()``；置位后 ffmpeg 会被终止。
     """
     fmt = (fmt or "").lower().lstrip(".")
@@ -653,7 +656,7 @@ def compress(
     try:
         if backend == "ffmpeg":
             ok = _compress_ffmpeg(
-                src, dst, fmt, quality, opts, on_progress, cancel_event, on_stats
+                src, dst, fmt, quality, opts, on_progress, cancel_event, on_stats, on_proc
             )
         else:
             ok = handlers[backend](src, dst, fmt, quality, opts)
@@ -690,6 +693,7 @@ def _compress_ffmpeg(
     on_progress=None,
     cancel_event=None,
     on_stats=None,
+    on_proc=None,
 ) -> bool:
     """FFmpeg 压缩（视频 / 音频 / 图片）。参数拼装全在 core/ffmpeg_compress。"""
     global _last_ffmpeg_error
@@ -704,6 +708,7 @@ def _compress_ffmpeg(
         on_progress=on_progress,
         cancel_event=cancel_event,
         on_stats=on_stats,
+        on_proc=on_proc,
     )
     if not ok:
         _last_ffmpeg_error = detail
@@ -1028,14 +1033,15 @@ def compress_auto(
     on_progress=None,
     cancel_event=None,
     on_stats=None,
+    on_proc=None,
 ) -> tuple[bool, str, int]:
     """压缩 ``src`` 到 ``out``，自动挑选后端。
 
     返回 ``(ok, detail, saved_bytes)``。压缩后反而变大时保留原文件内容，
     ``saved_bytes`` 记 0。
 
-    ``on_progress`` / ``cancel_event`` / ``on_stats`` 只有 ffmpeg 后端会用到
-    （视频动辄几分钟，没有进度条的等待体验等同于卡死）。
+    ``on_progress`` / ``cancel_event`` / ``on_stats`` / ``on_proc`` 只有 ffmpeg
+    后端会用到（视频动辄几分钟，没有进度条的等待体验等同于卡死）。
     """
     opts = dict(opts or {})
     fmt = Path(src).suffix.lower().lstrip(".")
@@ -1059,6 +1065,7 @@ def compress_auto(
             on_progress=on_progress,
             cancel_event=cancel_event,
             on_stats=on_stats,
+            on_proc=on_proc,
         )
         if not ok or not os.path.isfile(tmp):
             reason = _last_ffmpeg_error if backend == "ffmpeg" and _last_ffmpeg_error else ""
@@ -1094,6 +1101,7 @@ def _ffmpeg_transcode_compress(
     on_progress=None,
     cancel_event=None,
     on_stats=None,
+    on_proc=None,
 ) -> tuple[bool, str, int]:
     """音视频：换容器 + 重编码在一趟 ffmpeg 里做完。
 
@@ -1111,6 +1119,7 @@ def _ffmpeg_transcode_compress(
             on_progress=on_progress,
             cancel_event=cancel_event,
             on_stats=on_stats,
+            on_proc=on_proc,
         )
         if not ok or not os.path.isfile(tmp):
             if detail == "canceled":
@@ -1140,6 +1149,7 @@ def transcode_and_compress(
     on_progress=None,
     cancel_event=None,
     on_stats=None,
+    on_proc=None,
 ) -> tuple[bool, str, int]:
     """先把 ``src`` 转成 ``target_fmt``，再压缩到 ``out``。
 
@@ -1156,7 +1166,7 @@ def transcode_and_compress(
     # 一代画质。
     if is_av(sf) or is_av(tf):
         return _ffmpeg_transcode_compress(
-            src, out, tf, opts, on_progress, cancel_event, on_stats
+            src, out, tf, opts, on_progress, cancel_event, on_stats, on_proc
         )
 
     # 中转文件必须带真实格式后缀，Pillow 与后续 compress_auto 都靠后缀识别格式。
@@ -1187,7 +1197,7 @@ def transcode_and_compress(
 
         ok, detail, _ = compress_auto(
             stage, out, mode, quality, opts, preferred,
-            on_progress=on_progress, on_stats=on_stats,
+            on_progress=on_progress, on_stats=on_stats, on_proc=on_proc,
         )
         if not ok:
             return False, detail, 0

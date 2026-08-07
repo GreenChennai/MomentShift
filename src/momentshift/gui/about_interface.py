@@ -141,18 +141,15 @@ class AboutInterface(InterfaceBase):
 
         self.vbox.addWidget(env_card)
 
-        # ---- 超分辨率 / 插帧引擎卡片（ 新增，与 FFmpeg 分开）----
-        from .engine_card import EnginesCard
-
-        self.enginesCard = EnginesCard(self, on_changed=self._notify_engines_changed)
-        self.vbox.addWidget(self.enginesCard)
-
         self._refresh_env()
         self.vbox.addStretch(1)
         self.retheme()
 
     def _notify_engines_changed(self):
-        """引擎安装状态变化 → 通知「放大」界面重建设置面板。"""
+        """引擎安装状态变化 → 通知「放大」界面重建设置面板。
+
+        v0.8.23：引擎卡已移入「放大」界面，此处仅保留对外的兜底通知。
+        """
         win = self.window()
         up = getattr(win, "upscaleInterface", None)
         if up is not None and hasattr(up, "reload_engines"):
@@ -249,10 +246,6 @@ class AboutInterface(InterfaceBase):
             pass
         self._ff_section._btn.clicked.connect(self._download_ffmpeg)
 
-        # Real-ESRGAN 已并入下方「超分辨率 / 插帧引擎」卡片
-        if getattr(self, "enginesCard", None) is not None:
-            self.enginesCard.rescan()
-
     def _download_ffmpeg(self):
         from ..core.ffmpeg_download import FfmpegDownloadWorker
 
@@ -283,8 +276,6 @@ class AboutInterface(InterfaceBase):
         self.updateBtn.setText(tr("about.check_update"))
         self.envTitle.setText(tr("about.env.title"))
         self._ff_section._btn.setText(tr("ffmpeg.download"))
-        if getattr(self, "enginesCard", None) is not None:
-            self.enginesCard.retranslateUi()
         self.techLabel.setText(tr("about.tech"))
         self.licenseLabel.setText(tr("about.license"))
         self.disclaimerLabel.setText(tr("about.disclaimer"))

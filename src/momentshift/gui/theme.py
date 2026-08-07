@@ -413,12 +413,15 @@ class _ArrowToggle(QWidget):
         painter.drawLine(QPointF(5.0, -2.0), QPointF(0.0, 3.0))
 
 
+# 公开别名：折叠箭头的对外入口（v0.8.23 引擎卡也用它替换旧 PushButton 样式）。
+ArrowToggle = _ArrowToggle
+
+
 class CollapsibleCard(ThemedCard):
     # v0.8.0 B3 接入点 6：时长/曲线迁到 gui/animations 收口，**数值不变**
     # （250ms + OutCubic，与改造前逐帧一致）。保留这个类属性名是因为它是既有
     # 对外可读的事实，只是不再在这里写死魔法数字。
     _ANIM_DURATION = animations.DURATION_CARD
-
     def __init__(self, title: str = "", subtitle: str = "", parent=None, collapsed: bool = False):
         super().__init__(parent)
         self._collapsed = collapsed

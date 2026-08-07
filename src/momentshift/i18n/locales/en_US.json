@@ -189,7 +189,6 @@
   "upscale.staging.add": "Add to upscale queue ({n})",
   "upscale.btn.add": "Add files",
   "upscale.add_folder": "Add folder",
-  "upscale.compress.none": "None",
   "upscale.queue.title": "Upscale queue",
   "upscale.queue.hint": "",
   "upscale.queue.empty": "",

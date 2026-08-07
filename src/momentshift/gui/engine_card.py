@@ -22,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPropertyAnimation, Qt
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -47,8 +47,9 @@ from ..core import engine_download as dl_mod
 from ..core import engines as eng_mod
 from ..core.qt_compat import QDesktopServices, QThreadPool, QUrl
 from ..i18n.translator import tr
-from . import tokens
+from . import animations, tokens
 from .theme import (
+    ArrowToggle,
     CARD_MARGIN,
     ThemedCard,
     accent_color,
@@ -281,36 +282,46 @@ class EngineRow(QWidget):
 
 
 class EnginesCard(ThemedCard):
-    """「超分辨率 / 插帧引擎」整卡（关于页专用）。
+    """「超分辨率 / 插帧引擎」整卡。
 
-    v0.7.8 引擎卡布局：增加展开/收起（默认展开）；按钮居中在简介下方；
-    分组标题加大字号。
+    v0.7.8 引擎卡布局：增加展开/收起；按钮居中在简介下方；分组标题加大字号。
+    v0.8.23：折叠按钮改为与其他可折叠卡片一致的箭头（``ArrowToggle``），
+    补齐展开 / 收起动画（250ms maximumHeight + 箭头旋转）；默认折叠，供
+    「放大」界面在「放大设置」上方嵌入。
     """
 
-    def __init__(self, parent=None, on_changed=None):
+    _ANIM_DURATION = animations.DURATION_CARD
+
+    def __init__(self, parent=None, on_changed=None, collapsed=True):
         super().__init__(parent)
         self._on_changed = on_changed
         self._rows: list[EngineRow] = []
-        self._expanded = True
+        self._collapsed = collapsed
+        self._anim = None
+        self._content_height = 0
+        self._bar_h_fixed = None  # 收起动画期间钉死的标题栏高度（同 CollapsibleCard）
 
         vb = QVBoxLayout(self)
         vb.setContentsMargins(CARD_MARGIN, 16, CARD_MARGIN, 16)
         vb.setSpacing(10)
 
-        # 标题行（仅标题 + 展开/收起按钮）
-        head = QHBoxLayout()
+        # 标题行（仅标题 + 箭头折叠按钮）。包成独立 widget 以便收起动画期间
+        # 钉死其高度，防止 body 收缩带动标题上下抖（同 CollapsibleCard 做法）。
+        self._bar = QWidget(self)
+        apply_transparent(self._bar)
+        head = QHBoxLayout(self._bar)
+        head.setContentsMargins(0, 0, 0, 0)
         head.setSpacing(8)
         self.titleLbl = StrongBodyLabel(tr("engine.card.title"))
         head.addWidget(self.titleLbl)
         head.addStretch(1)
-        self.toggleBtn = PushButton(
-            tr("engine.collapse") if self._expanded else tr("engine.expand"),
-            icon=FIF.UP if self._expanded else FIF.DOWN,
-        )
-        self.toggleBtn.setFixedHeight(28)
+        self.toggleBtn = ArrowToggle(self)
+        self.toggleBtn.setFixedSize(30, 30)
+        # 初始角度：收起=箭头向下(0°)，展开=箭头向上(180°)
+        self.toggleBtn.angle = 0.0 if collapsed else 180.0
         self.toggleBtn.clicked.connect(self._toggle_expand)
         head.addWidget(self.toggleBtn)
-        vb.addLayout(head)
+        vb.addWidget(self._bar)
 
         # 简介
         self.hintLbl = CaptionLabel(tr("engine.card.hint"))
@@ -371,11 +382,101 @@ class EnginesCard(ThemedCard):
         eng_mod.ensure_all_dirs()
         self._update_summary()
 
+        if collapsed:
+            # 初始化即时折叠（不播动画，避免「先铺开再收拢」闪烁）
+            self._body.setMaximumHeight(0)
+            self._body.setVisible(False)
+
     def _toggle_expand(self):
-        self._expanded = not self._expanded
-        self._body.setVisible(self._expanded)
-        self.toggleBtn.setText(tr("engine.collapse") if self._expanded else tr("engine.expand"))
-        self.toggleBtn.setIcon(FIF.UP if self._expanded else FIF.DOWN)
+        self.setCollapsed(not self._collapsed)
+
+    def setCollapsed(self, collapsed: bool):
+        """展开/收起引擎列表（带动画）。外部（如「检测环境」按钮）也可调用。"""
+        if self._collapsed == collapsed:
+            return
+        self._collapsed = collapsed
+        if collapsed:
+            self._apply_collapsed()
+        else:
+            self._apply_expanded()
+
+    def isCollapsed(self) -> bool:
+        return self._collapsed
+
+    def _spin_toggle_icon(self) -> None:
+        """箭头 180° 平滑旋转（收起=0° 下拉 / 展开=180° 上收）。"""
+        animations.animate_value(
+            self.toggleBtn,
+            b"angle",
+            0.0 if self._collapsed else 180.0,
+            duration=animations.DURATION_CARD,
+            curve=animations.CURVE_SMOOTH,
+            animate=animations.should_animate(self.toggleBtn),
+        )
+
+    def _anim_target(self, target_h: int):
+        if self._anim is not None:
+            self._anim.stop()
+            self._anim.deleteLater()
+            self._anim = None
+        cur = self._body.maximumHeight()
+        real_target = target_h
+        if target_h <= 0:
+            real_target = 0
+            h = self._body.height()
+            if h > 0 and cur > h:
+                cur = h
+        elif target_h == 16777215:
+            if self._content_height > 0:
+                real_target = self._content_height
+            else:
+                real_target = self._body.sizeHint().height()
+                if real_target <= 0:
+                    real_target = 200
+        self._content_height = real_target if real_target > 0 else self._content_height
+        self._body.show()
+        self._anim = QPropertyAnimation(self._body, b"maximumHeight", self)
+        self._anim.setDuration(self._ANIM_DURATION)
+        self._anim.setStartValue(cur)
+        self._anim.setEndValue(real_target)
+        self._anim.setEasingCurve(
+            animations.CURVE_OUT if target_h <= 0 else animations.CURVE_IN
+        )
+        self._anim.finished.connect(self._on_anim_finished)
+        self._anim.start()
+
+    def _on_anim_finished(self):
+        if self._bar_h_fixed is not None:
+            self._bar.setMinimumHeight(0)
+            self._bar.setMaximumHeight(16777215)
+            self._bar_h_fixed = None
+        if self._collapsed:
+            self._body.setVisible(False)
+        else:
+            self._body.setMaximumHeight(16777215)
+
+    def _apply_collapsed(self):
+        self._collapsed = True
+        h = self._body.height()
+        if h > 0:
+            self._content_height = h
+        # 收起动画期间钉死标题栏高度，避免高度收缩带动标题上下抖
+        self._bar_h_fixed = self._bar.height()
+        self._bar.setFixedHeight(self._bar_h_fixed)
+        self._anim_target(0)
+        self._spin_toggle_icon()
+
+    def _apply_expanded(self):
+        self._collapsed = False
+        self._body.setVisible(True)
+        self._anim_target(16777215)
+        self._spin_toggle_icon()
+
+    def refresh_content_height(self):
+        """内容动态变化后调用：展开态下解除 maximumHeight 上限。"""
+        self._content_height = 0
+        if not self._collapsed:
+            self._body.setMaximumHeight(16777215)
 
     # 供 EngineRow 冒泡通知
     def engineChanged(self) -> None:

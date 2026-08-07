@@ -30,6 +30,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -875,16 +876,19 @@ _PROG_FRAC = re.compile(r"(\d+)\s*/\s*(\d+)")
 
 
 def _run(
-    cmd: list, timeout: int = 3600, progress_cb: Callable[[int], None] | None = None
+    cmd: list, timeout: int = 3600, progress_cb: Callable[[int], None] | None = None,
+    on_proc: Callable[[object], None] | None = None,
 ) -> tuple[bool, str]:
     """执行引擎子进程。
 
     v0.7.7 修复3：当传入 ``progress_cb`` 时改为流式读取输出并解析进度，
     让队列进度条能跟随任务推进；不传则保持原 blocking 行为（兼容 upscaler）。
+    v0.8.23 FF-Bug#3：``on_proc`` 在子进程启动/退出时各回调一次，供队列
+    psutil 真暂停。
     """
     log.info("engine cmd: %s", " ".join(str(c) for c in cmd))
     if progress_cb is not None:
-        return _run_stream(cmd, timeout, progress_cb)
+        return _run_stream(cmd, timeout, progress_cb, on_proc)
     try:
         proc = run_silent(
             [str(c) for c in cmd],
@@ -903,7 +907,10 @@ def _run(
     return True, ""
 
 
-def _run_stream(cmd: list, timeout: int, progress_cb: Callable[[int], None]) -> tuple[bool, str]:
+def _run_stream(
+    cmd: list, timeout: int, progress_cb: Callable[[int], None],
+    on_proc: Callable[[object], None] | None = None,
+) -> tuple[bool, str]:
     """流式版 _run：边跑边解析进度，进度条不再卡在 0。"""
     try:
         proc = popen_silent(
@@ -914,6 +921,8 @@ def _run_stream(cmd: list, timeout: int, progress_cb: Callable[[int], None]) -> 
         )
     except OSError as exc:
         return False, f"启动失败: {exc}"
+    if on_proc:
+        on_proc(proc)
     buf: list[str] = []
     last = -1
     start = time.monotonic()
@@ -922,6 +931,8 @@ def _run_stream(cmd: list, timeout: int, progress_cb: Callable[[int], None]) -> 
             if time.monotonic() - start > timeout:
                 proc.kill()
                 proc.wait()
+                if on_proc:
+                    on_proc(None)
                 return False, f"处理超时（超过 {timeout} 秒）"
             buf.append(line)
             pct = _parse_progress(line)
@@ -931,8 +942,12 @@ def _run_stream(cmd: list, timeout: int, progress_cb: Callable[[int], None]) -> 
     except Exception as exc:  # 读取异常视为失败
         proc.kill()
         proc.wait()
+        if on_proc:
+            on_proc(None)
         return False, f"启动失败: {exc}"
     rc = proc.wait()
+    if on_proc:
+        on_proc(None)
     out = "".join(buf)
     if rc != 0:
         err = out.strip().splitlines()
@@ -957,7 +972,8 @@ def _parse_progress(line: str) -> int | None:
 # 执行管线
 # ==========================================================================
 def run_image(
-    eid: str, src: str, dst: str, values: dict, progress_cb: Callable[[int], None] | None = None
+    eid: str, src: str, dst: str, values: dict, progress_cb: Callable[[int], None] | None = None,
+    on_proc: Callable[[object], None] | None = None,
 ) -> tuple[bool, str]:
     """单张图片（或整个图片目录）走一次引擎调用。"""
     cmd, err = build_command(eid, src, dst, values)
@@ -970,7 +986,7 @@ def run_image(
         cmd += ["-f", "jpg" if ext == "jpeg" else ext]
     if progress_cb is not None:
         progress_cb(3)  # 起步进度，避免进度条一直停在 0
-    return _run(cmd, progress_cb=progress_cb)
+    return _run(cmd, progress_cb=progress_cb, on_proc=on_proc)
 
 
 def _probe_fps(ffmpeg: str, src: str) -> float:
@@ -1052,7 +1068,8 @@ def _recombine(ffmpeg: str, frames_out: Path, src: str, dst: str, fps: float) ->
 
 
 def run_frames(
-    eid: str, src: str, dst: str, values: dict, progress_cb: Callable[[int], None] | None = None
+    eid: str, src: str, dst: str, values: dict, progress_cb: Callable[[int], None] | None = None,
+    on_proc: Callable[[object], None] | None = None,
 ) -> tuple[bool, str]:
     """GIF / 视频：抽帧 → 引擎整目录处理 → 重新合成。
 
@@ -1101,7 +1118,39 @@ def run_frames(
 
         if progress_cb is not None:
             progress_cb(10)  # 抽帧完成，进入引擎处理阶段
-        ok, msg = _run(cmd, timeout=7200, progress_cb=progress_cb)
+        # v0.8.23 软件迭代#2：真进度（吸收 Waifu2x-Extension-GUI 思路）。
+        # 旧实现依赖解析引擎 stdout 里的百分比——很多 ncnn 引擎根本不输出
+        # 进度行，进度条只能靠假进度糊。现在改为**监视输出帧目录**：引擎逐帧
+        # 写 out/，以「已生成帧数 / 目标帧数」作为真实分母，映射到 10%..92%
+        # 区间（与抽帧 0~10、合成 92~100 衔接）。目标帧数：
+        # 插帧引擎 = 按倍率算出的 target；超分引擎 = 输入帧数。
+        target_out = target if eng.is_interp else len(in_frames)
+        stop_watch = threading.Event()
+
+        def _watch_frames() -> None:
+            while not stop_watch.wait(0.5):
+                try:
+                    done = len(list(frames_out.glob("*.png")))
+                except OSError:
+                    continue
+                if done <= 0 or target_out <= 0:
+                    continue
+                frac = min(1.0, done / target_out)
+                pct = 10 + int(frac * 82)  # 10..92
+                try:
+                    progress_cb(pct)
+                except Exception:  # noqa: BLE001 - 进度上报失败不应中断放大
+                    return
+
+        watcher = threading.Thread(target=_watch_frames, daemon=True)
+        watcher.start()
+        try:
+            # 引擎处理阶段不走文本解析（progress_cb=None → blocking run），
+            # 进度完全由上面的目录监视线程驱动，对所有引擎通用。
+            ok, msg = _run(cmd, timeout=7200, on_proc=on_proc)
+        finally:
+            stop_watch.set()
+            watcher.join(timeout=1.0)
         if not ok:
             return False, ("插帧失败: " if eng.is_interp else "放大失败: ") + msg
 
@@ -1124,11 +1173,13 @@ def run_frames(
 
 
 def process_media(
-    eid: str, src: str, dst: str, values: dict, progress_cb: Callable[[int], None] | None = None
+    eid: str, src: str, dst: str, values: dict, progress_cb: Callable[[int], None] | None = None,
+    on_proc: Callable[[object], None] | None = None,
 ) -> tuple[bool, str]:
     """统一入口：按输入类型分派到图片或帧管线。
 
     v0.7.7 修复3：支持 ``progress_cb`` 流式进度，让队列进度条跟随推进。
+    v0.8.23 FF-Bug#3：``on_proc`` 透传给引擎子进程，供队列 psutil 真暂停。
     """
     eng = ENGINE_BY_ID.get(eid)
     if eng is None:
@@ -1137,7 +1188,7 @@ def process_media(
     if ext in IMAGE_EXTS:
         if eng.is_interp:
             return False, "插帧引擎只能处理视频 / GIF，不能处理静态图片"
-        return run_image(eid, src, dst, values, progress_cb=progress_cb)
+        return run_image(eid, src, dst, values, progress_cb=progress_cb, on_proc=on_proc)
     if ext in ANIM_EXTS or ext in VIDEO_EXTS:
-        return run_frames(eid, src, dst, values, progress_cb=progress_cb)
+        return run_frames(eid, src, dst, values, progress_cb=progress_cb, on_proc=on_proc)
     return False, f"不支持的输入格式: {ext}"
