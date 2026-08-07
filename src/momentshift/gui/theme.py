@@ -514,11 +514,11 @@ class CollapsibleCard(ThemedCard):
     def _collapse_instant(self):
         """初始化时的即时折叠（v0.7.3 Bug2）。
 
-        走 ``_apply_collapsed`` 会启动一段 250ms 的 maximumHeight 动画，
+        走 ``_apply_collapsed`` 会启动一段 250ms 的 fixedHeight 动画，
         起点是控件默认的 16777215 —— 于是卡片首次显示时会先整个铺开再收拢，
         表现为「展开 → 收起」的闪烁。构造期直接置位，不跑动画。
         """
-        self._body.setMaximumHeight(0)
+        self._body.setFixedHeight(0)
         self._body.setVisible(False)
 
     def _spin_toggle_icon(self) -> None:
@@ -544,38 +544,43 @@ class CollapsibleCard(ThemedCard):
             self._anim.stop()
             self._anim.deleteLater()
             self._anim = None
-        cur = self._body.maximumHeight()
-        real_target = target_h
+
+        # V0.8.25 Bug#1（深度修复）：折叠动画改走 **fixedHeight**，不再用
+        # maximumHeight。
+        #
+        # 为什么 maximumHeight 会抖：它只是「上限」，布局仍按 body 的
+        # sizeHint 算实际高度。动画期间若 body 内换行文本/控件随视口宽度
+        # 变化重排，sizeHint 每帧都在变，父布局也跟着每帧重排——表现为
+        # 整卡上下抖（收起时内容被反复压缩重排，抖得更厉害）。滚动条抑制
+        # 只能切断「宽度变化」这一条输入，治标不治本。
+        #
+        # fixedHeight 是「实打实的高度」：每帧 body 被强制钉在动画值，
+        # 内部内容被**裁剪**而非重排，父布局每帧只按固定值重排一次，
+        # 无 sizeHint 干扰。这是 Qt 社区做平滑折叠的标准做法。
         if target_h <= 0:
             real_target = 0
-            # V0.8.20 Bug2：收起动画的起点必须是「当前实际高度」。
-            # 展开完成后 _on_anim_finished 会把 maximumHeight 解除为 16777215；
-            # 若直接用那个值做起点，动画前 99.998% 的时间都停在「看不见」的
-            # 高位区间（16777215 降到实际高度这段 maximumHeight 根本没限制住
-            # body），视觉上变成「顿一下然后瞬间收起」。用实际高度做起点，
-            # 收缩动画才流畅（与展开动画从 0 起同理）。
             h = self._body.height()
-            if h > 0 and cur > h:
-                cur = h
-        elif target_h == 16777215:
+            # 收起起点 = 当前实际高度（fixedHeight 语义下就是它自己）
+            cur = h if h > 0 else 0
+        else:
             if self._content_height > 0:
                 real_target = self._content_height
             else:
                 real_target = self._body.sizeHint().height()
                 if real_target <= 0:
                     real_target = 200
+            cur = 0  # 展开起点恒为 0，直接长开
         self._content_height = real_target if real_target > 0 else self._content_height
+        self._body.setFixedHeight(int(cur))
         self._body.show()
-        # V0.8.24 Bug#2：动画期间抑制父级滚动区滚动条。折叠动画靠逐帧改
-        # maximumHeight 驱动，父级 QScrollArea 会在每帧重算内容高度；若滚动条
-        # 恰好在该边界「出现↔消失」切换，视口宽度随之变化，body 内换行文本
-        # 会反复重排，表现为整卡快速上下抖动。动画期间把滚动条钉在关，切断
-        # 「高度→滚动条→宽度→换行→高度」的反馈环；动画结束再恢复。
+        # 动画期间抑制父级滚动区滚动条，切断「高度→滚动条→宽度→换行→
+        # 高度」的反馈环（fixedHeight 下宽度不再影响 body 高度，但仍防
+        # 滚动条出现/消失带来的视口宽度抖动）。
         self._suppress_scrollbars(True)
-        self._anim = QPropertyAnimation(self._body, b"maximumHeight", self)
+        self._anim = QPropertyAnimation(self._body, b"fixedHeight", self)
         self._anim.setDuration(self._ANIM_DURATION)
-        self._anim.setStartValue(cur)
-        self._anim.setEndValue(real_target)
+        self._anim.setStartValue(int(cur))
+        self._anim.setEndValue(int(real_target))
         # V0.8.20 Bug2（参数修复）：收起与展开用不同缓动曲线。
         # 原收起也用 CURVE_IN（OutCubic 先快后慢）→ 动画一开始 body 就猛缩，
         # 父级布局/滚动区重排剧烈，标题被带着上下抖。收起改为 CURVE_OUT
@@ -646,10 +651,13 @@ class CollapsibleCard(ThemedCard):
         # V0.8.24 Bug#2：动画结束恢复父级滚动条策略。
         self._suppress_scrollbars(False)
         if self._collapsed:
+            self._body.setFixedHeight(0)
             self._body.setVisible(False)
         else:
-            # 解除高度上限，内容后续变化（如切换格式）不会被裁剪
-            self._body.setMaximumHeight(16777215)
+            # V0.8.25：fixedHeight 动画结束后解除固定，恢复由内容决定高度。
+            # 解除用 16777215（与 maximumHeight 习惯一致），布局会立刻按
+            # sizeHint 落到正确值。
+            self._body.setFixedHeight(16777215)
 
     def _apply_collapsed(self):
         # Bug：必须同步 _collapsed 标志，否则 _on_anim_finished 在展开
@@ -706,7 +714,8 @@ class CollapsibleCard(ThemedCard):
         """
         self._content_height = 0
         if not self._collapsed:
-            self._body.setMaximumHeight(16777215)
+            # V0.8.25：fixedHeight 语义下解除固定，恢复由内容决定高度。
+            self._body.setFixedHeight(16777215)
 
 
 # =========================================================================
