@@ -10,8 +10,9 @@ python-mpv（KDE 官方 mpvqt 的 Python 绑定，底层 libmpv，画质准确�
 - ``MpvSurface`` 是普通 ``QWidget`` 容器，把 ``winId()`` 交给 mpv 的 ``--wid``，
   mpv **直接渲染进这个 hwnd**（没有子原生窗口）——因此父容器 ``setMask``
   裁剪显示区域时能裁到 mpv 的渲染内容，这是分割对比可行的基础。
-- libmpv 定位：冻结（PyInstaller）时在 exe 旁 / ``_internal`` 找；源码环境在
-  ``tools/libmpv_bin/``。找到后 prepend 到 ``PATH`` 再 ``import mpv``。
+- libmpv 定位：**不随包分发**（v0.8.28）——优先找用户已安装的 mpv 播放器
+  （exe 旁手动放置 → 源码 tools/libmpv_bin → 系统 PATH → mpv.exe 所在目录 →
+  常见安装位置）。找到后 prepend 到 ``PATH`` 再 ``import mpv``。
 
 依赖：core/logger（可选）；被依赖：gui/compare_window。
 """
@@ -19,6 +20,7 @@ python-mpv（KDE 官方 mpvqt 的 Python 绑定，底层 libmpv，画质准确�
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -34,19 +36,48 @@ _mpv_mod = None
 
 
 def _candidate_dirs() -> list[Path]:
-    """libmpv-2.dll 可能存在的目录（按优先级）。"""
+    """libmpv-2.dll 可能存在的目录（按优先级，去重）。
+
+    v0.8.28：libmpv **不再随包分发**（112MB 且用户机器上多半已有）——FFmpeg
+    自带解码能力，mpv 只是基于 FFmpeg 的播放器外壳，libmpv 的查找交给系统：
+    已安装的 mpv 播放器（PATH / 常见安装目录）或用户手动放置的 dll。
+    """
     dirs: list[Path] = []
-    # 冻结（PyInstaller onedir）：exe 旁 → _internal
+    seen: set[str] = set()
+
+    def _add(p: Path) -> None:
+        s = str(p)
+        if s not in seen and p.is_dir():
+            seen.add(s)
+            dirs.append(p)
+
+    # 1) 冻结（PyInstaller onedir）：exe 旁 → _internal（用户手动放置的场景）
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).parent
-        dirs.append(exe_dir)
-        internal = exe_dir / "_internal"
-        if internal.is_dir():
-            dirs.append(internal)
-    # 源码环境：tools/libmpv_bin（构建脚本会把 dll 复制到该目录）
-    # 用 __file__ 相对定位，避免依赖 cwd。
+        _add(exe_dir)
+        _add(exe_dir / "_internal")
+    # 2) 源码环境：tools/libmpv_bin（开发 / 测试用，不随包分发）
     root = Path(__file__).resolve().parents[3]  # src/momentshift/core -> 项目根
-    dirs.append(root / "tools" / "libmpv_bin")
+    _add(root / "tools" / "libmpv_bin")
+    # 3) 系统 PATH 全部目录（安装 mpv 播放器后通常会加入 PATH）
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if d:
+            _add(Path(d))
+    # 4) mpv.exe 所在目录（mpv 播放器安装后自带 libmpv-2.dll）
+    mpv_exe = shutil.which("mpv")
+    if mpv_exe:
+        _add(Path(mpv_exe).parent)
+    # 5) 常见安装位置（mpv.io 安装器 / 绿色版）
+    local = os.environ.get("LOCALAPPDATA", "")
+    for d in (
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "mpv",
+        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "mpv",
+        Path(local) / "Programs" / "mpv",
+        Path(local) / "Programs" / "mpv.io",
+        Path(local) / "mpv",
+        Path("C:/mpv"),
+    ):
+        _add(d)
     return dirs
 
 
@@ -63,14 +94,13 @@ def ensure_libmpv_path() -> bool:
 
     返回 libmpv 是否可用。多次调用幂等。
     """
-    if not _find_libmpv():
+    dll = _find_libmpv()
+    if dll is None:
         return False
+    dstr = str(dll.parent)
     path = os.environ.get("PATH", "")
-    for d in _candidate_dirs():
-        dstr = str(d)
-        if dstr not in path:
-            path = dstr + os.pathsep + path
-    os.environ["PATH"] = path
+    if dstr not in path:
+        os.environ["PATH"] = dstr + os.pathsep + path
     return True
 
 

@@ -9,6 +9,9 @@
 运行环境卡片使用优雅的状态指示器布局。
 """
 
+import re
+from pathlib import Path
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QFrame,
@@ -31,7 +34,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
-from ..core.ffmpeg import find_ffmpeg
+from ..core.ffmpeg import find_ffmpeg, find_ffprobe, get_version
 from ..core.logger import get_logger
 from ..core.qt_compat import QDesktopServices, QThreadPool, QUrl
 from ..i18n.translator import tr
@@ -43,6 +46,7 @@ from .theme import (
     ThemedCard,
     accent_name,
     app_logo_pixmap,
+    apply_text,
     danger_color,
     muted_text,
     success_color,
@@ -51,6 +55,14 @@ from .theme import (
 log = get_logger("about")
 
 # 环境状态行 CSS（共用）
+
+
+def _short_version(line: str | None) -> str | None:
+    """从 ``xxx -version`` 首行提取简短版本号（如 7.0.2）。失败返回 None。"""
+    if not line:
+        return None
+    m = re.search(r"version\s+([\d.]+)", line)
+    return m.group(1) if m else None
 
 
 class AboutInterface(InterfaceBase):
@@ -139,6 +151,10 @@ class AboutInterface(InterfaceBase):
         self._ff_section = self._build_env_section("FFmpeg", "")
         env_vb.addWidget(self._ff_section)
 
+        # v0.8.28：libmpv 状态行（视频 / GIF 对比播放用；信息性状态，无按钮）
+        self._mpv_row = self._build_status_row(tr("about.env.mpv"))
+        env_vb.addWidget(self._mpv_row)
+
         self.vbox.addWidget(env_card)
 
         self._refresh_env()
@@ -154,6 +170,24 @@ class AboutInterface(InterfaceBase):
         up = getattr(win, "upscaleInterface", None)
         if up is not None and hasattr(up, "reload_engines"):
             up.reload_engines()
+
+    def _build_status_row(self, name: str):
+        """构建单条纯状态行（v0.8.28：libmpv 用，无下载按钮）。"""
+        sec = QWidget()
+        row = QHBoxLayout(sec)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        dot = QLabel()
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet("border-radius: 4px;")
+        row.addWidget(dot)
+        name_lbl = StrongBodyLabel(name)
+        row.addWidget(name_lbl, 1)
+        status_lbl = CaptionLabel("")
+        row.addWidget(status_lbl)
+        sec._dot = dot
+        sec._status = status_lbl
+        return sec
 
     def _build_env_section(self, name: str, ok_text: str):
         """构建单条环境（v0.3.6：上下结构，按钮移入内部）。"""
@@ -198,6 +232,14 @@ class AboutInterface(InterfaceBase):
         prog.hide()
         sv.addWidget(prog)
 
+        # v0.8.28：版本详情行（FFmpeg / FFprobe / FFplay 版本，就绪时显示）
+        detail = CaptionLabel("")
+        detail.setWordWrap(True)
+        detail.setMinimumWidth(0)
+        apply_text(detail, muted_text(), transparent=True)
+        detail.hide()
+        sv.addWidget(detail)
+
         # 存储引用
         sec._dot = dot
         sec._status = status_lbl
@@ -205,6 +247,7 @@ class AboutInterface(InterfaceBase):
         sec._btn = action_btn
         sec._prog = prog
         sec._text = name_lbl
+        sec._detail = detail
         return sec
 
     def _update_section(self, sec, ok, name, ok_msg, fail_msg, btn_text, link_url=""):
@@ -232,19 +275,52 @@ class AboutInterface(InterfaceBase):
     def _refresh_env(self):
         # FFmpeg
         ff = find_ffmpeg()
+        ff_ok = bool(ff)
         self._update_section(
             self._ff_section,
-            bool(ff),
+            ff_ok,
             "FFmpeg",
             tr("ffmpeg.found", name="ffmpeg"),
             tr("about.env.missing"),
             tr("ffmpeg.download"),
         )
+        # v0.8.28：就绪时显示版本详情（FFmpeg / FFprobe 版本 + FFplay 可用性）
+        if ff_ok:
+            ffver = _short_version(get_version(ff)) or "?"
+            probe = find_ffprobe()
+            probever = _short_version(get_version(probe)) if probe else None
+            ffplay_ok = (Path(ff).parent / "ffplay.exe").is_file()
+            self._ff_section._detail.setText(
+                tr(
+                    "about.env.ff.detail",
+                    ff=ffver,
+                    probe=probever or "?",
+                    play=tr("about.env.ffplay.ok")
+                    if ffplay_ok
+                    else tr("about.env.ffplay.missing"),
+                )
+            )
+            self._ff_section._detail.show()
+        else:
+            self._ff_section._detail.hide()
         try:
             self._ff_section._btn.clicked.disconnect()
         except (TypeError, RuntimeError):  # 静默原因：按钮尚未连接任何槽时 disconnect 会抛错
             pass
         self._ff_section._btn.clicked.connect(self._download_ffmpeg)
+
+        # v0.8.28：libmpv 状态（视频 / GIF 对比播放用；缺失只是功能降级，不标红）
+        from ..core.mpv_player import mpv_available  # noqa: PLC0415
+
+        mpv_ok = mpv_available()
+        self._mpv_row._status.setText(
+            tr("about.env.mpv.ok") if mpv_ok else tr("about.env.mpv.missing")
+        )
+        color = success_color().name() if mpv_ok else muted_text()
+        self._mpv_row._status.setStyleSheet(
+            f"color:{color};font-size:{tokens.FONT_SMALL}px;"
+        )
+        self._mpv_row._dot.setStyleSheet(tokens.dot_qss(color, 4))
 
     def _download_ffmpeg(self):
         from ..core.ffmpeg_download import FfmpegDownloadWorker
