@@ -1,24 +1,35 @@
 """放大前后对比弹窗。
 
 职责边界：
-- 做：以独立弹窗展示放大前后对比，分割线跟随鼠标移动。
-- 不做：不解码封面图（复用 gui/compare_widget 的结果）。
+- 做：以独立弹窗展示放大前后对比；图片走鼠标分割，视频/GIF 走双栏并排播放。
+- 不做：不解码封面图（图片直接用 QPixmap；视频/GIF 用播放器渲染）。
 
 依赖：gui/theme、i18n/translator；被依赖：gui/upscale_interface。
 
 鼠标在窗口内移动时分割线与指针同步；移出窗口则恢复居中。
-删除滑块与重置按钮，改为纯鼠标驱动。
+
+v0.8.24 重构：
+- 支持视频 / GIF 对比（此前 QPixmap 加载不了，显示一片绿色背景）。
+  图片用「分割对比」，视频/GIF 用「左右双栏并排同步播放」——分割遮罩
+  依赖对原生窗口（QVideoWidget）做 z-order / 裁剪，Windows 下不可靠，
+  双栏并排是跨平台稳定的折中。
+- 删除窗口内自定义标题栏（标题文字 + 全屏 / 最小化 / 关闭按钮），
+  恢复 QDialog 原生窗口按钮（-、口、X）。
+- 窗口尺寸调整为 1280×720。
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint, QRect, Qt
+from pathlib import Path
+
+from PyQt6.QtCore import QPoint, QRect, Qt, QUrl
 from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
+from PyQt6.QtMultimedia import QMediaPlayer
+from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -27,10 +38,24 @@ from ..i18n.translator import tr
 from . import tokens
 from .theme import accent_color
 
+# 视频扩展名（走播放器）；其余按图片 / GIF 处理
+_VIDEO_EXTS = {
+    ".mp4", ".mkv", ".mov", ".webm", ".avi", ".flv", ".wmv",
+    ".m4v", ".3gp", ".ts", ".mts", ".m2ts",
+}
+
+
+def _is_video(path: str) -> bool:
+    return Path(path).suffix.lower() in _VIDEO_EXTS
+
+
+def _is_gif(path: str) -> bool:
+    return Path(path).suffix.lower() == ".gif"
+
 
 # --------------------------------------------------------------------------
 class _CompareView(QWidget):
-    """分割对比绘制区域（鼠标驱动）。"""
+    """分割对比绘制区域（鼠标驱动，静态图片模式）。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -97,11 +122,83 @@ class _CompareView(QWidget):
         painter.end()
 
 
+class _MediaPane(QWidget):
+    """单侧媒体面板：图片显示静态图，GIF 播放 QMovie，视频播放 QMediaPlayer。"""
+
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        self._vb = QVBoxLayout(self)
+        self._vb.setContentsMargins(0, 0, 0, 0)
+        self._vb.setSpacing(6)
+
+        cap = QLabel(title)
+        cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cap.setStyleSheet(
+            f"color:{tokens.COMPARE_TEXT};font-size:{tokens.FONT_SMALL}px;"
+            f"font-weight:600;background:transparent;"
+        )
+        self._vb.addWidget(cap)
+
+        self._video: QVideoWidget | None = None
+        self._player: QMediaPlayer | None = None
+        self._movie = None
+        self._label = QLabel()
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label.setStyleSheet("background: transparent; border: none;")
+        self._vb.addWidget(self._label, 1)
+
+    def load(self, path: str, is_gif: bool) -> None:
+        if not path or not Path(path).exists():
+            self._label.setText("")
+            return
+        if _is_video(path) and not is_gif:
+            # 视频：播放器
+            self._video = QVideoWidget(self)
+            self._video.setStyleSheet("background: transparent; border: none;")
+            self._player = QMediaPlayer(self)
+            self._player.setVideoOutput(self._video)
+            self._player.setSource(QUrl.fromLocalFile(str(Path(path).resolve())))
+            self._player.play()
+            self._vb.insertWidget(1, self._video, 1)
+            self._label.hide()
+            return
+        if is_gif:
+            from PyQt6.QtGui import QMovie  # noqa: PLC0415 - 局部导入
+
+            self._movie = QMovie(path)
+            self._movie.setCacheMode(QMovie.CacheMode.CacheAll)
+            self._label.setMovie(self._movie)
+            self._movie.start()
+            self._label.show()
+            return
+        # 静态图片
+        pm = QPixmap(path)
+        if pm.isNull():
+            self._label.setText("")
+        else:
+            self._label.setPixmap(
+                pm.scaled(
+                    self._label.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        self._label.show()
+
+    def stop(self) -> None:
+        if self._player is not None:
+            self._player.stop()
+        if self._movie is not None:
+            self._movie.stop()
+
+
 # --------------------------------------------------------------------------
 class CompareWindow(QDialog):
     """放大前后对比窗口。
 
     v0.7.9：删除滑块/重置按钮，分隔线跟随鼠标移动，移出窗口后恢复居中。
+    v0.8.24：支持视频/GIF 对比（双栏并排播放）；删除窗口内自定义标题栏，
+    恢复原生窗口按钮；窗口 1280×720。
     """
 
     def __init__(self, src: str, out: str, parent=None):
@@ -109,70 +206,42 @@ class CompareWindow(QDialog):
         self._src_path = src
         self._out_path = out
         self.setWindowTitle(tr("upscale.compare.title"))
-        self.resize(1100, 740)
-        self.setMinimumSize(800, 500)
+        self.resize(1280, 720)
+        self.setMinimumSize(960, 540)
         self.setStyleSheet(f"CompareWindow{{background:{tokens.COMPARE_SURFACE};}}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # 标题栏（含全屏/最小化按钮）
-        title_bar = QWidget()
-        title_bar.setFixedHeight(40)
-        title_bar.setStyleSheet(
-            f"background:{tokens.COMPARE_SURFACE};border-bottom:1px solid {tokens.COMPARE_BORDER};"
-        )
-        th = QHBoxLayout(title_bar)
-        th.setContentsMargins(16, 0, 12, 0)
-        th.setSpacing(8)
-        t = QLabel(tr("upscale.compare.title"))
-        t.setStyleSheet(
-            f"color:{tokens.COMPARE_TEXT};font-size:{tokens.FONT_BODY}px;"
-            f"font-weight:600;background:transparent;"
-        )
-        th.addWidget(t)
-        th.addStretch(1)
-
-        # 标题栏右侧三个按钮外观完全一致，合并成一次建样式 + 一轮装配，
-        # 顺序仍是 全屏 / 最小化 / 关闭；文案走 i18n（V0.8.19 优化2）
-        self._fullscreen = False
-        btn_qss = self._btn_style()
-        for text, slot in (
-            (tr("upscale.compare.fullscreen"), self._toggle_fullscreen),
-            (tr("upscale.compare.minimize"), self.showMinimized),
-            (tr("upscale.compare.close"), self.close),
-        ):
-            btn = QPushButton(text)
-            btn.setStyleSheet(btn_qss)
-            btn.clicked.connect(slot)
-            th.addWidget(btn)
-        root.addWidget(title_bar)
-
-        # 图片对比区
+        self._is_dynamic = False
         self._view = _CompareView()
+        self._src_pane: _MediaPane | None = None
+        self._out_pane: _MediaPane | None = None
+
+        # 动态媒体（视频/GIF）：左右双栏
+        self._media_row = QHBoxLayout()
+        self._media_row.setContentsMargins(12, 12, 12, 12)
+        self._media_row.setSpacing(12)
+        self._media_host = QWidget()
+        self._media_host.setStyleSheet(f"background: {tokens.COMPARE_BG};")
+        self._media_host.setLayout(self._media_row)
+        self._media_host.hide()
+        root.addWidget(self._media_host, 1)
+
+        # 静态图片对比区
         root.addWidget(self._view, 1)
 
-        # 设置鼠标事件
+        # 鼠标事件
         self._view.mouseMoveEvent = self._on_mouse_move
         self._view.leaveEvent = self._on_mouse_leave
         self._view.enterEvent = self._on_mouse_enter
-
-    def _btn_style(self) -> str:
-        """标题栏小按钮的 QSS（深色底、浅灰字，跟随对比窗专用色板）。"""
-        return (
-            f"QPushButton{{background:{tokens.COMPARE_BORDER};"
-            f"color:{tokens.COMPARE_TEXT};border:none;"
-            f"border-radius:{tokens.RADIUS_SM}px;padding:4px 12px;"
-            f"font-size:{tokens.FONT_SMALL}px;}}"
-            f"QPushButton:hover{{background:{tokens.COMPARE_BTN_HOVER};}}"
-        )
 
     def showEvent(self, event):
         super().showEvent(event)
         if not hasattr(self, "_loaded"):
             self._loaded = True
-            self._load_images()
+            self._load_media()
 
     def _on_mouse_move(self, event):
         self._split_from_pos(event.pos())
@@ -193,22 +262,48 @@ class CompareWindow(QDialog):
         self._view.unsetCursor()
         self._view.set_split(0.5)
 
-    def _toggle_fullscreen(self):
-        self._fullscreen = not self._fullscreen
-        if self._fullscreen:
-            self.showFullScreen()
-        else:
-            self.showNormal()
+    def _load_media(self):
+        """按文件类型装载对比内容。
 
-    def _load_images(self):
-        src = QPixmap(self._src_path)
-        out = QPixmap(self._out_path)
-        if src.isNull():
-            src = QPixmap(1, 1)
-        # 调整2：输出文件不存在时，用源图占位并提示
-        if out.isNull():
-            out = src.copy()
-        self._view.set_images(src, out)
+        图片走静态分割对比；视频 / GIF 走左右双栏并排同步播放（分割遮罩
+        依赖原生窗口裁剪，跨平台不可靠，双栏是稳定折中）。
+        """
+        src = self._src_path
+        out = self._out_path
+        if not src or not Path(src).exists():
+            return
+
+        is_gif = _is_gif(src) or _is_gif(out)
+        is_video = _is_video(src) or _is_video(out)
+        if is_gif or is_video:
+            # out 可能尚未生成（对比时任务刚完成）；动态面板仍创建，
+            # load 内部对缺失路径显示空白即可。
+            self._is_dynamic = True
+            self._view.hide()
+            self._media_host.show()
+            self._src_pane = _MediaPane(tr("upscale.compare.original"), self._media_host)
+            self._out_pane = _MediaPane(tr("upscale.compare.upscaled"), self._media_host)
+            self._media_row.addWidget(self._src_pane, 1)
+            self._media_row.addWidget(self._out_pane, 1)
+            self._src_pane.load(src, is_gif=is_gif)
+            self._out_pane.load(out, is_gif=is_gif)
+            return
+
+        # 静态图片
+        src_pix = QPixmap(src)
+        if src_pix.isNull():
+            src_pix = QPixmap(1, 1)
+        out_pix = QPixmap(out)
+        if out_pix.isNull():
+            out_pix = src_pix.copy()
+        self._view.set_images(src_pix, out_pix)
+
+    def closeEvent(self, event):
+        if self._src_pane is not None:
+            self._src_pane.stop()
+        if self._out_pane is not None:
+            self._out_pane.stop()
+        super().closeEvent(event)
 
     # ----- 外部调用入口（保持兼容）-----
     @classmethod

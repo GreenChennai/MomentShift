@@ -490,13 +490,20 @@ class QueueItemWidget(ThemedCard):
             只处理 ``running`` / ``compressing`` 两个进行态。终态（done /
             failed / canceled）的详情行由 :meth:`set_status` 独占，这里不碰，
             否则速度片段会在任务结束后残留在大小对比旁边。
+
+            v0.8.24 Bug#1：压缩阶段改为**两行**——第一行是转换大小对比
+            （``转换 57.3 MB → 103.0 MB（+80%）``），第二行是压缩实时数据
+            （``压缩 5% · 2.02x · 剩余01:42``）。此前用 ``·`` 把两段拼成
+            一行，拥挤且「22%」容易误读成转换阶段的进度。
         """
         if self._disp_status == "running":
             self.detailLbl.setText(join_detail(f"{self._run_pct}%", self._stats_text))
         elif self._disp_status == "compressing":
-            self.detailLbl.setText(
-                join_detail(self._detail_text(), f"{self._comp_pct}%", self._stats_text)
+            conv_line = self._detail_text()  # 第一行：转换大小对比（可能为空）
+            comp_line = join_detail(
+                f"{tr('convert.label.compress')} {self._comp_pct}%", self._stats_text
             )
+            self.detailLbl.setText("<br>".join(p for p in (conv_line, comp_line) if p))
 
     def set_stats(self, snap) -> None:
         """接收 ffmpeg 实时统计（速度 / 剩余时间）并刷新详情行。

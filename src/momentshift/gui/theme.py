@@ -566,6 +566,12 @@ class CollapsibleCard(ThemedCard):
                     real_target = 200
         self._content_height = real_target if real_target > 0 else self._content_height
         self._body.show()
+        # V0.8.24 Bug#2：动画期间抑制父级滚动区滚动条。折叠动画靠逐帧改
+        # maximumHeight 驱动，父级 QScrollArea 会在每帧重算内容高度；若滚动条
+        # 恰好在该边界「出现↔消失」切换，视口宽度随之变化，body 内换行文本
+        # 会反复重排，表现为整卡快速上下抖动。动画期间把滚动条钉在关，切断
+        # 「高度→滚动条→宽度→换行→高度」的反馈环；动画结束再恢复。
+        self._suppress_scrollbars(True)
         self._anim = QPropertyAnimation(self._body, b"maximumHeight", self)
         self._anim.setDuration(self._ANIM_DURATION)
         self._anim.setStartValue(cur)
@@ -581,6 +587,54 @@ class CollapsibleCard(ThemedCard):
         self._anim.finished.connect(self._on_anim_finished)
         self._anim.start()
 
+    def _suppress_scrollbars(self, suppress: bool) -> None:
+        """动画期间钉住最近父级滚动区的滚动条策略（v0.8.24 Bug#2）。
+
+        只处理**最近一个** QScrollArea：卡片往往直接躺在滚动容器里，这就是
+        每次逐帧改高度时被牵连重排的那个。``suppress=False`` 时恢复动画前
+        记录的原始策略；找不到滚动区则什么都不做。
+        """
+        if suppress:
+            # 若上一次动画被 stop() 打断（finished 未触发），先归还旧策略，
+            # 避免「记录的是 AlwaysOff」把原始策略覆盖丢。
+            self._restore_scrollbars()
+            area = self._find_scroll_area()
+            if area is None:
+                self._scroll_area = None
+                self._scroll_policies = None
+                return
+            self._scroll_area = area
+            self._scroll_policies = (
+                area.verticalScrollBarPolicy(),
+                area.horizontalScrollBarPolicy(),
+            )
+            area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        else:
+            self._restore_scrollbars()
+
+    def _find_scroll_area(self):
+        from PyQt6.QtWidgets import QScrollArea  # noqa: PLC0415 - 局部导入避免顶层拖重
+
+        p = self.parentWidget()
+        while p is not None:
+            if isinstance(p, QScrollArea):
+                return p
+            p = p.parentWidget()
+        return None
+
+    def _restore_scrollbars(self) -> None:
+        area = getattr(self, "_scroll_area", None)
+        policies = getattr(self, "_scroll_policies", None)
+        self._scroll_area = None
+        self._scroll_policies = None
+        if area is not None and policies is not None:
+            try:
+                area.setVerticalScrollBarPolicy(policies[0])
+                area.setHorizontalScrollBarPolicy(policies[1])
+            except RuntimeError:
+                pass  # 静默原因：滚动区可能已随界面销毁
+
     def _on_anim_finished(self):
         """按结束时的实际状态收尾，避免快速连点造成状态错位。"""
         # V0.8.20 Bug2：解除收起动画期间对标题栏高度的钉死，恢复自由布局。
@@ -589,6 +643,8 @@ class CollapsibleCard(ThemedCard):
             self._bar.setMinimumHeight(0)
             self._bar.setMaximumHeight(16777215)
             self._bar_h_fixed = None
+        # V0.8.24 Bug#2：动画结束恢复父级滚动条策略。
+        self._suppress_scrollbars(False)
         if self._collapsed:
             self._body.setVisible(False)
         else:
