@@ -738,11 +738,42 @@ def _iter_search_roots(eng: Engine):
             continue
 
 
+# v0.9.0：引擎定位结果缓存——``find_engine`` 会被 GUI 线程频繁调用
+# （开始按钮 / 控件刷新 / 引擎卡逐引擎检测 / 重扫），每次都做磁盘目录遍历
+# （tools 下大目录 / 慢盘 / Defender 扫描时可能卡住界面）。缓存后每次只做
+# 一次 ``isfile`` 校验（毫秒级）；引擎安装状态变化时调用
+# :func:`clear_engine_cache` 失效。
+_engine_cache: dict[str, str | None] = {}
+_MISSING = object()  # 哨兵：区分「未缓存」与「缓存为未找到」
+
+
+def clear_engine_cache(eid: str | None = None) -> None:
+    """清除引擎定位缓存（全部或指定引擎）。引擎下载 / 手动放置后调用。"""
+    if eid is None:
+        _engine_cache.clear()
+    else:
+        _engine_cache.pop(eid, None)
+
+
 def find_engine(eid: str) -> str | None:
-    """返回引擎可执行文件的绝对路径；找不到返回 ``None``。
+    """返回引擎可执行文件的绝对路径；找不到返回 ``None``（带缓存，v0.9.0）。
 
     顺序：``tools/<eid>``（含 2 层子目录）→ 兼容目录 → 系统 ``PATH``。
     """
+    cached = _engine_cache.get(eid, _MISSING)
+    if cached is not _MISSING:
+        if cached is None:
+            return None
+        if os.path.isfile(cached):  # 快速校验缓存路径仍有效
+            return cached
+        _engine_cache.pop(eid, None)  # 文件已消失 → 重新搜索
+    exe = _find_engine_impl(eid)
+    _engine_cache[eid] = exe
+    return exe
+
+
+def _find_engine_impl(eid: str) -> str | None:
+    """无缓存的引擎定位（磁盘遍历）。"""
     eng = ENGINE_BY_ID.get(eid)
     if eng is None:
         return None

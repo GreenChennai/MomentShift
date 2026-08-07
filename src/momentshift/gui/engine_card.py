@@ -246,6 +246,8 @@ class EngineRow(QWidget):
 
     # -- 状态刷新 --
     def refresh(self) -> None:
+        # v0.9.0：刷新前清掉该引擎的定位缓存，保证下载完成后能立即检测到
+        eng_mod.clear_engine_cache(self.engine.eid)
         exe = eng_mod.find_engine(self.engine.eid)
         if exe:
             color = success_color().name()
@@ -494,6 +496,8 @@ class EnginesCard(ThemedCard):
         open_folder(str(tools_dir()))
 
     def rescan(self) -> None:
+        # v0.9.0：手动重扫先清空定位缓存（用户可能刚放好引擎文件）
+        eng_mod.clear_engine_cache()
         eng_mod.ensure_all_dirs()
         for row in self._rows:
             row.refresh()
