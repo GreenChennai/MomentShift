@@ -27,6 +27,9 @@ release/
 tools/ffmpeg_bin/
 dist_assets/
 
+# ---- libmpv (v0.8.27, downloaded from mpv-winbuild, not committed) ----
+tools/libmpv_bin/
+
 # ---- Bundled external tools (downloaded in-app, not committed) ----
 tools/*.exe
 

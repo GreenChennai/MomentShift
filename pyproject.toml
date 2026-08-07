@@ -36,6 +36,9 @@ dependencies = [
     "PyQt6>=6.6,<7",
     "PyQt6-Fluent-Widgets>=1.11,<2",
     "psutil>=5.9",
+    # v0.8.27：对比窗口视频 / GIF 播放（python-mpv 绑定 libmpv）。
+    # libmpv-2.dll 需另行下载放入 tools/libmpv_bin（见 README / 交付脚本）。
+    "mpv>=1.0",
 ]
 
 [project.optional-dependencies]

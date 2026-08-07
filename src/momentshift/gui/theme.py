@@ -21,7 +21,6 @@ import os
 from pathlib import Path
 
 from PyQt6.QtCore import (
-    QParallelAnimationGroup,
     QPointF,
     QPropertyAnimation,
     QSize,
@@ -30,7 +29,14 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -433,9 +439,16 @@ class CollapsibleCard(ThemedCard):
     def __init__(self, title: str = "", subtitle: str = "", parent=None, collapsed: bool = False):
         super().__init__(parent)
         self._collapsed = collapsed
-        self._anim = None
-        self._content_height = 0
-        self._bar_h_fixed = None  # V0.8.20 Bug2：收起动画期间钉死的标题栏高度
+        # V0.8.27 Bug#1（四修）：折叠动画从「逐帧高度动画」换成「淡入/淡出」。
+        # 逐帧改 body 高度必然驱动父布局每帧重排，滚动区/相邻卡片被反复
+        # 推挤 → 整卡上下抖（展开抖几下、收起抖很多下）。换成透明度动画：
+        # 收起时 body 原地淡出（高度不变 → 布局纹丝不动），结束后一次性
+        # 归零高度 + 隐藏；展开时高度一次到位（布局只重排一次），随后淡入。
+        # 布局重排最多两次且都不发生在动画进行中，抖动从根上消除。
+        self._fade_anim: QPropertyAnimation | None = None
+        self._fade_effect: QGraphicsOpacityEffect | None = None
+        self._scroll_area = None
+        self._scroll_policies = None
 
         self.setStyleSheet(
             tokens.transparent_children_qss(
@@ -547,66 +560,87 @@ class CollapsibleCard(ThemedCard):
             animate=animations.should_animate(self._toggleBtn),
         )
 
-    def _anim_target(self, target_h: int):
-        if self._anim is not None:
-            # 中途停掉上一段动画，避免它的 finished 回调污染新状态
-            self._anim.stop()
-            self._anim.deleteLater()
-            self._anim = None
+    def _fade_run(self, to_opacity: float, duration: int, curve, on_done) -> None:
+        """透明度动画（V0.8.27 Bug#1 四修：折叠动画改淡入/淡出）。
 
-        # V0.8.26 Bug#1（三修）：折叠动画改走 **minimumHeight + maximumHeight
-        # 双属性并行**（QParallelAnimationGroup）。
-        #
-        # 为什么不用 fixedHeight（V0.8.25）：``setFixedHeight`` 只是便捷方法，
-        # **不是 Q_PROPERTY** —— ``QPropertyAnimation(b"fixedHeight")`` 找不到
-        # 可写属性，动画直接失效，表现为「顿一下然后瞬间收起/展开」。
-        #
-        # 为什么 maximumHeight 单属性会抖：它只是「上限」，布局仍按 body 的
-        # sizeHint 算实际高度。动画期间若 body 内换行文本/控件随视口宽度变化
-        # 重排，sizeHint 每帧都在变，父布局也跟着每帧重排——表现为整卡上下抖。
-        #
-        # 双属性并行的语义：**每帧把 minimumHeight 与 maximumHeight 都钉到
-        # 同一个动画值**，等价于 fixedHeight 的「实打实高度」——body 被强制
-        # 钉死，内部内容被**裁剪**而非重排，父布局每帧只重排一次；且两条
-        # 都是有效 Q_PROPERTY，动画能正常驱动。这是 Qt 社区（djc_helper /
-        # superqt 等）做平滑折叠的标准做法。
-        if target_h <= 0:
-            real_target = 0
-            h = self._body.height()
-            # 收起起点 = 当前实际高度（maximumHeight 可能是 16777215，
-            # 直接用它会先停在高位区间造成「顿一下」；用实际高度起播才顺）
-            cur = h if h > 0 else 0
+        为什么弃用「逐帧高度动画」（V0.8.20 max 单属性 / V0.8.25 fixedHeight /
+        V0.8.26 min+max 双属性并行都抖）：只要动画在逐帧改 body 高度，父布局
+        就必须每帧重排一次——卡片本身、相邻卡片、滚动区内容全部被推着动，
+        表现为展开抖几下、收起抖很多下。滚动条抑制只能切断「宽度→换行」的
+        次级输入，治标不治本。
+
+        本方案布局重排**至多两次、且都不在动画进行中**：
+        - 收起：body 保持原高度原地淡出（高度不变 → 布局纹丝不动），
+          淡出结束后一次性高度归零 + 隐藏（此时内容已不可见，上移一次无感）；
+        - 展开：body 高度一次到位（布局只重排一次），随后 0→1 淡入。
+
+        快速连点时先停旧动画、重建 effect，终点状态由 ``on_done`` 按
+        ``self._collapsed`` 收尾，不会串态。
+        """
+        if self._fade_anim is not None:
+            self._fade_anim.stop()
+            self._fade_anim.deleteLater()
+            self._fade_anim = None
+        if self._fade_effect is not None:
+            self._fade_effect.deleteLater()
+            self._fade_effect = None
+        eff = QGraphicsOpacityEffect(self._body)
+        self._body.setGraphicsEffect(eff)
+        self._fade_effect = eff
+        anim = QPropertyAnimation(eff, b"opacity", self)
+        anim.setDuration(duration)
+        anim.setStartValue(eff.opacity())
+        anim.setEndValue(to_opacity)
+        anim.setEasingCurve(curve)
+        anim.finished.connect(on_done)
+        anim.start()
+        self._fade_anim = anim
+
+    def _on_fade_finished(self):
+        """淡入/淡出结束，按最终状态一次性收尾。"""
+        self._fade_anim = None
+        # 移除合成层，恢复普通绘制（防止后续内容变化时的残影与合成开销）
+        if self._fade_effect is not None:
+            self._fade_effect.deleteLater()
+            self._fade_effect = None
+        self._suppress_scrollbars(False)
+        if self._collapsed:
+            # 收起：内容已淡出，此刻一次性归零高度并隐藏——布局只重排一次，
+            # 且没有可见内容在动，不会产生抖动观感。
+            self._body.setMinimumHeight(0)
+            self._body.setMaximumHeight(0)
+            self._body.setVisible(False)
         else:
-            if self._content_height > 0:
-                real_target = self._content_height
-            else:
-                real_target = self._body.sizeHint().height()
-                if real_target <= 0:
-                    real_target = 200
-            cur = 0  # 展开起点恒为 0，直接长开
-        self._content_height = real_target if real_target > 0 else self._content_height
-        # 钉住当前值作为动画起点（收起=当前高，展开=0）
-        self._body.setMinimumHeight(int(cur))
-        self._body.setMaximumHeight(int(cur))
-        self._body.show()
-        # 动画期间抑制父级滚动区滚动条，切断「高度→滚动条→宽度→换行→
-        # 高度」的反馈环（双属性钉死下宽度不再影响 body 高度，但仍防滚动条
-        # 出现/消失带来的视口宽度抖动）。
-        self._suppress_scrollbars(True)
+            # 展开：淡入完成，高度早已一次到位，这里解除残留限制即可。
+            self._body.setMinimumHeight(0)
+            self._body.setMaximumHeight(16777215)
 
-        # 并行驱动 min/max 高度：两条曲线一致，body 全程被钉在动画值上。
-        curve = animations.CURVE_OUT if target_h <= 0 else animations.CURVE_IN
-        group = QParallelAnimationGroup(self)
-        for prop in (b"minimumHeight", b"maximumHeight"):
-            a = QPropertyAnimation(self._body, prop, group)
-            a.setDuration(self._ANIM_DURATION)
-            a.setStartValue(int(cur))
-            a.setEndValue(int(real_target))
-            a.setEasingCurve(curve)
-            group.addAnimation(a)
-        group.finished.connect(self._on_anim_finished)
-        self._anim = group
-        self._anim.start()
+    def _apply_collapsed(self):
+        self._collapsed = True
+        # 收起：body 原地淡出（高度不变 → 布局不动 → 标题栏/相邻卡片零位移）
+        self._suppress_scrollbars(True)
+        self._fade_run(
+            0.0,
+            int(self._ANIM_DURATION * 0.8),
+            animations.CURVE_SMOOTH,
+            self._on_fade_finished,
+        )
+        self._spin_toggle_icon()
+
+    def _apply_expanded(self):
+        self._collapsed = False
+        # 展开：高度一次到位（布局只重排一次），随后淡入。
+        self._suppress_scrollbars(True)
+        self._body.show()
+        self._body.setMinimumHeight(0)
+        self._body.setMaximumHeight(16777215)
+        self._fade_run(
+            1.0,
+            self._ANIM_DURATION,
+            animations.CURVE_SMOOTH,
+            self._on_fade_finished,
+        )
+        self._spin_toggle_icon()
 
     def _suppress_scrollbars(self, suppress: bool) -> None:
         """动画期间钉住最近父级滚动区的滚动条策略（v0.8.24 Bug#2）。
@@ -656,48 +690,6 @@ class CollapsibleCard(ThemedCard):
             except RuntimeError:
                 pass  # 静默原因：滚动区可能已随界面销毁
 
-    def _on_anim_finished(self):
-        """按结束时的实际状态收尾，避免快速连点造成状态错位。"""
-        # V0.8.20 Bug2：解除收起动画期间对标题栏高度的钉死，恢复自由布局。
-        # （展开分支同样会经过这里，两种状态下解除都安全。）
-        if self._bar_h_fixed is not None:
-            self._bar.setMinimumHeight(0)
-            self._bar.setMaximumHeight(16777215)
-            self._bar_h_fixed = None
-        # V0.8.24 Bug#2：动画结束恢复父级滚动条策略。
-        self._suppress_scrollbars(False)
-        if self._collapsed:
-            self._body.setMinimumHeight(0)
-            self._body.setMaximumHeight(0)
-            self._body.setVisible(False)
-        else:
-            # V0.8.26：双属性动画结束后解除 min 钉死、max 恢复自由，
-            # 布局立刻按 sizeHint 落到正确值（同 maximumHeight 习惯）。
-            self._body.setMinimumHeight(0)
-            self._body.setMaximumHeight(16777215)
-
-    def _apply_collapsed(self):
-        # Bug：必须同步 _collapsed 标志，否则 _on_anim_finished 在展开
-        # 动画结束后会读到残留的 True 而把卡片重新收起（"展开→收起"闪烁）。
-        self._collapsed = True
-        h = self._body.height()
-        if h > 0:
-            self._content_height = h
-        # V0.8.20 Bug2：收起动画期间把标题栏高度钉死。收起时 body 高度逐帧
-        # 收缩，若父级布局/滚动区随内容高度重排，或 Windows DPI 缩放下标题
-        # 垂直居中产生亚像素波动，标题文字会上下抖动。钉死后标题栏几何在
-        # 动画期间绝对不变，动画结束由 _on_anim_finished 恢复。
-        self._bar_h_fixed = self._bar.height()
-        self._bar.setFixedHeight(self._bar_h_fixed)
-        self._anim_target(0)
-        self._spin_toggle_icon()
-
-    def _apply_expanded(self):
-        self._collapsed = False
-        self._body.setVisible(True)
-        self._anim_target(16777215)
-        self._spin_toggle_icon()
-
     @property
     def body(self) -> QVBoxLayout:
         return self._body_layout
@@ -728,10 +720,9 @@ class CollapsibleCard(ThemedCard):
         v0.7.3 Bug3：展开动画结束时 maximumHeight 停在当时的内容高度；
         之后若再显示更多控件（例如压缩后端切到「自动选择」，三组参数同时出现），
         布局会被这个陈旧上限压扁 —— 表现为所有条目挤成一团。
+        V0.8.27：展开即解除上限（淡入方案不做高度动画），此处保持兜底语义。
         """
-        self._content_height = 0
         if not self._collapsed:
-            # V0.8.26：双属性语义下解除固定，恢复由内容决定高度。
             self._body.setMinimumHeight(0)
             self._body.setMaximumHeight(16777215)
 

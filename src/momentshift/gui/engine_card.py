@@ -25,6 +25,7 @@ from pathlib import Path
 from PyQt6.QtCore import QPropertyAnimation, Qt
 from PyQt6.QtWidgets import (
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -297,9 +298,11 @@ class EnginesCard(ThemedCard):
         self._on_changed = on_changed
         self._rows: list[EngineRow] = []
         self._collapsed = collapsed
-        self._anim = None
-        self._content_height = 0
-        self._bar_h_fixed = None  # 收起动画期间钉死的标题栏高度（同 CollapsibleCard）
+        # V0.8.27 Bug#1（四修）：折叠动画从「逐帧高度动画」换成「淡入/淡出」
+        # ——收起原地淡出（高度不变 → 布局不动）、展开高度一次到位后淡入，
+        # 布局重排最多两次且都不在动画进行中，彻底消除上下抖动。
+        self._fade_anim = None
+        self._fade_effect = None
 
         vb = QVBoxLayout(self)
         vb.setContentsMargins(CARD_MARGIN, 16, CARD_MARGIN, 16)
@@ -414,67 +417,68 @@ class EnginesCard(ThemedCard):
             animate=animations.should_animate(self.toggleBtn),
         )
 
-    def _anim_target(self, target_h: int):
-        if self._anim is not None:
-            self._anim.stop()
-            self._anim.deleteLater()
-            self._anim = None
-        cur = self._body.maximumHeight()
-        real_target = target_h
-        if target_h <= 0:
-            real_target = 0
-            h = self._body.height()
-            if h > 0 and cur > h:
-                cur = h
-        elif target_h == 16777215:
-            if self._content_height > 0:
-                real_target = self._content_height
-            else:
-                real_target = self._body.sizeHint().height()
-                if real_target <= 0:
-                    real_target = 200
-        self._content_height = real_target if real_target > 0 else self._content_height
-        self._body.show()
-        self._anim = QPropertyAnimation(self._body, b"maximumHeight", self)
-        self._anim.setDuration(self._ANIM_DURATION)
-        self._anim.setStartValue(cur)
-        self._anim.setEndValue(real_target)
-        self._anim.setEasingCurve(
-            animations.CURVE_OUT if target_h <= 0 else animations.CURVE_IN
-        )
-        self._anim.finished.connect(self._on_anim_finished)
-        self._anim.start()
+    def _fade_run(self, to_opacity: float, duration: int, curve, on_done) -> None:
+        """透明度动画（V0.8.27 Bug#1：与 CollapsibleCard 同款淡入/淡出方案）。
 
-    def _on_anim_finished(self):
-        if self._bar_h_fixed is not None:
-            self._bar.setMinimumHeight(0)
-            self._bar.setMaximumHeight(16777215)
-            self._bar_h_fixed = None
+        收起 = body 原地淡出（高度不变 → 父布局纹丝不动，不抖），结束后
+        一次性高度归零 + 隐藏；展开 = 高度一次到位（布局只重排一次）+ 淡入。
+        """
+        if self._fade_anim is not None:
+            self._fade_anim.stop()
+            self._fade_anim.deleteLater()
+            self._fade_anim = None
+        if self._fade_effect is not None:
+            self._fade_effect.deleteLater()
+            self._fade_effect = None
+        eff = QGraphicsOpacityEffect(self._body)
+        self._body.setGraphicsEffect(eff)
+        self._fade_effect = eff
+        anim = QPropertyAnimation(eff, b"opacity", self)
+        anim.setDuration(duration)
+        anim.setStartValue(eff.opacity())
+        anim.setEndValue(to_opacity)
+        anim.setEasingCurve(curve)
+        anim.finished.connect(on_done)
+        anim.start()
+        self._fade_anim = anim
+
+    def _on_fade_finished(self):
+        self._fade_anim = None
+        if self._fade_effect is not None:
+            self._fade_effect.deleteLater()
+            self._fade_effect = None
         if self._collapsed:
+            self._body.setMaximumHeight(0)
             self._body.setVisible(False)
         else:
             self._body.setMaximumHeight(16777215)
 
     def _apply_collapsed(self):
         self._collapsed = True
-        h = self._body.height()
-        if h > 0:
-            self._content_height = h
-        # 收起动画期间钉死标题栏高度，避免高度收缩带动标题上下抖
-        self._bar_h_fixed = self._bar.height()
-        self._bar.setFixedHeight(self._bar_h_fixed)
-        self._anim_target(0)
+        # 收起：body 原地淡出，高度不变 → 标题栏/卡片零位移，不抖
+        self._fade_run(
+            0.0,
+            int(self._ANIM_DURATION * 0.8),
+            animations.CURVE_SMOOTH,
+            self._on_fade_finished,
+        )
         self._spin_toggle_icon()
 
     def _apply_expanded(self):
         self._collapsed = False
+        # 展开：高度一次到位（布局只重排一次），随后淡入
         self._body.setVisible(True)
-        self._anim_target(16777215)
+        self._body.setMaximumHeight(16777215)
+        self._fade_run(
+            1.0,
+            self._ANIM_DURATION,
+            animations.CURVE_SMOOTH,
+            self._on_fade_finished,
+        )
         self._spin_toggle_icon()
 
     def refresh_content_height(self):
         """内容动态变化后调用：展开态下解除 maximumHeight 上限。"""
-        self._content_height = 0
         if not self._collapsed:
             self._body.setMaximumHeight(16777215)
 

@@ -1,35 +1,36 @@
 """放大前后对比弹窗。
 
 职责边界：
-- 做：以独立弹窗展示放大前后对比；图片走鼠标分割，视频 / GIF 走
-  QMediaPlayer / QMovie 真实解码播放（v0.8.26 起弃用 FFmpeg 抽帧）。
+- 做：以独立弹窗展示放大前后对比；图片走 QPixmap 分割，视频 / GIF 走
+  python-mpv（libmpv）真实解码嵌入播放（v0.8.27 起弃用 QMediaPlayer）。
 - 不做：不解析媒体元数据；不管理下载。
 
-依赖：core/ffmpeg、gui/theme、i18n/translator；被依赖：gui/upscale_interface。
+依赖：core/mpv_player、gui/theme、i18n/translator；被依赖：gui/upscale_interface。
 
 v0.8.24：支持视频 / GIF 对比；删除窗口内自定义标题栏；窗口 1280×720。
 v0.8.25：FFmpeg 抽帧播放（循环）；叠放分割 / 左右并排双模式。
-v0.8.26 重构：
-- **弃用 FFmpeg 抽帧**：抽帧性能低、画质对比不准确。视频改用
-  ``QMediaPlayer``（Qt 内置，底层就是 FFmpeg 解码——与 ffplay 同源，
-  画质准确、性能好），GIF 用 ``QMovie``。进度条 / 暂停 / 循环 / 帧步进
-  全部由播放器原生支持，不再自己逐帧搬图。
-- 提供「用 ffplay 打开」按钮：需要 ffplay 独立窗口播放时一键呼出
-  （ffplay 是交互式播放器，无法嵌入 Qt 分割对比，故保留 Qt 播放为主、
-  ffplay 独立窗口为辅）。
-- 叠放分割对视频 / GIF 生效：两个 QVideoWidget / QLabel 叠放，各自
-  ``setMask`` 裁剪到分割线左右半，Qt 原生支持（不再依赖原生窗口裁剪）。
-- 恢复窗口原生按钮（-、口、X）：显式 setWindowFlags 加上最小化/最大化。
+v0.8.26 重构：弃用 FFmpeg 抽帧——视频改用 QMediaPlayer，GIF 用 QMovie；
+「用 ffplay 打开」按钮；setMask 分割；恢复原生窗口按钮。
+v0.8.27 重构：
+- **弃用 QMediaPlayer / ffplay**：QVideoWidget 是独立原生窗口，父容器
+  ``setMask`` 裁剪不到它的渲染内容 → 分割对比对视频失效（用户实测分割线
+  左右分割不生效）；ffplay 是交互式播放器、无程序化控制 API（实测其 stderr
+  只输出启动横幅，没有进度输出）。改用 **python-mpv**（KDE mpvqt 的 Python
+  绑定）：mpv 通过 ``--wid`` 直接渲染进容器 hwnd（**没有子原生窗口**），
+  容器 ``setMask`` 能裁到画面 → 视频 / GIF 分割对比恢复可用。
+- 分割线交互：默认在中间；鼠标进入对比区 → 光标隐藏、分割线跟随鼠标左右
+  移动；鼠标离开对比区（含移入下方功能栏）→ 光标恢复、分割线回到中间。
+- GIF 帧控制：mpv ``frame-step`` / ``frame-back-step`` 命令（暂停态下逐帧）。
+- 循环播放：``loop-playlist=inf``（视频 / GIF 播完自动从头）。
+- 删除「用 ffplay 打开」按钮及其 i18n 键。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QRect, Qt, QTimer, QUrl
+from PyQt6.QtCore import QRect, Qt, QTimer
 from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap, QRegion
-from PyQt6.QtMultimedia import QMediaPlayer
-from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -40,12 +41,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..core.ffmpeg import find_ffmpeg
+from ..core.mpv_player import MpvSurface, mpv_available
 from ..i18n.translator import tr
 from . import tokens
 from .theme import accent_color
 
-# 视频扩展名（走 QMediaPlayer）；其余按图片 / GIF 处理
+# 视频扩展名（走 mpv 播放）；其余按图片 / GIF 处理
 _VIDEO_EXTS = {
     ".mp4", ".mkv", ".mov", ".webm", ".avi", ".flv", ".wmv",
     ".m4v", ".3gp", ".ts", ".mts", ".m2ts",
@@ -63,33 +64,25 @@ def _is_gif(path: str) -> bool:
     return Path(path).suffix.lower() == ".gif"
 
 
-def _ffplay_cmd() -> list[str] | None:
-    """定位 ffplay（与 ffmpeg 同目录）。找不到返回 None。"""
-    ff = find_ffmpeg()
-    if not ff:
-        return None
-    p = Path(ff).parent
-    cand = p / "ffplay.exe"
-    if cand.exists():
-        return [str(cand)]
-    cand2 = p / "ffplay"
-    if cand2.exists():
-        return [str(cand2)]
-    return None
-
-
 # --------------------------------------------------------------------------
 class _MediaView(QWidget):
-    """单侧画面：静态图 / 视频播放器 / GIF 播放器。"""
+    """单侧画面容器：图片静态显示 / 视频与 GIF 用 mpv 嵌入渲染。
+
+    mpv 通过 ``--wid`` 直接渲染进**本控件自己的 hwnd**（没有子原生窗口），
+    因此对**本控件**调 ``setMask`` 能裁剪到渲染内容——这是叠放分割对比
+    可行的关键（V0.8.26 的 QVideoWidget 是独立原生窗口，父容器 mask 管不到
+    它的渲染，导致分割线对视频失效）。
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._video: QVideoWidget | None = None
-        self._player: QMediaPlayer | None = None
-        self._movie = None
+        self._surface: MpvSurface | None = None
         self._label = QLabel(self)
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._label.setStyleSheet("background: transparent; border: none;")
+        self._label.setStyleSheet(
+            f"background: black; color:{tokens.COMPARE_TEXT}; border: none;"
+        )
+        self._label.setWordWrap(True)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.addWidget(self._label, 1)
@@ -109,95 +102,65 @@ class _MediaView(QWidget):
                     Qt.TransformationMode.SmoothTransformation,
                 )
             )
-
-    def set_video(self, path: str) -> None:
-        """视频：QMediaPlayer 循环播放（画质准确、支持进度/暂停）。"""
-        self._clear_media()
-        self._video = QVideoWidget(self)
-        self._video.setStyleSheet("background: transparent; border: none;")
-        self._layout.addWidget(self._video, 1)
-        self._label.hide()
-        self._player = QMediaPlayer(self)
-        self._player.setVideoOutput(self._video)
-        self._player.setSource(QUrl.fromLocalFile(str(Path(path).resolve())))
-        self._player.setLoops(QMediaPlayer.Loops.Infinite)  # 循环播放
-        self._player.play()
-
-    def set_gif(self, path: str) -> None:
-        """GIF：QMovie 循环播放 + 帧步进支持。"""
-        from PyQt6.QtGui import QMovie  # noqa: PLC0415 - 局部导入
-
-        self._clear_media()
-        self._movie = QMovie(path)
-        self._movie.setCacheMode(QMovie.CacheMode.CacheAll)
-        self._label.setMovie(self._movie)
-        self._movie.start()
         self._label.show()
+
+    def set_media(self, path: str, kind: str) -> None:
+        """视频 / GIF：mpv 嵌入播放。kind: ``video`` / ``gif``（仅作日志）。"""
+        self._clear_media()
+        if not path or not Path(path).exists():
+            self._label.setText(tr("upscale.compare.missing"))
+            self._label.show()
+            return
+        if not mpv_available():
+            self._label.setText(tr("upscale.compare.mpv_missing"))
+            self._label.show()
+            return
+        self._surface = MpvSurface(self)
+        self._layout.addWidget(self._surface, 1)
+        self._surface.show()
+        if self._surface.create_player():
+            self._label.hide()
+            self._surface.play(path)
+        else:
+            # 初始化失败（离屏 / 无 GPU 后端等）：退回提示文本
+            self._surface.hide()
+            self._label.setText(tr("upscale.compare.mpv_missing"))
+            self._label.show()
 
     # -- 播放控制 ---------------------------------------------------------
     def play(self) -> None:
-        if self._player is not None:
-            self._player.play()
-        if self._movie is not None and not self._movie.state() == 2:  # Running
-            self._movie.start()
+        if self._surface is not None:
+            self._surface.set_pause(False)
 
     def pause(self) -> None:
-        if self._player is not None:
-            self._player.pause()
-        if self._movie is not None:
-            self._movie.setPaused(True)
-
-    def stop(self) -> None:
-        if self._player is not None:
-            self._player.pause()
-        if self._movie is not None:
-            self._movie.setPaused(True)
+        if self._surface is not None:
+            self._surface.set_pause(True)
 
     def is_playing(self) -> bool:
-        if self._player is not None:
-            return self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-        if self._movie is not None:
-            return self._movie.state() == 2  # QMovie.MovieState.Running
-        return False
+        return self._surface is not None and not self._surface.is_paused()
 
-    def is_video(self) -> bool:
-        return self._player is not None
+    def is_dynamic(self) -> bool:
+        return self._surface is not None
 
-    def duration_ms(self) -> int:
-        return int(self._player.duration()) if self._player is not None else 0
+    def duration(self) -> float:
+        return self._surface.duration() if self._surface is not None else 0.0
 
-    def position_ms(self) -> int:
-        return int(self._player.position()) if self._player is not None else 0
+    def time_pos(self) -> float:
+        return self._surface.time_pos() if self._surface is not None else 0.0
 
-    def seek(self, pos_ms: int) -> None:
-        if self._player is not None:
-            self._player.setPosition(pos_ms)
+    def seek(self, seconds: float) -> None:
+        if self._surface is not None:
+            self._surface.seek(seconds)
 
-    def set_frame(self, idx: int) -> None:
-        """GIF 跳到第 ``idx`` 帧（供上一帧/下一帧）。"""
-        if self._movie is not None:
-            total = self._movie.frameCount()
-            if total > 0:
-                self._movie.jumpToFrame(max(0, min(total - 1, idx)))
-
-    def current_frame(self) -> int:
-        return self._movie.currentFrameNumber() if self._movie is not None else 0
-
-    def frame_count(self) -> int:
-        return self._movie.frameCount() if self._movie is not None else 0
+    def frame_step(self, delta: int) -> None:
+        if self._surface is not None:
+            self._surface.frame_step(delta)
 
     def _clear_media(self) -> None:
-        if self._player is not None:
-            self._player.stop()
-            self._player.deleteLater()
-            self._player = None
-        if self._movie is not None:
-            self._movie.stop()
-            self._movie.deleteLater()
-            self._movie = None
-        if self._video is not None:
-            self._video.deleteLater()
-            self._video = None
+        if self._surface is not None:
+            self._surface.terminate()
+            self._surface.deleteLater()
+            self._surface = None
         self._label.show()
 
     def resizeEvent(self, event):
@@ -218,7 +181,8 @@ class _CompareArea(QWidget):
     """对比显示区：两种模式共用。
 
     - ``split``：src / out 两个视图叠放，各自 ``setMask`` 裁剪到分割线
-      左右半（Qt 原生支持，视频/GIF/图片通用）。
+      左右半。图片是普通 QLabel；视频 / GIF 的 mpv 渲染进容器 hwnd，
+      mask 都能裁到——分割对比对所有媒体类型生效。
     - ``side``：左右各一个视图并排。
     """
 
@@ -226,7 +190,6 @@ class _CompareArea(QWidget):
         super().__init__(parent)
         self._mode = _MODE_SPLIT
         self._split = 0.5
-        self._is_dynamic = False
         self.setStyleSheet(f"background: {tokens.COMPARE_BG};")
         self.setMouseTracking(True)
 
@@ -235,8 +198,9 @@ class _CompareArea(QWidget):
         self._src_view = _MediaView(self)
         self._out_view.show()
         self._src_view.show()
+        self._src_view.raise_()
 
-        # 左右并排：两个视图各占一半（用同一对视图重新布局）
+        # 左右并排：两个视图各占一半
         self._side_layout = QHBoxLayout(self)
         self._side_layout.setContentsMargins(0, 0, 0, 0)
         self._side_layout.setSpacing(4)
@@ -246,7 +210,6 @@ class _CompareArea(QWidget):
     # -- 内容 -------------------------------------------------------------
     def set_content(self, src: str | None, out: str | None, kind: str) -> None:
         """装载内容。``kind``: ``image`` / ``video`` / ``gif``。"""
-        self._is_dynamic = kind in ("video", "gif")
         # 先把两个视图从 side 布局摘下来（若已挂）
         self._side_layout.removeWidget(self._src_view)
         self._side_layout.removeWidget(self._out_view)
@@ -254,11 +217,11 @@ class _CompareArea(QWidget):
         self._out_view.setParent(self)
 
         if kind == "video":
-            self._src_view.set_video(src or "")
-            self._out_view.set_video(out or "")
+            self._src_view.set_media(src or "", kind)
+            self._out_view.set_media(out or "", kind)
         elif kind == "gif":
-            self._src_view.set_gif(src or "")
-            self._out_view.set_gif(out or "")
+            self._src_view.set_media(src or "", kind)
+            self._out_view.set_media(out or "", kind)
         else:
             self._src_view.set_static(src)
             self._out_view.set_static(out)
@@ -276,33 +239,24 @@ class _CompareArea(QWidget):
     def is_playing(self) -> bool:
         return self._src_view.is_playing()
 
-    def is_video(self) -> bool:
-        return self._src_view.is_video()
-
     def is_dynamic(self) -> bool:
-        return self._is_dynamic
+        return self._src_view.is_dynamic()
 
-    # 视频进度（以 src 为准，两侧同时播放）
-    def duration_ms(self) -> int:
-        return self._src_view.duration_ms()
+    # 视频进度（以 src 为准，两侧同步播放）
+    def duration(self) -> float:
+        return self._src_view.duration()
 
-    def position_ms(self) -> int:
-        return self._src_view.position_ms()
+    def time_pos(self) -> float:
+        return self._src_view.time_pos()
 
-    def seek(self, pos_ms: int) -> None:
-        self._src_view.seek(pos_ms)
-        self._out_view.seek(pos_ms)
+    def seek(self, seconds: float) -> None:
+        self._src_view.seek(seconds)
+        self._out_view.seek(seconds)
 
     # GIF 帧（两侧同步）
-    def set_frame(self, idx: int) -> None:
-        self._src_view.set_frame(idx)
-        self._out_view.set_frame(idx)
-
-    def current_frame(self) -> int:
-        return self._src_view.current_frame()
-
-    def frame_count(self) -> int:
-        return self._src_view.frame_count()
+    def frame_step(self, delta: int) -> None:
+        self._src_view.frame_step(delta)
+        self._out_view.frame_step(delta)
 
     # -- 模式 -------------------------------------------------------------
     def set_mode(self, mode: str) -> None:
@@ -322,17 +276,21 @@ class _CompareArea(QWidget):
             self._src_view.show()
             self._out_view.show()
         else:
-            # 叠放：直接叠在本控件上
+            # 叠放：直接叠在本控件上，src 在上层
             self._src_view.setParent(self)
             self._out_view.setParent(self)
             self._src_view.show()
             self._out_view.show()
+            self._src_view.raise_()
             self._layout_split()
 
     def set_split(self, val: float) -> None:
         self._split = max(0.0, min(1.0, val))
         if self._mode == _MODE_SPLIT:
             self._layout_split()
+
+    def split_value(self) -> float:
+        return self._split
 
     def _layout_split(self) -> None:
         w, h = self.width(), self.height()
@@ -344,6 +302,7 @@ class _CompareArea(QWidget):
         self._out_view.setGeometry(0, 0, w, h)
         self._src_view.setMask(QRegion(QRect(0, 0, max(1, split_x), h)))
         self._out_view.setMask(QRegion(QRect(split_x, 0, max(1, w - split_x), h)))
+        self._src_view.raise_()
         self.update()
 
     def resizeEvent(self, event):
@@ -367,12 +326,12 @@ class _CompareArea(QWidget):
 class CompareWindow(QDialog):
     """放大前后对比窗口。
 
-    v0.8.24：支持视频 / GIF 对比；窗口 1280×720。
-    v0.8.25：叠放分割 / 左右并排双模式。
-    v0.8.26：弃用 FFmpeg 抽帧——视频用 QMediaPlayer（FFmpeg 解码，画质准确、
-    性能好，进度条/暂停/循环原生支持），GIF 用 QMovie；「用 ffplay 打开」
-    按钮一键呼出 ffplay 独立窗口；叠放分割用 setMask 对视频/GIF 生效；
-    恢复原生窗口按钮（-、口、X）。
+    v0.8.27：
+    - 视频 / GIF 用 python-mpv（libmpv）嵌入播放，循环 + 进度 / 暂停 / 帧步进
+      全部原生支持；
+    - 分割线对比对所有媒体类型生效（mpv 渲染进容器 hwnd，setMask 可裁）；
+    - 分割线交互：默认中间，鼠标进入对比区跟随移动（光标隐藏），离开恢复；
+    - 删除 ffplay 相关内容。
     """
 
     def __init__(self, src: str, out: str, parent=None):
@@ -421,7 +380,7 @@ class CompareWindow(QDialog):
         tb.addWidget(self._splitBtn)
         tb.addWidget(self._sideBtn)
 
-        # 视频控制：进度条 + 暂停/继续（QMediaPlayer 原生支持）
+        # 视频控制：进度条 + 暂停/继续
         self._progress = QSlider(Qt.Orientation.Horizontal)
         self._progress.setRange(0, 1000)
         self._progress.setFixedWidth(240)
@@ -430,13 +389,10 @@ class CompareWindow(QDialog):
         self._pauseBtn.clicked.connect(self._on_pause)
         # GIF 帧控制
         self._stepBackBtn = QPushButton(tr("upscale.compare.prev"))
-        self._stepBackBtn.clicked.connect(lambda: self._area.set_frame(self._area.current_frame() - 1))
+        self._stepBackBtn.clicked.connect(lambda: self._on_frame_step(-1))
         self._stepFwdBtn = QPushButton(tr("upscale.compare.next"))
-        self._stepFwdBtn.clicked.connect(lambda: self._area.set_frame(self._area.current_frame() + 1))
-        # 用 ffplay 打开（独立窗口，真实播放器）
-        self._ffplayBtn = QPushButton(tr("upscale.compare.ffplay"))
-        self._ffplayBtn.clicked.connect(self._open_ffplay)
-        for b in (self._pauseBtn, self._stepBackBtn, self._stepFwdBtn, self._ffplayBtn):
+        self._stepFwdBtn.clicked.connect(lambda: self._on_frame_step(1))
+        for b in (self._pauseBtn, self._stepBackBtn, self._stepFwdBtn):
             b.setStyleSheet(self._btn_style())
 
         self._mediaControls = QWidget(self)
@@ -449,7 +405,6 @@ class CompareWindow(QDialog):
         mc.addWidget(self._progress)
         tb.addStretch(1)
         tb.addWidget(self._mediaControls)
-        tb.addWidget(self._ffplayBtn)
         root.addWidget(self._toolbar)
         self._toolbar.hide()  # 静态图片无控制条
 
@@ -494,10 +449,12 @@ class CompareWindow(QDialog):
         self._area.set_split(event.pos().x() / max(1, w))
 
     def _on_mouse_enter(self, _event):
+        # 进入对比区：隐藏光标，分割线随鼠标移动（纯对比体验）
         if self._area.mode() == _MODE_SPLIT:
             self._area.setCursor(Qt.CursorShape.BlankCursor)
 
     def _on_mouse_leave(self, _event):
+        # 离开对比区（含移入下方功能栏）：恢复光标、分割线回中间
         self._area.unsetCursor()
         self._area.set_split(0.5)
 
@@ -528,28 +485,18 @@ class CompareWindow(QDialog):
         if dynamic:
             self._area.play()
 
-    def _open_ffplay(self):
-        """用 ffplay 独立窗口播放源与放大结果（真实播放器）。"""
-        import subprocess  # noqa: PLC0415
-
-        from ..core.platform import popen_silent  # noqa: PLC0415
-
-        cmd = _ffplay_cmd()
-        if not cmd:
-            return
-        for path in (self._src_path, self._out_path):
-            if path and Path(path).exists():
-                try:
-                    popen_silent([*cmd, "-loop", "0", "-i", path])
-                except OSError:
-                    pass
-
     # -- 播放控制 ---------------------------------------------------------
     def _on_pause(self):
         if self._area.is_playing():
             self._area.pause()
         else:
             self._area.play()
+        self._update_pause_text()
+
+    def _on_frame_step(self, delta: int):
+        """GIF 上一帧 / 下一帧：先暂停再逐帧步进（mpv 命令，边界循环）。"""
+        self._area.pause()
+        self._area.frame_step(delta)
         self._update_pause_text()
 
     def _update_pause_text(self):
@@ -559,14 +506,14 @@ class CompareWindow(QDialog):
         )
 
     def _on_seek(self, value: int) -> None:
-        dur = self._area.duration_ms()
+        dur = self._area.duration()
         if dur > 0:
-            self._area.seek(int(value * dur / 1000))
+            self._area.seek(value * dur / 1000.0)
 
     def _sync_progress(self):
-        dur = self._area.duration_ms()
+        dur = self._area.duration()
         if dur > 0 and self._progress.isVisible():
-            pos = self._area.position_ms()
+            pos = self._area.time_pos()
             self._progress.setValue(int(pos * 1000 / dur))
         self._update_pause_text()
 
