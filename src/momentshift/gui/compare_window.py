@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QRect, Qt, QTimer, QUrl
-from PyQt6.QtGui import QColor, QMovie, QPainter, QPen, QPixmap, QRegion
+from PyQt6.QtCore import QRect, QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QMovie, QPainter, QPen, QPixmap, QRegion
 from PyQt6.QtMultimedia import QMediaPlayer, QVideoSink
 from PyQt6.QtWidgets import (
     QDialog,
@@ -76,13 +76,23 @@ class _MediaView(QWidget):
     视频用 ``QMediaPlayer + QVideoSink`` 实时解码（QtMultimedia = FFmpeg
     解码，零额外依赖），每帧 ``toImage()`` 显示到 QLabel；GIF 用 ``QMovie``。
     QLabel 是普通控件 → 父容器 ``setMask`` 分割可靠。
+
+    v0.8.33：支持整体缩放（Ctrl+滚轮）——``_zoom`` 因子（0.25~8）作用于
+    「适配窗口尺寸」之上；图片 / 视频帧用 scaled 重画，GIF 用
+    ``QMovie.setScaledSize``。缩放值由 ``_CompareArea`` 统一广播。
     """
+
+    # Ctrl+滚轮：把滚轮 delta 上报给对比区（统一缩放两侧）
+    zoomRequested = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._player: QMediaPlayer | None = None
         self._sink: QVideoSink | None = None
         self._movie: QMovie | None = None
+        self._zoom = 1.0
+        self._raw_pixmap = QPixmap()  # 图片原始图（缩放时基于它重画，不累积模糊）
+        self._last_frame = None       # 视频最近帧 QImage（暂停后缩放仍可重画）
         self._label = QLabel(self)
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._label.setStyleSheet("background: black; color: #cccccc; border: none;")
@@ -91,20 +101,81 @@ class _MediaView(QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.addWidget(self._label, 1)
 
+    # -- 缩放 -------------------------------------------------------------
+    def set_zoom(self, zoom: float) -> None:
+        """设置缩放因子并按当前媒体重画（0.25~8）。"""
+        self._zoom = max(0.25, min(8.0, zoom))
+        if not self._raw_pixmap.isNull():
+            self._apply_pixmap(self._raw_pixmap)
+        elif self._last_frame is not None and not self._last_frame.isNull():
+            self._apply_image(self._last_frame)
+        elif self._movie is not None:
+            self._gif_rescale()
+
+    def zoom(self) -> float:
+        return self._zoom
+
+    def _fit_size(self, sw: int, sh: int) -> tuple[int, int]:
+        """保持宽高比适配 label 的尺寸（zoom=1 的基准）。"""
+        lw, lh = self._label.width(), self._label.height()
+        if sw <= 0 or sh <= 0 or lw < 4 or lh < 4:
+            return sw, sh
+        k = min(lw / sw, lh / sh)
+        return max(1, int(sw * k)), max(1, int(sh * k))
+
+    def _disp_size(self, sw: int, sh: int) -> tuple[int, int]:
+        fw, fh = self._fit_size(sw, sh)
+        return max(1, int(fw * self._zoom)), max(1, int(fh * self._zoom))
+
+    def _apply_pixmap(self, pm: QPixmap) -> None:
+        w, h = self._disp_size(pm.width(), pm.height())
+        if w > 0 and h > 0:
+            self._label.setPixmap(
+                pm.scaled(
+                    w, h,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+
+    def _apply_image(self, img) -> None:
+        w, h = self._disp_size(img.width(), img.height())
+        if w > 0 and h > 0:
+            self._label.setPixmap(
+                QPixmap.fromImage(
+                    img.scaled(
+                        w, h,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+            )
+
+    def _gif_rescale(self) -> None:
+        """按缩放因子给 QMovie 设 scaledSize（Qt 6.1+）。"""
+        if self._movie is None:
+            return
+        cur = self._movie.currentImage()
+        if not cur.isNull():
+            sw, sh = cur.width(), cur.height()
+        else:
+            r = self._movie.frameRect()
+            if r.isEmpty():
+                return
+            sw, sh = r.width(), r.height()
+        w, h = self._disp_size(sw, sh)
+        if w > 0 and h > 0:
+            self._movie.setScaledSize(QSize(w, h))
+
     # -- 内容装载 ---------------------------------------------------------
     def set_static(self, path: str | None) -> None:
         """静态图片（单帧）。"""
         self._clear_media()
-        pm = QPixmap(path) if path else QPixmap()
-        self._label.setPixmap(
-            pm.scaled(
-                self._label.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            if not pm.isNull()
-            else QPixmap()
-        )
+        self._raw_pixmap = QPixmap(path) if path else QPixmap()
+        if self._raw_pixmap.isNull():
+            self._label.setPixmap(QPixmap())
+        else:
+            self._apply_pixmap(self._raw_pixmap)
         self._label.show()
 
     def set_video(self, path: str) -> None:
@@ -133,6 +204,7 @@ class _MediaView(QWidget):
         self._movie = QMovie(path)
         self._movie.setCacheMode(QMovie.CacheMode.CacheAll)
         self._label.setMovie(self._movie)
+        self._movie.started.connect(self._gif_rescale)
         self._movie.start()
         self._label.show()
 
@@ -140,14 +212,8 @@ class _MediaView(QWidget):
         img = frame.toImage()
         if img.isNull():
             return
-        disp = self._label.size()
-        if disp.width() > 4 and disp.height() > 4:
-            img = img.scaled(
-                disp,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        self._label.setPixmap(QPixmap.fromImage(img))
+        self._last_frame = img
+        self._apply_image(img)
 
     # -- 播放控制 ---------------------------------------------------------
     def play(self) -> None:
@@ -210,19 +276,27 @@ class _MediaView(QWidget):
             self._movie.stop()
             self._movie.deleteLater()
             self._movie = None
+        self._last_frame = None
+        self._raw_pixmap = QPixmap()
         self._label.show()
+
+    def wheelEvent(self, event):
+        # v0.8.33：Ctrl+滚轮 → 上报给对比区统一缩放
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.zoomRequested.emit(event.angleDelta().y())
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        pm = self._label.pixmap()
-        if pm is not None and not pm.isNull():
-            self._label.setPixmap(
-                pm.scaled(
-                    self._label.size(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            )
+        # 重算适配尺寸并重画（缩放保持不变）
+        if not self._raw_pixmap.isNull():
+            self._apply_pixmap(self._raw_pixmap)
+        elif self._last_frame is not None and not self._last_frame.isNull():
+            self._apply_image(self._last_frame)
+        elif self._movie is not None:
+            self._gif_rescale()
 
 
 # --------------------------------------------------------------------------
@@ -256,6 +330,14 @@ class _SplitOverlay(QWidget):
             self._area.set_split(event.position().x() / w)
         super().mouseMoveEvent(event)
 
+    def wheelEvent(self, event):
+        # v0.8.33：Ctrl+滚轮 → 对比区整体缩放
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._area.change_zoom(event.angleDelta().y())
+            event.accept()
+            return
+        super().wheelEvent(event)
+
     def enterEvent(self, _event):
         # 进入对比区：隐藏光标，分割线随鼠标移动（纯对比体验）
         self.setCursor(Qt.CursorShape.BlankCursor)
@@ -285,10 +367,14 @@ class _CompareArea(QWidget):
         super().__init__(parent)
         self._mode = _MODE_SPLIT
         self._split = 0.5
+        self._zoom = 1.0  # v0.8.33：整体缩放因子（Ctrl+滚轮），0.25~8
         self.setStyleSheet(f"background: {tokens.COMPARE_BG};")
 
         self._out_view = _MediaView(self)
         self._src_view = _MediaView(self)
+        # v0.8.33：任一视图收到 Ctrl+滚轮 → 统一缩放两侧
+        self._src_view.zoomRequested.connect(self.change_zoom)
+        self._out_view.zoomRequested.connect(self.change_zoom)
 
         # 左右并排布局
         self._side_layout = QHBoxLayout(self)
@@ -299,6 +385,23 @@ class _CompareArea(QWidget):
         self._overlay = _SplitOverlay(self)
 
         self._apply_mode()
+
+    # -- 缩放（v0.8.33：Ctrl+滚轮整体缩放对比内容）------------------------
+    def change_zoom(self, delta: int) -> None:
+        """滚轮 delta → 缩放因子（每格 ×1.2）。"""
+        step = 1.2 ** (delta / 120.0)
+        self.set_zoom(self._zoom * step)
+
+    def set_zoom(self, zoom: float) -> None:
+        self._zoom = max(0.25, min(8.0, zoom))
+        self._src_view.set_zoom(self._zoom)
+        self._out_view.set_zoom(self._zoom)
+
+    def zoom_value(self) -> float:
+        return self._zoom
+
+    def reset_zoom(self) -> None:
+        self.set_zoom(1.0)
 
     # -- 内容 -------------------------------------------------------------
     def set_content(self, src: str | None, out: str | None, kind: str) -> None:
@@ -413,6 +516,59 @@ class _CompareArea(QWidget):
         if self._mode == _MODE_SPLIT:
             self._layout_split()
 
+    def paintEvent(self, _event):
+        """v0.8.33：背景水印——灰色小字错位平铺（左右两半各铺各的标签词），
+        中间留一条无字的竖向留白带；媒体视图叠在上面会盖住这些字。
+        """
+        w, h = self.width(), self.height()
+        if w < 8 or h < 8:
+            return
+        painter = QPainter(self)
+        try:
+            painter.fillRect(self.rect(), QColor(tokens.COMPARE_BG))
+            # 中间无字留白带
+            gap = min(160, max(80, w // 6))
+            gx0 = (w - gap) // 2
+            gx1 = gx0 + gap
+            base_font = QFont()
+            base_font.setPointSize(9)
+            painter.setFont(base_font)
+            for half, key in (
+                (0, "upscale.compare.original"),
+                (1, "upscale.compare.upscaled"),
+            ):
+                x0 = 0 if half == 0 else gx1
+                x1 = gx0 if half == 0 else w
+                if x1 - x0 < 60:
+                    continue
+                text = tr(key)
+                fm = painter.fontMetrics()
+                tw = fm.horizontalAdvance(text) + 28
+                th = fm.height() + 14
+                painter.setPen(QColor("#3c4250"))
+                row = 0
+                y = th // 2
+                while y < h:
+                    off = (tw // 2) if (row % 2) else 0  # 奇数行错位半字宽
+                    x = x0 + 10 - off
+                    while x < x1:
+                        painter.drawText(int(x), int(y), text)
+                        x += tw
+                    y += th
+                    row += 1
+                # 半区中央的大号标签（更亮，标明左右身份）
+                lab = QFont()
+                lab.setPointSize(13)
+                lab.setBold(True)
+                painter.setFont(lab)
+                fm2 = painter.fontMetrics()
+                painter.setPen(QColor("#8a94a6"))
+                lx = x0 + (x1 - x0 - fm2.horizontalAdvance(text)) // 2
+                painter.drawText(int(max(x0, lx)), int(h // 2), text)
+                painter.setFont(base_font)
+        finally:
+            painter.end()
+
 
 # --------------------------------------------------------------------------
 class CompareWindow(QDialog):
@@ -470,6 +626,13 @@ class CompareWindow(QDialog):
             b.setStyleSheet(_BTN_QSS)
         tb.addWidget(self._splitBtn)
         tb.addWidget(self._sideBtn)
+
+        # v0.8.33：操作提示（Ctrl+滚轮缩放）
+        self._zoomHint = QLabel(tr("upscale.compare.zoom_hint"))
+        self._zoomHint.setStyleSheet(
+            f"color:{tokens.COMPARE_TEXT};font-size:11px;background:transparent;"
+        )
+        tb.addWidget(self._zoomHint)
 
         # 视频控制：进度条 + 暂停/继续
         self._progress = QSlider(Qt.Orientation.Horizontal)
