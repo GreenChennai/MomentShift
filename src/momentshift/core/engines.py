@@ -1131,7 +1131,15 @@ def _run_image_padded(
         with Image.open(src) as im:
             canvas = Image.new(im.mode, (pad_w, pad_h), (0, 0, 0))
             canvas.paste(im, (pad_x, pad_y))
-            canvas.save(pad_in)
+            # v0.8.31：PNG 中转用最快压缩（compress_level=1）。默认 6 对大图
+            # 编码极慢（4000×3000 要几秒/张），批量放大时总耗时被拖到「慢非常多」。
+            canvas.save(pad_in, compress_level=1)
+        # v0.8.31：**显式把 tile 写进命令**——只 pad 到 360 整数倍还不够，
+        # 若引擎默认 tile 不是 360（不同版本不同），pad 后尺寸仍非引擎实际
+        # tile 的整数倍 → 方块依旧。显式 ``-t <tile>`` 让引擎分块与 pad 严格
+        # 一致，无论引擎默认值如何。
+        values = dict(values or {})
+        values["tile"] = _effective_tile(values)
         cmd, err = build_command(eid, str(pad_in), str(pad_out), values)
         if err:
             return False, err
@@ -1149,7 +1157,10 @@ def _run_image_padded(
         cw, ch, cx, cy = _crop_box(w, h, pad_w, pad_h, scale, pad_x, pad_y)
         with Image.open(pad_out) as im:
             box = (cx, cy, cx + cw, cy + ch)
-            im.crop(box).save(dst)
+            if Path(dst).suffix.lower() == ".png":
+                im.crop(box).save(dst, compress_level=1)
+            else:
+                im.crop(box).save(dst)
         return True, ""
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1293,6 +1304,9 @@ def run_frames(
         cmd = [ffmpeg, "-y", "-i", src]
         if pad_filter:
             cmd += ["-vf", pad_filter]
+        # v0.8.31：抽帧 PNG 用最快压缩（-compression_level 1）——pad 后帧
+        # 更大，默认压缩级会显著拖慢抽帧（视频帧数多时整体变慢）。
+        cmd += ["-compression_level", "1"]
         cmd.append(str(frames_in / "%06d.png"))
         ok, msg = _run(cmd, timeout=1800)
         if not ok:
@@ -1302,6 +1316,12 @@ def run_frames(
             return False, "未从源文件抽取到任何帧"
 
         fps = _probe_fps(ffmpeg, src) or 25.0
+        # v0.8.31：pad 路径把 tile 显式写进引擎命令（见 _run_image_padded 注释）：
+        # 引擎实际 tile 与 pad 严格一致，杜绝「pad 到 360 但引擎按别的值分块」
+        # 导致方块仍在。
+        if pad_filter:
+            values = dict(values or {})
+            values["tile"] = _effective_tile(values)
         cmd, err = build_command(eid, str(frames_in), str(frames_out), values)
         if err:
             return False, err
