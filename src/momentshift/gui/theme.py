@@ -20,7 +20,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QPointF, QPropertyAnimation, QSize, Qt, pyqtProperty, pyqtSignal
+from PyQt6.QtCore import (
+    QParallelAnimationGroup,
+    QPointF,
+    QPropertyAnimation,
+    QSize,
+    Qt,
+    pyqtProperty,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
@@ -514,11 +522,12 @@ class CollapsibleCard(ThemedCard):
     def _collapse_instant(self):
         """初始化时的即时折叠（v0.7.3 Bug2）。
 
-        走 ``_apply_collapsed`` 会启动一段 250ms 的 fixedHeight 动画，
-        起点是控件默认的 16777215 —— 于是卡片首次显示时会先整个铺开再收拢，
-        表现为「展开 → 收起」的闪烁。构造期直接置位，不跑动画。
+        走 ``_apply_collapsed`` 会启动一段 250ms 的高度动画，起点是控件默认
+        的 16777215 —— 于是卡片首次显示时会先整个铺开再收拢，表现为
+        「展开 → 收起」的闪烁。构造期直接置位，不跑动画。
         """
-        self._body.setFixedHeight(0)
+        self._body.setMinimumHeight(0)
+        self._body.setMaximumHeight(0)
         self._body.setVisible(False)
 
     def _spin_toggle_icon(self) -> None:
@@ -545,22 +554,27 @@ class CollapsibleCard(ThemedCard):
             self._anim.deleteLater()
             self._anim = None
 
-        # V0.8.25 Bug#1（深度修复）：折叠动画改走 **fixedHeight**，不再用
-        # maximumHeight。
+        # V0.8.26 Bug#1（三修）：折叠动画改走 **minimumHeight + maximumHeight
+        # 双属性并行**（QParallelAnimationGroup）。
         #
-        # 为什么 maximumHeight 会抖：它只是「上限」，布局仍按 body 的
-        # sizeHint 算实际高度。动画期间若 body 内换行文本/控件随视口宽度
-        # 变化重排，sizeHint 每帧都在变，父布局也跟着每帧重排——表现为
-        # 整卡上下抖（收起时内容被反复压缩重排，抖得更厉害）。滚动条抑制
-        # 只能切断「宽度变化」这一条输入，治标不治本。
+        # 为什么不用 fixedHeight（V0.8.25）：``setFixedHeight`` 只是便捷方法，
+        # **不是 Q_PROPERTY** —— ``QPropertyAnimation(b"fixedHeight")`` 找不到
+        # 可写属性，动画直接失效，表现为「顿一下然后瞬间收起/展开」。
         #
-        # fixedHeight 是「实打实的高度」：每帧 body 被强制钉在动画值，
-        # 内部内容被**裁剪**而非重排，父布局每帧只按固定值重排一次，
-        # 无 sizeHint 干扰。这是 Qt 社区做平滑折叠的标准做法。
+        # 为什么 maximumHeight 单属性会抖：它只是「上限」，布局仍按 body 的
+        # sizeHint 算实际高度。动画期间若 body 内换行文本/控件随视口宽度变化
+        # 重排，sizeHint 每帧都在变，父布局也跟着每帧重排——表现为整卡上下抖。
+        #
+        # 双属性并行的语义：**每帧把 minimumHeight 与 maximumHeight 都钉到
+        # 同一个动画值**，等价于 fixedHeight 的「实打实高度」——body 被强制
+        # 钉死，内部内容被**裁剪**而非重排，父布局每帧只重排一次；且两条
+        # 都是有效 Q_PROPERTY，动画能正常驱动。这是 Qt 社区（djc_helper /
+        # superqt 等）做平滑折叠的标准做法。
         if target_h <= 0:
             real_target = 0
             h = self._body.height()
-            # 收起起点 = 当前实际高度（fixedHeight 语义下就是它自己）
+            # 收起起点 = 当前实际高度（maximumHeight 可能是 16777215，
+            # 直接用它会先停在高位区间造成「顿一下」；用实际高度起播才顺）
             cur = h if h > 0 else 0
         else:
             if self._content_height > 0:
@@ -571,25 +585,27 @@ class CollapsibleCard(ThemedCard):
                     real_target = 200
             cur = 0  # 展开起点恒为 0，直接长开
         self._content_height = real_target if real_target > 0 else self._content_height
-        self._body.setFixedHeight(int(cur))
+        # 钉住当前值作为动画起点（收起=当前高，展开=0）
+        self._body.setMinimumHeight(int(cur))
+        self._body.setMaximumHeight(int(cur))
         self._body.show()
         # 动画期间抑制父级滚动区滚动条，切断「高度→滚动条→宽度→换行→
-        # 高度」的反馈环（fixedHeight 下宽度不再影响 body 高度，但仍防
-        # 滚动条出现/消失带来的视口宽度抖动）。
+        # 高度」的反馈环（双属性钉死下宽度不再影响 body 高度，但仍防滚动条
+        # 出现/消失带来的视口宽度抖动）。
         self._suppress_scrollbars(True)
-        self._anim = QPropertyAnimation(self._body, b"fixedHeight", self)
-        self._anim.setDuration(self._ANIM_DURATION)
-        self._anim.setStartValue(int(cur))
-        self._anim.setEndValue(int(real_target))
-        # V0.8.20 Bug2（参数修复）：收起与展开用不同缓动曲线。
-        # 原收起也用 CURVE_IN（OutCubic 先快后慢）→ 动画一开始 body 就猛缩，
-        # 父级布局/滚动区重排剧烈，标题被带着上下抖。收起改为 CURVE_OUT
-        # （InCubic 先慢后快）：开头收缩平缓、重排柔和，标题稳定；末尾快速
-        # 收完时 body 已很小，视觉冲击可忽略。展开保持 CURVE_IN 不变。
-        self._anim.setEasingCurve(
-            animations.CURVE_OUT if target_h <= 0 else animations.CURVE_IN
-        )
-        self._anim.finished.connect(self._on_anim_finished)
+
+        # 并行驱动 min/max 高度：两条曲线一致，body 全程被钉在动画值上。
+        curve = animations.CURVE_OUT if target_h <= 0 else animations.CURVE_IN
+        group = QParallelAnimationGroup(self)
+        for prop in (b"minimumHeight", b"maximumHeight"):
+            a = QPropertyAnimation(self._body, prop, group)
+            a.setDuration(self._ANIM_DURATION)
+            a.setStartValue(int(cur))
+            a.setEndValue(int(real_target))
+            a.setEasingCurve(curve)
+            group.addAnimation(a)
+        group.finished.connect(self._on_anim_finished)
+        self._anim = group
         self._anim.start()
 
     def _suppress_scrollbars(self, suppress: bool) -> None:
@@ -651,13 +667,14 @@ class CollapsibleCard(ThemedCard):
         # V0.8.24 Bug#2：动画结束恢复父级滚动条策略。
         self._suppress_scrollbars(False)
         if self._collapsed:
-            self._body.setFixedHeight(0)
+            self._body.setMinimumHeight(0)
+            self._body.setMaximumHeight(0)
             self._body.setVisible(False)
         else:
-            # V0.8.25：fixedHeight 动画结束后解除固定，恢复由内容决定高度。
-            # 解除用 16777215（与 maximumHeight 习惯一致），布局会立刻按
-            # sizeHint 落到正确值。
-            self._body.setFixedHeight(16777215)
+            # V0.8.26：双属性动画结束后解除 min 钉死、max 恢复自由，
+            # 布局立刻按 sizeHint 落到正确值（同 maximumHeight 习惯）。
+            self._body.setMinimumHeight(0)
+            self._body.setMaximumHeight(16777215)
 
     def _apply_collapsed(self):
         # Bug：必须同步 _collapsed 标志，否则 _on_anim_finished 在展开
@@ -714,8 +731,9 @@ class CollapsibleCard(ThemedCard):
         """
         self._content_height = 0
         if not self._collapsed:
-            # V0.8.25：fixedHeight 语义下解除固定，恢复由内容决定高度。
-            self._body.setFixedHeight(16777215)
+            # V0.8.26：双属性语义下解除固定，恢复由内容决定高度。
+            self._body.setMinimumHeight(0)
+            self._body.setMaximumHeight(16777215)
 
 
 # =========================================================================

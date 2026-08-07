@@ -445,6 +445,7 @@
   "upscale.compare.resume": "继续",
   "upscale.compare.prev": "上一帧",
   "upscale.compare.next": "下一帧",
+  "upscale.compare.ffplay": "用 ffplay 打开",
   "advanced.compression.oxipng": "oxipng（PNG 无损压缩）",
   "advanced.oxipng.only_png": "oxipng 仅支持 PNG 格式",
   "advanced.help.backend": "压缩程序：选择用什么工具压缩图片。自动=按格式智能选择；oxipng 仅 PNG；jpegoptim 仅 JPG/JPEG；Pillow 通用兜底。所选工具不可用时会自动切换到 Pillow。",

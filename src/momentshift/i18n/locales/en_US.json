@@ -445,6 +445,7 @@
   "upscale.compare.resume": "Resume",
   "upscale.compare.prev": "Prev frame",
   "upscale.compare.next": "Next frame",
+  "upscale.compare.ffplay": "Open with ffplay",
   "advanced.compression.oxipng": "oxipng (PNG lossless)",
   "advanced.oxipng.only_png": "oxipng only supports PNG format",
   "advanced.help.backend": "Compression engine. Auto picks by format; oxipng is PNG-only; jpegoptim is JPG/JPEG-only; Pillow is the universal fallback. If the selected tool is unavailable the job falls back to Pillow automatically.",
