@@ -12,8 +12,8 @@ author) live here. Localized UI strings come from :mod:`momentshift.i18n`.
 
 APP_NAME = "MomentShift"
 APP_NAME_ZH = "瞬变工坊"
-# v0.9.0：版本号 = 迭代版本号 + commit 短哈希（本地构建标识）。
-VERSION = "0.9.0-fc97100"
+# v0.9.1：版本号 = 迭代版本号 + commit 短哈希（本地构建标识）。
+VERSION = "0.9.1-a4b0822"
 AUTHOR = "GreenChennai"
 
 REPO_URL = "https://github.com/GreenChennai/MomentShift"
