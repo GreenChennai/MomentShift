@@ -226,6 +226,8 @@
   "ffmpeg.downloading": "Downloading FFmpeg…",
   "ffmpeg.done": "FFmpeg installed",
   "ffmpeg.failed": "FFmpeg download failed",
+  "ffmpeg.failed_detail": "Download failed: {msg}",
+  "ffmpeg.manual_hint": "All mirror sources are unavailable. You can also manually download ffmpeg.exe / ffprobe.exe from ffmpeg.org and place them in the app folder, then reopen this page.",
   "common.ok": "OK",
   "common.cancel": "Cancel",
   "common.close": "Close",

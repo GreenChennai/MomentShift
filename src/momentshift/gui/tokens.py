@@ -50,9 +50,9 @@ def _rgba(hex_color: str, alpha: str) -> str:
 # ===========================================================================
 # 品牌色
 # ===========================================================================
-ACCENT = "#238636"  # 主色，GitHub 绿（与 setThemeColor 一致）
-ACCENT_HOVER = "#2ea043"  # 主色悬停
-ACCENT_PRESS = "#196c2e"  # 主色按下
+ACCENT = "#1F883D"  # 主色，GitHub 绿（v0.9.1 对齐 GitHub 官方按钮绿 #1F883D）
+ACCENT_HOVER = "#1A7F37"  # 主色悬停（GitHub green hover ≈ brightness 95%）
+ACCENT_PRESS = "#197935"  # 主色按下（GitHub green active）
 
 # 主色浅底（同一绿的不同透明度，用于选中态/淡底徽标）。
 # 已改为从 ACCENT 派生：改主色即整组联动，不会再出现「主色换了、淡底还是旧绿」。
@@ -73,13 +73,13 @@ ACCENT_TINT_TEXT = "#2e7d32"  # 淡绿底上的深绿文字
 # ===========================================================================
 # 绿系 —— 值各不相同，语义与所处视觉层级也不同，**刻意不统一**。
 SUCCESS = "#3EB68F"  # 成功/已完成：队列状态胶囊底、尺寸变小的百分比
-SUCCESS_DOT = "#10893e"  # 「已就绪」指示点与其文字（仅 ffmpeg 卡片）
+SUCCESS_DOT = "#1A7F37"  # 「已就绪」指示点与其文字（仅 ffmpeg 卡片，对齐 GitHub 绿）
 
 # 红系 —— 同上，四个值分属四种视觉层级，**刻意不统一**。
 DANGER = "#FF7279"  # 失败：队列状态胶囊底、尺寸变大的百分比
 DANGER_TEXT = "#B4324B"  # 危险语义的正文色（比 DANGER 深，正文对比度达标）
-DANGER_STRONG = "#d32f2f"  # 错误提示条文字（Material Red 700）
-DANGER_DOT = "#e81123"  # 「缺失」指示点（仅 ffmpeg 卡片，与 SUCCESS_DOT 配对）
+DANGER_STRONG = "#CF222E"  # 错误提示条文字（v0.9.1 对齐 GitHub 红 #CF222E）
+DANGER_DOT = "#CF222E"  # 「缺失」指示点（仅 ffmpeg 卡片，对齐 GitHub 红）
 DANGER_SOFT = "rgba(211,47,47,0.06)"  # 错误提示条底（= DANGER_STRONG 的 6% 透明度）
 DANGER_SOFT_STRONG = "rgba(211,47,47,0.12)"  # 错误提示条边框（= DANGER_STRONG 的 12%）
 
@@ -88,19 +88,19 @@ WARNING = "#C7920A"  # 处理中/警示：队列胶囊底、次要动作按钮�
 INFO = "#3964FE"  # 压缩完成 / 同格式直通
 RUNNING = "#2F98FF"  # 转换中
 PENDING = "#8A8A8A"  # 等待中 / 已取消
-PROGRESS_CHUNK = "#0f6cbd"  # 下载进度条填充（ffmpeg 卡片）
+PROGRESS_CHUNK = "#0969DA"  # 下载进度条填充（v0.9.1 对齐 GitHub 蓝 #0969DA）
 
 # ===========================================================================
 # 中性色 —— 文字
 # ===========================================================================
 TEXT_BLACK = "#000000"  # 队列明细等需要最高对比度的正文
-TEXT_STRONG = "#212121"  # 主文字
+TEXT_STRONG = "#1F2328"  # 主文字（v0.9.1 对齐 GitHub fg #1F2328）
 TEXT_TITLE = "#1a1a1a"  # 弹窗大标题
 TEXT_BODY = "#424242"  # 帮助弹窗正文
-TEXT_SECONDARY = "#757575"  # 次要文字
-TEXT_MUTED = "#515151"  # 弱化文字（由过灰的 BORDER_HOVER 调深）
+TEXT_SECONDARY = "#656D76"  # 次要文字（v0.9.1 对齐 GitHub fg-muted #656D76）
+TEXT_MUTED = "#57606A"  # 弱化文字（v0.9.1 对齐 GitHub 较弱灰）
 TEXT_PLACEHOLDER = "#9E9E9E"  # 占位符
-TEXT_LINK = "#2270F4"  # 链接蓝
+TEXT_LINK = "#0969DA"  # 链接蓝（v0.9.1 对齐 GitHub 蓝 #0969DA）
 # 值与 COMPARE_BORDER 相同（#333），但语义独立：这里是浅色主题下的列表文件名文字，
 # 那里是对比窗深色主题下的分隔线。**禁止合并** —— 合并后调其中一个必然误伤另一个。
 TEXT_SUBTLE = "#333"  # 列表项文件名、快速弹窗的分栏小标题
@@ -117,14 +117,14 @@ WHITE = "#FFFFFF"  # 窗口底 / 深色按钮上的前景文字 / 输入框底 /
 # 使「按下 vs 悬停」的色差与「悬停 vs 常态」完全等量 —— 既然后者是被接受的反馈强度，
 # 前者就不会不可察觉，也不会突兀。
 # 下限约束：必须比 BORDER(#E0E0E0, 224) 亮，否则卡片按下时底色会吞掉自己的边框。
-SURFACE = "#F5F5F5"  # 卡片/组件表面，亦作深色胶囊上的前景
-SURFACE_HOVER = "#EEEEEE"  # 表面悬停
-SURFACE_PRESS = "#E7E7E7"  # 表面按下（比悬停再深一级）
+SURFACE = "#F6F8FA"  # 卡片/组件表面（v0.9.1 对齐 GitHub bg-subtle #F6F8FA）
+SURFACE_HOVER = "#F3F4F6"  # 表面悬停（GitHub hover 灰）
+SURFACE_PRESS = "#EBECF0"  # 表面按下（比悬停再深一级）
 
-BORDER = "#E0E0E0"  # 常规边框 / 分隔线
-BORDER_HOVER = "#BDBDBD"  # 边框悬停
-INPUT_BORDER = "#d0d0d0"  # 输入类控件边框
-PROGRESS_TRACK = "#dcdcdc"  # 进度条轨道
+BORDER = "#D0D7DE"  # 常规边框 / 分隔线（v0.9.1 对齐 GitHub border #D0D7DE）
+BORDER_HOVER = "#AFB8C1"  # 边框悬停（GitHub border-hover 灰）
+INPUT_BORDER = "#D0D7DE"  # 输入类控件边框（v0.9.1 对齐 GitHub border #D0D7DE）
+PROGRESS_TRACK = "#EAEFF2"  # 进度条轨道（GitHub 浅灰轨道）
 
 # ===========================================================================
 # 对比窗专用深色（独立于全局浅色主题）

@@ -226,6 +226,8 @@
   "ffmpeg.downloading": "正在下載 FFmpeg…",
   "ffmpeg.done": "FFmpeg 已安裝",
   "ffmpeg.failed": "FFmpeg 下載失敗",
+  "ffmpeg.failed_detail": "下載失敗：{msg}",
+  "ffmpeg.manual_hint": "所有鏡像源都不可用。你也可以手動從 ffmpeg.org 下載 ffmpeg.exe / ffprobe.exe，放到軟體目錄後重新開啟本頁。",
   "common.ok": "確定",
   "common.cancel": "取消",
   "common.close": "關閉",
