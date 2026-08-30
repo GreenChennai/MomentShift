@@ -95,6 +95,7 @@ class _StatusCard(ThemedCard):
             "convert": tr("nav.convert"),
             "compress": tr("nav.compress"),
             "upscale": tr("nav.upscale"),
+            "extract_frame": tr("quicklaunch.extract_frame"),
         }
         for t in tasks:
             row = QWidget()
@@ -194,9 +195,17 @@ class QuickLaunchInterface(InterfaceBase):
             cfg.quickLaunchUpscale,
         )
         self.upscaleCard.checkedChanged.connect(self._on_task)
+        self.extractFrameCard = SwitchSettingCard(
+            FIF.CAMERA,
+            tr("quicklaunch.extract_frame"),
+            tr("quicklaunch.extract_frame.hint"),
+            cfg.quickLaunchExtractFrame,
+        )
+        self.extractFrameCard.checkedChanged.connect(self._on_task)
         self.g_tasks.addSettingCard(self.convertCard)
         self.g_tasks.addSettingCard(self.compressCard)
         self.g_tasks.addSettingCard(self.upscaleCard)
+        self.g_tasks.addSettingCard(self.extractFrameCard)
         # 通知开关拆成「开始任务通知」/「完成任务通知」（Windows 弹窗自带声音）
         self.notifyStartCard = SwitchSettingCard(
             FIF.PLAY,
@@ -321,6 +330,7 @@ class QuickLaunchInterface(InterfaceBase):
             "convert": cfg.quickLaunchConvert.value,
             "compress": cfg.quickLaunchCompress.value,
             "upscale": cfg.quickLaunchUpscale.value,
+            "extract_frame": cfg.quickLaunchExtractFrame.value,
         }
         if not bind:
             # 不绑定右键 → 注销全部
@@ -355,6 +365,8 @@ class QuickLaunchInterface(InterfaceBase):
         self.compressCard.setContent(tr("quicklaunch.compress.hint"))
         self.upscaleCard.setTitle(tr("nav.upscale"))
         self.upscaleCard.setContent(tr("quicklaunch.upscale.hint"))
+        self.extractFrameCard.setTitle(tr("quicklaunch.extract_frame"))
+        self.extractFrameCard.setContent(tr("quicklaunch.extract_frame.hint"))
         # v0.8.1 Bug4-③：通知卡片的标题与简介此前漏更新，切换语言后不刷新
         self.notifyStartCard.setTitle(tr("quicklaunch.notify.start"))
         self.notifyStartCard.setContent(tr("quicklaunch.notify.start.hint"))

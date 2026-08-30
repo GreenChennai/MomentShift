@@ -59,6 +59,11 @@ _TASKS: dict[str, dict] = {
         "label": "瞬变工坊 — 放大",
         "icon": "",
     },
+    "extract_frame": {
+        "name": "MomentShift.ExtractFrame",
+        "label": "瞬变工坊 — 提取帧",
+        "icon": "",
+    },
 }
 
 

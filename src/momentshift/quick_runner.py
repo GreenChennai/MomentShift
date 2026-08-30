@@ -244,6 +244,8 @@ def handle_quick_batch(batch, window, manager) -> None:
                 _run_compress(files, window)
             elif task == "upscale":
                 _run_upscale(files, window)
+            elif task == "extract_frame":
+                _run_extract_frame(files, window)
             else:
                 log.error("quick: unknown task %s", task)
         except Exception:
@@ -540,3 +542,156 @@ def _run_upscale(files, window):
         done_msg_key="quick.notify.upscale_done",
         precheck=_engines_ready,
     )
+
+
+def _run_extract_frame(files, window):
+    """右键 → 提取帧：弹「提取帧设置」→ 提取视频首帧/尾帧/指定秒数帧。
+
+    仅支持单个视频文件。
+    """
+    from .core.presets import VIDEO_EXTS
+    from .gui.extract_frame_dialog import ExtractFrameDialog
+
+    valid_files = [f for f in files if Path(f).suffix.lower() in VIDEO_EXTS]
+    if not valid_files:
+        log.warning("quick extract_frame: 无有效视频文件（共 %d 个输入）", len(files))
+        return
+
+    # 只取第一个视频
+    video_path = valid_files[0]
+
+    def _on_extract(path, mode, second, fmt):
+        # 后台线程执行，避免阻塞UI
+        import threading
+
+        def _task():
+            _execute_extract_frame(path, mode, second, fmt, window)
+
+        thread = threading.Thread(target=_task, daemon=True)
+        thread.start()
+
+    dlg = ExtractFrameDialog(video_path, _on_extract)
+    dlg.finished.connect(lambda r: None)
+    _KEEP_ALIVE.append(dlg)
+    _show_topmost(dlg)
+
+
+def _execute_extract_frame(video_path: str, mode: str, second: int, fmt: str, window) -> None:
+    """执行帧提取任务。
+
+    使用 ffmpeg 从视频中提取指定帧并保存为图片。
+    """
+    import subprocess
+    from pathlib import Path
+
+    from .core.ffmpeg import find_ffmpeg
+
+    ffmpeg_path = find_ffmpeg()
+    if not ffmpeg_path:
+        log.error("extract_frame: 未找到 ffmpeg")
+        return
+
+    video_file = Path(video_path)
+    if not video_file.exists():
+        log.warning("extract_frame: 文件不存在 %s", video_path)
+        return
+
+    # 输出到源文件同目录
+    output_dir = video_file.parent
+
+    # 构建输出文件名
+    stem = video_file.stem
+    suffix_map = {"png": ".png", "jpg": ".jpg", "bmp": ".bmp", "webp": ".webp"}
+    ext = suffix_map.get(fmt, ".png")
+
+    if mode == "first":
+        output_name = f"{stem}_first_frame{ext}"
+        time_arg = "0"
+    elif mode == "last":
+        duration = _get_video_duration(ffmpeg_path, video_path)
+        if duration is not None:
+            time_arg = str(max(0, duration - 0.1))
+        else:
+            time_arg = "0"
+        output_name = f"{stem}_last_frame{ext}"
+    else:  # custom
+        time_arg = str(second)
+        output_name = f"{stem}_frame_{second}s{ext}"
+
+    output_path = output_dir / output_name
+
+    # 构建 ffmpeg 命令 - 使用 -ss 在 -i 之前加速 seek
+    cmd = [
+        ffmpeg_path,
+        "-y",
+        "-ss", time_arg,
+        "-i", video_path,
+        "-vframes", "1",
+        "-q:v", "2",
+        str(output_path),
+    ]
+
+    log.info("extract_frame: 提取帧 %s → %s", mode, output_path)
+    try:
+        # 隐藏CMD窗口：Windows下使用 CREATE_NO_WINDOW 标志
+        creation_flags = 0
+        if sys.platform == "win32":
+            creation_flags = subprocess.CREATE_NO_WINDOW
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=creation_flags,
+        )
+
+        if result.returncode == 0 and output_path.exists():
+            log.info("extract_frame: 成功 %s", output_path)
+            _notify(
+                window,
+                tr("quick.notify.title"),
+                tr("quick.notify.extract_frame_done"),
+            )
+        else:
+            log.error("extract_frame: 失败 %s: %s", video_path, result.stderr)
+
+    except subprocess.TimeoutExpired:
+        log.error("extract_frame: 超时 %s", video_path)
+    except Exception as e:
+        log.error("extract_frame: 异常 %s: %s", video_path, str(e))
+
+
+def _get_video_duration(ffmpeg_path: str, video_path: str) -> float | None:
+    """使用 ffprobe 获取视频时长（秒）。"""
+    import subprocess
+
+    try:
+        ffprobe_path = Path(ffmpeg_path).parent / "ffprobe.exe"
+        if not ffprobe_path.exists():
+            ffprobe_path = Path(ffmpeg_path).parent / "ffprobe"
+        cmd = [
+            str(ffprobe_path),
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path,
+        ]
+        # 隐藏CMD窗口
+        creation_flags = 0
+        if sys.platform == "win32":
+            creation_flags = subprocess.CREATE_NO_WINDOW
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=creation_flags,
+        )
+        if result.returncode == 0:
+            duration_str = result.stdout.strip()
+            if duration_str:
+                return float(duration_str)
+    except Exception:
+        pass
+    return None

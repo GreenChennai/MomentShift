@@ -12,8 +12,10 @@ permissions:
 jobs:
   # ----------------------------------------------------------------------
   # Windows build (primary target).
-  # Produces BOTH a portable zip (绿色解压版) and an NSIS installer (安装包),
-  # then attaches both to the GitHub Release on a tag push.
+  # Produces:
+  #   - Standard portable zip (不含 ffmpeg，用户自行下载)
+  #   - Full portable zip (自带 ffmpeg)
+  #   - NSIS installer
   # ----------------------------------------------------------------------
   build-windows:
     name: Build Windows
@@ -35,35 +37,74 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller build.spec
 
-      - name: Package portable artifact
+      - name: Package standard portable
         run: |
           cd dist
           Compress-Archive -Path MomentShift -DestinationPath MomentShift-Windows-Portable.zip
+
+      - name: Download FFmpeg
+        shell: pwsh
+        run: |
+          $ffmpegDir = "dist\MomentShift\ffmpeg"
+          New-Item -ItemType Directory -Path $ffmpegDir -Force | Out-Null
+          
+          # Download ffmpeg from gyan.dev (essentials build)
+          $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          $zip = "$env:TEMP\ffmpeg.zip"
+          
+          Write-Host "Downloading FFmpeg..."
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri $url -OutFile $zip -TimeoutSec 120
+          
+          Write-Host "Extracting FFmpeg..."
+          Expand-Archive -Path $zip -DestinationPath $env:TEMP\ffmpeg_extract -Force
+          
+          # Find the bin directory
+          $binDir = Get-ChildItem -Path $env:TEMP\ffmpeg_extract -Filter "bin" -Recurse -Directory | Select-Object -First 1
+          if ($binDir) {
+            Copy-Item "$($binDir.FullName)\ffmpeg.exe" -Destination $ffmpegDir -Force
+            Copy-Item "$($binDir.FullName)\ffprobe.exe" -Destination $ffmpegDir -Force
+            Write-Host "FFmpeg files copied to $ffmpegDir"
+          } else {
+            Write-Warning "Could not find bin directory in FFmpeg archive"
+          }
+          
+          Remove-Item $zip -Force -ErrorAction SilentlyContinue
+          Remove-Item $env:TEMP\ffmpeg_extract -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Package full portable
+        run: |
+          cd dist
+          Compress-Archive -Path MomentShift -DestinationPath MomentShift-Windows-Full.zip
 
       - name: Build installer
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          # Locate makensis.exe (GitHub Windows runner does not put NSIS on PATH).
           $nsis = Get-ChildItem -Path "C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS" -Filter makensis.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $nsis) {
             choco install nsis -y
             $nsis = Get-ChildItem -Path "C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS" -Filter makensis.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if (-not $nsis) { throw "makensis.exe not found after install" }
-          # Make NSIS available on PATH for any later steps too.
           $nsisDir = Split-Path $nsis.FullName
           echo "$nsisDir" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
           & $nsis.FullName installer.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE" }
 
-      - name: Upload portable artifact
+      - name: Upload standard portable
         uses: actions/upload-artifact@v4
         with:
           name: MomentShift-Windows-Portable
           path: dist/MomentShift-Windows-Portable.zip
 
-      - name: Upload installer artifact
+      - name: Upload full portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: MomentShift-Windows-Full
+          path: dist/MomentShift-Windows-Full.zip
+
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: MomentShift-Windows-Setup
@@ -80,12 +121,11 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             dist/MomentShift-Windows-Portable.zip
+            dist/MomentShift-Windows-Full.zip
             MomentShift-Windows-Setup.exe
 
   # ----------------------------------------------------------------------
-  # macOS build (best-effort). continue-on-error keeps the Windows release
-  # intact even if this job fails. Runs after Windows so the release already
-  # exists and this job just appends its asset.
+  # macOS build (best-effort)
   # ----------------------------------------------------------------------
   build-macos:
     name: Build macOS
@@ -134,7 +174,7 @@ jobs:
           files: dist/MomentShift-macOS.zip
 
   # ----------------------------------------------------------------------
-  # Linux build (best-effort). Same pattern as macOS.
+  # Linux build (best-effort)
   # ----------------------------------------------------------------------
   build-linux:
     name: Build Linux

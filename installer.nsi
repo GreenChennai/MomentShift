@@ -135,6 +135,7 @@ Section "Uninstall"
   DeleteRegKey HKCU "Software\Classes\*\shell\MomentShift.Convert"
   DeleteRegKey HKCU "Software\Classes\*\shell\MomentShift.Compress"
   DeleteRegKey HKCU "Software\Classes\*\shell\MomentShift.Upscale"
+  DeleteRegKey HKCU "Software\Classes\*\shell\MomentShift.ExtractFrame"
 
   ; 快捷方式在两种上下文都清一遍：机器级安装写在 all，
   ; 从旧的每用户安装升级上来的残留写在 current
