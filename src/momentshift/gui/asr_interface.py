@@ -33,7 +33,6 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QSizePolicy,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -460,7 +459,7 @@ class AsrListWidget(QueueListBase):
 
     removeRequested = Signal(str)
 
-    _empty_key = "asr.queue.empty"
+    _empty_icon = FIF.MICROPHONE
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -474,6 +473,8 @@ class AsrListWidget(QueueListBase):
         self.statTotal.setText(tr("asr.queue.stats.total", n=total))
         self.statDone.setText(tr("asr.queue.stats.done", n=done))
         self.statErr.setText(tr("asr.queue.stats.error", n=failed))
+        # 统计圆点与状态胶囊同源：等待灰 / 完成绿 / 失败红
+        self._set_stat_dots([tokens.PENDING, tokens.SUCCESS, tokens.DANGER])
 
     def add_item(self, item_id: str, src: str):
         if item_id in self.items:
@@ -495,8 +496,13 @@ class AsrListWidget(QueueListBase):
             w.set_progress(pct)
 
     def retranslate(self):
-        """语言切换：统计栏 + 空态文案 + 行内耗时/状态文案。"""
-        self.emptyHint.setText(tr(self._empty_key))
+        """语言切换：空态 + 统计 + 行内耗时/状态文案。
+
+        Notes:
+            不走 ``super().retranslate()``：基类会对每行调 ``w.retranslate()``，
+            而 :class:`AsrItemWidget` 没有 retranslate（行内件在下面手动回填）。
+        """
+        self.emptyHint.set_text(tr("queue.empty.title"), tr("queue.empty.hint"))
         self._update_stats()
         for w in self.items.values():
             w.pill.set_status(w._status)

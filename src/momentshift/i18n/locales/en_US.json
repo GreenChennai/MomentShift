@@ -812,5 +812,11 @@
   "settings.hardware.hint": "Auto-detect acceleration (GPU is faster but needs compatible drivers)",
   "upscale.compare.fullscreen": "Fullscreen",
   "upscale.compare.minimize": "—",
-  "upscale.compare.close": "×"
+  "upscale.compare.close": "×",
+  "queue.empty.title": "Queue is empty",
+  "queue.empty.hint": "Drop files here, or click above to browse",
+  "compress.strategy.png": "PNG · oxipng lossless",
+  "compress.strategy.jpg": "JPG · jpegoptim",
+  "compress.strategy.gif": "GIF · gifsicle",
+  "compress.strategy.av": "Audio/Video · FFmpeg presets"
 }

@@ -602,10 +602,7 @@ class QueueListWidget(QueueListBase):
     removeRequested = Signal(str)
     retryRequested = Signal(str)
 
-    _empty_key = "convert.queue.empty"
-    # 三个队列里只有转换队列历史上给空态标签设了 objectName，保留原样
-    # （它会进 QSS 快照的键名，统一掉反而会改动快照）。
-    _empty_object_name = "queueEmpty"
+    _empty_icon = FIF.MOVIE
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -688,6 +685,8 @@ class QueueListWidget(QueueListBase):
         self.statTotal.setText(tr("convert.queue.total", n=counts.get("total", 0)))
         self.statRun.setText(tr("convert.queue.running", n=counts.get("running", 0)))
         self.statErr.setText(tr("convert.queue.failed", n=counts.get("failed", 0)))
+        # 统计圆点与状态胶囊同源：等待灰 / 运行蓝 / 失败红
+        self._set_stat_dots([tokens.PENDING, tokens.RUNNING, tokens.DANGER])
 
 
 # --------------------------------------------------------------------------

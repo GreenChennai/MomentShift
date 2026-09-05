@@ -26,7 +26,7 @@ import re
 from PyQt6.QtCore import Qt, QTimer, pyqtProperty
 from PyQt6.QtGui import QColor, QRegion
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
-from qfluentwidgets import CaptionLabel, StrongBodyLabel
+from qfluentwidgets import CaptionLabel, StrongBodyLabel, TransparentPushButton
 from qfluentwidgets import FluentIcon as FIF
 
 from ..core.qt_compat import QDragEnterEvent, QDropEvent, Signal
@@ -95,6 +95,24 @@ class DropArea(ThemedCard):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.addWidget(self.inner)
 
+        # --- 次级动作行：虚线区下方的居中透明按钮（如「添加文件夹」）---
+        # v0.9 UI 重构：原先页面在拖拽卡外再放一条全宽主色按钮，与「点击虚线区
+        # 选文件」动作重复且视觉过重。现在把次级动作收进卡片：主视觉只剩拖拽区，
+        # 动作按主次分层（点击虚线区=选文件，下方文字按钮=选文件夹）。
+        # 注意：不能把按钮放进 ``inner``——透明覆盖按钮 ``_clickBtn`` 盖住整个
+        # 虚线区且被 raise 到顶层，点击会被它吞掉；放在 inner 之外则天然可用。
+        self.footer = QWidget(self)
+        self.footer.setStyleSheet("background: transparent;")
+        fh = QHBoxLayout(self.footer)
+        fh.setContentsMargins(0, 2, 0, 0)
+        fh.addStretch(1)
+        self.actionBtn = TransparentPushButton(self.footer)
+        self.actionBtn.setVisible(False)
+        self.actionBtn.clicked.connect(self._on_action_clicked)
+        fh.addWidget(self.actionBtn)
+        fh.addStretch(1)
+        layout.addWidget(self.footer)
+
         # --- : 透明覆盖按钮替代 mouseReleaseEvent ---
         self._clickBtn = QPushButton("", self)
         self._clickBtn.setStyleSheet(
@@ -106,11 +124,28 @@ class DropArea(ThemedCard):
         self._clickBtn.clicked.connect(self._on_button_clicked)
         self._clickBtn.raise_()
 
+        self._action_cb = None
         self.retheme()
 
     def _on_button_clicked(self):
         """QPushButton 原生 click 事件——不受 modal dialog 的 synthetic event 影响。"""
         self.clicked.emit()
+
+    def set_action(self, text: str, callback) -> None:
+        """配置虚线区下方的次级动作按钮（如「添加文件夹」）。
+
+        Args:
+            text: 按钮文案；空串表示不显示该按钮。
+            callback: 点击回调（页面自己的 ``_pick_folder`` 等，业务信号不变）。
+        """
+        self._action_cb = callback
+        self.actionBtn.setText(text)
+        self.actionBtn.setIcon(FIF.FOLDER_ADD)
+        self.actionBtn.setVisible(bool(text))
+
+    def _on_action_clicked(self):
+        if self._action_cb is not None:
+            self._action_cb()
 
     def _normalBackgroundColor(self):
         return surface()
@@ -258,14 +293,13 @@ class DropArea(ThemedCard):
             self.chipsWrap.hide()
             return
         self.chipsWrap.show()
-        bg = ACCENT_HEX
         for text in labels:
             chip = QLabel(text)
             chip.setObjectName("dropChip")
+            # v0.9 UI 重构：实底反白 → 淡底深字。一排并陈的静态格式徽标用
+            # 轻样式（soft_chip_qss），不再与状态胶囊抢注意力。
             chip.setStyleSheet(
-                f"QLabel#dropChip{{ color: {tokens.WHITE}; background: {bg};"
-                f" border-radius: 6px; padding: 2px 9px;"
-                f" font-size: {tokens.FONT_SMALL}px; }}"
+                f"QLabel#dropChip{{{tokens.soft_chip_qss(tokens.ACCENT_HOVER, tokens.ACCENT_SOFT)}}}"
             )
             self.chipsLayout.addWidget(chip)
         self.chipsLayout.addStretch(1)
@@ -284,8 +318,8 @@ class DropArea(ThemedCard):
         self._position_button()
 
     def _position_button(self):
-        """让透明按钮覆盖整个 DropArea，与拖拽区完全重合。"""
-        self._clickBtn.setGeometry(0, 0, self.width(), self.height())
+        """让透明按钮与虚线区完全重合（不含下方次级动作行）。"""
+        self._clickBtn.setGeometry(self.inner.geometry())
 
     # -- 拖拽事件（不受点击改动影响）----------------------
     def enterEvent(self, event):

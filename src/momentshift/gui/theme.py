@@ -23,7 +23,6 @@ from pathlib import Path
 from PyQt6.QtCore import (
     QPointF,
     QPropertyAnimation,
-    QSize,
     Qt,
     pyqtProperty,
     pyqtSignal,
@@ -160,6 +159,15 @@ def accent_color() -> QColor:
 
 def accent_name() -> str:
     return ACCENT_HEX
+
+
+def ai_color() -> QColor:
+    """AI 功能青（放大/插帧、ASR 的强调色）。"""
+    return QColor(tokens.AI_ACCENT)
+
+
+def ai_name() -> str:
+    return tokens.AI_ACCENT
 
 
 def text_strong() -> str:

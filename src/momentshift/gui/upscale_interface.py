@@ -45,9 +45,9 @@ from qfluentwidgets import (
 
 from ..core import engines as eng_mod
 from ..core.config import cfg
+from ..core.ffmpeg_progress import format_eta
 from ..core.logger import get_logger
 from ..core.output_path import unique_output_path
-from ..core.ffmpeg_progress import format_eta
 from ..core.qt_compat import QApplication, Signal
 from ..core.task_pool import PoolItem, ProgressCb, TaskPool, TaskState
 from ..i18n.translator import tr
@@ -453,7 +453,7 @@ class UpscaleListWidget(QueueListBase):
     removeRequested = Signal(str)
     compareRequested = Signal(str)
 
-    _empty_key = "upscale.queue.empty"
+    _empty_icon = FIF.ZOOM_IN
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -467,6 +467,8 @@ class UpscaleListWidget(QueueListBase):
         self.statTotal.setText(tr("upscale.queue.stats.total", n=total))
         self.statDone.setText(tr("upscale.queue.stats.done", n=done))
         self.statErr.setText(tr("upscale.queue.stats.error", n=failed))
+        # 统计圆点与状态胶囊同源：等待灰 / 完成绿 / 失败红
+        self._set_stat_dots([tokens.PENDING, tokens.SUCCESS, tokens.DANGER])
 
     def add_item(self, item_id: str, src: str, out: str = ""):
         if item_id in self.items:
@@ -536,18 +538,15 @@ class UpscaleInterface(InterfaceBase):
         self._folder = cfg.upscaleFolder.value or ""
 
         # =====================================================================
-        # 输入卡片
+        # 输入卡片（拖拽区 + 内嵌「添加文件夹」次级动作）
         # =====================================================================
         card, vb, self.tInput = self._make_card("upscale.input.title")
         self.dropArea = DropArea(self)
         self.dropArea.filesDropped.connect(self._on_files)
         self.dropArea.clicked.connect(self._pick_files)
+        # v0.9 UI 重构：与转换/压缩页一致，「添加文件夹」收进拖拽卡作为次级动作
+        self.dropArea.set_action(tr("upscale.add_folder"), self._pick_folder)
         vb.addWidget(self.dropArea)
-        tools = QHBoxLayout()
-        self.addFolderBtn = primary_btn(tr("upscale.add_folder"), icon=FIF.FOLDER_ADD)
-        self.addFolderBtn.clicked.connect(self._pick_folder)
-        tools.addWidget(self.addFolderBtn)
-        vb.addLayout(tools)
         self.vbox.addWidget(card)
         self._inputCard = card
 
@@ -562,9 +561,14 @@ class UpscaleInterface(InterfaceBase):
 
         # =====================================================================
         # 放大设置卡片（：引擎驱动的动态参数面板）
+        # 标题栏挂「AI」青色徽标（v0.9 UI 重构）：放大是本应用的 AI 能力表面，
+        # 用 AI 语义色而非品牌绿标注，与引擎卡、ASR 页保持同一套语言。
         # =====================================================================
         setc, setvb, self.tSettings = self._make_card("upscale.settings.title")
         self._settingsCard = setc  # 供快速调用设置窗 reparent 复用
+        aiBadge = QLabel("AI")
+        aiBadge.setStyleSheet(tokens.ai_badge_qss())
+        setc.add_header_widget(aiBadge)
 
         # -- 「放大模型」：只列已安装的引擎 --
         self.modelCombo = ComboBox()
@@ -657,7 +661,9 @@ class UpscaleInterface(InterfaceBase):
         self.pauseBtn.clicked.connect(self._on_pause)
         self.clearBtn = ghost_btn(tr("convert.clear"), icon=FIF.DELETE)
         self.clearBtn.clicked.connect(self._on_clear)
-        ctrl.addWidget(self.startBtn, 1)
+        # v0.9 UI 重构：主按钮不再占满整行（与转换/压缩页一致）
+        ctrl.addWidget(self.startBtn)
+        ctrl.addStretch(1)
         ctrl.addWidget(self.pauseBtn)
         ctrl.addWidget(self.clearBtn)
         qvb.addLayout(ctrl)
@@ -1020,7 +1026,7 @@ class UpscaleInterface(InterfaceBase):
         self.dropArea.retranslate(
             tr("upscale.drop.title"), tr("upscale.drop.hint"), tr("upscale.drop.formats")
         )
-        self.addFolderBtn.setText(tr("upscale.add_folder"))
+        self.dropArea.actionBtn.setText(tr("upscale.add_folder"))
         self.noEngineHint.setText(tr("upscale.engine.none_hint"))
         self.detectBtn.setText(tr("upscale.engine.detect"))
         # v0.8.1 Bug4-②：field_row 行标签同步语言（此前标签是拿不到引用的局部变量）

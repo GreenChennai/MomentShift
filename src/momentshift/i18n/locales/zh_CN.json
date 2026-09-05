@@ -812,5 +812,11 @@
   "settings.hardware.hint": "自动检测可用加速方式（GPU 转码更快，但需兼容显卡驱动）",
   "upscale.compare.fullscreen": "全屏",
   "upscale.compare.minimize": "—",
-  "upscale.compare.close": "×"
+  "upscale.compare.close": "×",
+  "queue.empty.title": "队列为空",
+  "queue.empty.hint": "拖入文件，或点击上方区域选择",
+  "compress.strategy.png": "PNG · oxipng 无损",
+  "compress.strategy.jpg": "JPG · jpegoptim",
+  "compress.strategy.gif": "GIF · gifsicle",
+  "compress.strategy.av": "音视频 · FFmpeg 预设"
 }

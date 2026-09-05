@@ -27,6 +27,7 @@ from ..core import quick_launch
 from ..core.config import cfg, connect_autosave
 from ..core.logger import get_logger
 from ..i18n.translator import LocaleKey, tr, translator
+from . import tokens
 from .splash import AppSplashScreen
 from .theme import WINDOW_BG, app_icon
 
@@ -52,11 +53,11 @@ class MainWindow(FluentWindow):
                 "compress",
                 "compress_interface",
                 "CompressInterface",
-                FIF.PHOTO,
+                FIF.ZIP_FOLDER,
                 "nav.compress",
                 None,
             ),
-            ("upscale", "upscale_interface", "UpscaleInterface", FIF.ZOOM, "nav.upscale", None),
+            ("upscale", "upscale_interface", "UpscaleInterface", FIF.ZOOM_IN, "nav.upscale", None),
             # v0.8.3：音频转文字（ASR）——「放大」与「快速调用」之间
             (
                 "asr",
@@ -131,7 +132,9 @@ class MainWindow(FluentWindow):
 
         self.convertInterface = ConvertInterface(self.manager, self)
         self.navigationInterface.setAcrylicEnabled(True)
-        self.addSubInterface(self.convertInterface, FIF.HOME, tr("nav.convert"))
+        # v0.9 UI 重构：转换页图标从 HOME 换成 SYNC（循环箭头=格式互转），
+        # 与压缩 ZIP_FOLDER、放大 ZOOM_IN 一同让图标语义对准功能。
+        self.addSubInterface(self.convertInterface, FIF.SYNC, tr("nav.convert"))
         self.convertInterface.retranslateUi()
         self._boot_step(tr("nav.convert"))
         QTimer.singleShot(10, self._boot_next)
@@ -248,8 +251,12 @@ class MainWindow(FluentWindow):
         self.navigationInterface.setCurrentItem("Convert")
 
     def initWindow(self):
-        self.resize(525, 1000)
-        self.setMinimumWidth(420)
+        # v0.9 UI 重构：默认 820x720（原 525x1000 窄高比例在桌面上像手机竖屏，
+        # 且队列区常态下大片留白）。几何持久化见 closeEvent；位置不持久化，
+        # 始终居中出现，避免多显示器插拔后窗口跑到屏幕外。
+        self.resize(tokens.WINDOW_DEFAULT_W, tokens.WINDOW_DEFAULT_H)
+        self.setMinimumSize(tokens.WINDOW_MIN_W, tokens.WINDOW_MIN_H)
+        self._restore_window_geometry()
         self.setMicaEffectEnabled(False)
         self.setCustomBackgroundColor(WINDOW_BG, WINDOW_BG)
         self.setWindowTitle(tr("app.title"))
@@ -265,7 +272,32 @@ class MainWindow(FluentWindow):
             desktop.height() // 2 - self.height() // 2,
         )
         self.show()
+        if cfg.windowMaximized.value:
+            self.showMaximized()
         QApplication.processEvents()
+
+    def _restore_window_geometry(self) -> None:
+        """按配置恢复上次记忆的窗口尺寸；无记录或格式损坏时保持默认。"""
+        raw = (cfg.windowGeometry.value or "").strip().lower()
+        if "x" not in raw:
+            return
+        try:
+            w, h = (int(p) for p in raw.split("x", 1))
+        except ValueError:
+            get_logger("app").debug("窗口几何配置损坏，忽略：%r", raw)
+            return
+        # 夹回最小/屏幕范围内，防止手工改配置把窗口缩没
+        w = max(tokens.WINDOW_MIN_W, min(w, 4096))
+        h = max(tokens.WINDOW_MIN_H, min(h, 4096))
+        self.resize(w, h)
+
+    def _save_window_geometry(self) -> None:
+        """把当前窗口尺寸与最大化状态写入配置（自动落盘由 autosave 兜底）。"""
+        if self.isMaximized() or self.isFullScreen():
+            cfg.windowMaximized.value = True
+            return
+        cfg.windowMaximized.value = False
+        cfg.windowGeometry.value = f"{self.width()}x{self.height()}"
 
     # =========================================================================
     # 系统托盘
@@ -377,6 +409,8 @@ class MainWindow(FluentWindow):
         self.close()
 
     def closeEvent(self, event):
+        # 窗口几何记忆：无论走托盘隐藏还是真退出，关窗前的尺寸都值得记住
+        self._save_window_geometry()
         if self._force_quit:
             self._cleanup_and_quit(event)
             return

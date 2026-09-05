@@ -812,5 +812,11 @@
   "settings.hardware.hint": "自動偵測可用加速方式（GPU 轉碼更快，但需相容顯卡驅動）",
   "upscale.compare.fullscreen": "全螢幕",
   "upscale.compare.minimize": "—",
-  "upscale.compare.close": "×"
+  "upscale.compare.close": "×",
+  "queue.empty.title": "佇列為空",
+  "queue.empty.hint": "拖入檔案，或點擊上方區域選擇",
+  "compress.strategy.png": "PNG · oxipng 無損",
+  "compress.strategy.jpg": "JPG · jpegoptim",
+  "compress.strategy.gif": "GIF · gifsicle",
+  "compress.strategy.av": "音訊視訊 · FFmpeg 預設"
 }
