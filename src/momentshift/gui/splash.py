@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import CaptionLabel, ProgressBar, SplashScreen, TitleLabel
 
 from ..i18n.translator import tr
-from . import theme
+from . import theme, tokens
 
 LOGO_SIZE = 132
 BAR_WIDTH = 248
@@ -53,11 +53,24 @@ class AppSplashScreen(SplashScreen):
 
         vb.addSpacing(18)
         self.titleLabel = TitleLabel(tr("app.title"), self._panel)
+        # v0.9 UI 重构：标题字号对齐新字阶（20px），主绿色保留——启动屏是品牌时刻
         self.titleLabel.setStyleSheet(
             f"color: {theme.ACCENT_HEX}; background-color: transparent;"
         )
+        title_font = self.titleLabel.font()
+        title_font.setPixelSize(tokens.FONT_TITLE_LG)
+        title_font.setWeight(600)
+        self.titleLabel.setFont(title_font)
         self.titleLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vb.addWidget(self.titleLabel, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        vb.addSpacing(6)
+        self.taglineLabel = CaptionLabel(tr("app.tagline"), self._panel)
+        self.taglineLabel.setStyleSheet(
+            f"color: {theme.TEXT_SECONDARY}; background-color: transparent;"
+        )
+        self.taglineLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vb.addWidget(self.taglineLabel, 0, Qt.AlignmentFlag.AlignHCenter)
 
         vb.addSpacing(22)
         self.progressBar = ProgressBar(self._panel)

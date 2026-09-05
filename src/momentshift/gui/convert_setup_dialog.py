@@ -54,7 +54,7 @@ from .theme import (
 _FMT_CARD_CSS = (
     "QPushButton{"
     f"  background: {tokens.ACCENT_TINT_BG}; border: 2px solid {tokens.ACCENT_TINT_BORDER};"
-    "  border-radius: 10px;"
+    "  border-radius: 8px;"
     f"  color: {tokens.ACCENT_TINT_TEXT}; font-weight: 700; font-size: {tokens.FONT_LARGE}px;"
     "  min-width: 150px; min-height: 75px; max-width: 150px; max-height: 75px;"
     "}"
