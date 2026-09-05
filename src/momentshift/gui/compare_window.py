@@ -363,7 +363,7 @@ class _SplitOverlay(QWidget):
     媒体视图之上：透明、全窗口、``setMouseTracking`` 悬停即跟随。
     """
 
-    def __init__(self, area: "_CompareArea"):
+    def __init__(self, area: _CompareArea):
         super().__init__(area)
         self._area = area
         self.setMouseTracking(True)

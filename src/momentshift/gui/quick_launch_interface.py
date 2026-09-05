@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QObject, QTimer
-from PyQt6.QtGui import QTextDocument
+from PyQt6.QtGui import QColor, QTextDocument
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -39,7 +39,6 @@ from .base import InterfaceBase
 from .theme import (
     CARD_MARGIN,
     ThemedCard,
-    danger_color,
     success_color,
     surface,
 )
@@ -115,11 +114,16 @@ class _StatusCard(ThemedCard):
         self.refresh()
 
     def refresh(self):
-        """刷新各功能注册状态指示。"""
+        """刷新各功能注册状态指示。
+
+        v0.9 UI 重构：未注册从红色改中性灰。红色是「出错」语义，而未注册只是
+        「该功能未开启」的中性状态——四个功能全灰是默认态，满屏红点会把
+        正常状态误报成故障。注册=品牌绿、未注册=中性灰。
+        """
         for t in quick_launch.available_tasks():
             registered = quick_launch.is_context_menu_registered(t)
             dot, _label = self._status_rows[t]
-            color = success_color() if registered else danger_color()
+            color = success_color() if registered else QColor(tokens.PENDING)
             dot.setStyleSheet(tokens.dot_qss(color.name(), 4))
 
     def retranslate(self):
@@ -175,21 +179,21 @@ class QuickLaunchInterface(InterfaceBase):
         # =====================================================================
         self.g_tasks = SettingCardGroup(tr("quicklaunch.group.tasks"))
         self.convertCard = SwitchSettingCard(
-            FIF.HOME,
+            FIF.SYNC,
             tr("nav.convert"),
             tr("quicklaunch.convert.hint"),
             cfg.quickLaunchConvert,
         )
         self.convertCard.checkedChanged.connect(self._on_task)
         self.compressCard = SwitchSettingCard(
-            FIF.PHOTO,
+            FIF.ZIP_FOLDER,
             tr("nav.compress"),
             tr("quicklaunch.compress.hint"),
             cfg.quickLaunchCompress,
         )
         self.compressCard.checkedChanged.connect(self._on_task)
         self.upscaleCard = SwitchSettingCard(
-            FIF.ZOOM,
+            FIF.ZOOM_IN,
             tr("nav.upscale"),
             tr("quicklaunch.upscale.hint"),
             cfg.quickLaunchUpscale,

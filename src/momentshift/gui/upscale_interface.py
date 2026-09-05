@@ -510,6 +510,13 @@ class UpscaleInterface(InterfaceBase):
     def __init__(self, parent=None):
         super().__init__("Upscale", tr("nav.upscale"), tr("upscale.tagline"), parent)
 
+        # 页头「AI」徽标（v0.9 UI 重构）：放大页是 AI 能力表面，在标题行右侧挂
+        # 一枚青色 AI 小徽标——与转换页 FFmpeg 状态胶囊同一位置，AI 语义色
+        # 每页只出现一次，不逐卡重复。
+        aiBadge = QLabel("AI")
+        aiBadge.setStyleSheet(tokens.ai_badge_qss())
+        self._header_row.addWidget(aiBadge, 0, Qt.AlignmentFlag.AlignVCenter)
+
         # 队列引擎。max_workers 传方法本身，好让设置页改「最大线程数」后下一轮
         # 调度立即生效（放大侧上限比压缩低，见 _max_threads）。
         self._pool = TaskPool(
@@ -561,14 +568,9 @@ class UpscaleInterface(InterfaceBase):
 
         # =====================================================================
         # 放大设置卡片（：引擎驱动的动态参数面板）
-        # 标题栏挂「AI」青色徽标（v0.9 UI 重构）：放大是本应用的 AI 能力表面，
-        # 用 AI 语义色而非品牌绿标注，与引擎卡、ASR 页保持同一套语言。
         # =====================================================================
         setc, setvb, self.tSettings = self._make_card("upscale.settings.title")
         self._settingsCard = setc  # 供快速调用设置窗 reparent 复用
-        aiBadge = QLabel("AI")
-        aiBadge.setStyleSheet(tokens.ai_badge_qss())
-        setc.add_header_widget(aiBadge)
 
         # -- 「放大模型」：只列已安装的引擎 --
         self.modelCombo = ComboBox()
