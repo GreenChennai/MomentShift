@@ -1,25 +1,29 @@
+<div align="center">
+  <img src="assets/readme/hero.svg" width="100%" alt="瞬变工坊 MomentShift —— 拖进去，选格式，批量转的本地多媒体工具箱：ffmpeg 转换 / 压缩，离线 AI 超分放大、视频插帧与语音转文字">
+</div>
 
-<p align="center">
-  <img src="src/momentshift/resources/icons/app_logo.png" alt="MomentShift Logo" width="132">
-</p>
-<h1 align="center">
-  MomentShift · 瞬变工坊
-</h1>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
   <img src="https://img.shields.io/badge/version-0.9.2-brightgreen.svg" alt="Version 0.9.2">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/UI-PyQt6%20%2B%20Fluent--Widgets-238636.svg" alt="UI">
 </p>
-<p align="center">
-  <strong>傻瓜式 ffmpeg 多媒体处理工具 —— 拖进去，选格式，批量转；本地跑图片/视频的超分和插帧；视频/音频提取文字</strong>
-</p>
-
----
 
 <p align="center">
   <strong>声明：本项目全部代码由 AI（人工智能）编写，用于个人技术能力提升与学习交流，并非由人工逐行手写。如有问题或改进建议，欢迎提 Issue / PR</strong>
 </p>
+
+---
+
+## 📸 界面预览
+
+| 转换 | 压缩 | 放大（AI） |
+| --- | --- | --- |
+| ![转换页：拖拽区 + 转换队列](docs/ui-redesign/after/convert.png) | ![压缩页：按类型路由策略 + 压缩队列](docs/ui-redesign/after/compress.png) | ![放大页：引擎卡 + 放大设置](docs/ui-redesign/after/upscale.png) |
+
+| 音频转文字（AI） | 快速调用 | 设置 |
+| --- | --- | --- |
+| ![音频转文字页：模型管理 + 转写队列](docs/ui-redesign/after/asr.png) | ![快速调用页：右键菜单注册管理](docs/ui-redesign/after/quicklaunch.png) | ![设置页](docs/ui-redesign/after/settings.png) |
 
 ---
 
