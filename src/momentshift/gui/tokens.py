@@ -172,7 +172,9 @@ CARD_MARGIN = 16  # 卡片内边距
 
 # 窗口几何：默认与最小尺寸（px）。窗口实际大小与最大化状态持久化在
 # cfg.windowGeometry / cfg.windowMaximized（gui/main_window 负责存取）。
-WINDOW_DEFAULT_W, WINDOW_DEFAULT_H = 820, 720
+# v0.9.1：默认高度 760 —— 配合组件紧凑化，转换/压缩页在默认窗口下免滚动，
+# 队列控制条直接可见可点。
+WINDOW_DEFAULT_W, WINDOW_DEFAULT_H = 820, 760
 WINDOW_MIN_W, WINDOW_MIN_H = 460, 560
 
 # ===========================================================================

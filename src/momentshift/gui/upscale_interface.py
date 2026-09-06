@@ -567,6 +567,36 @@ class UpscaleInterface(InterfaceBase):
         self.vbox.addWidget(self.enginesCard)
 
         # =====================================================================
+        # 队列卡片
+        # =====================================================================
+        qcard, qvb, self.tQueue = self._make_card("upscale.queue.title", "upscale.queue.hint")
+        self.listWidget = UpscaleListWidget(self)
+        self.listWidget.removeRequested.connect(self._on_remove)
+        self.listWidget.compareRequested.connect(self._on_compare)
+        # v0.9.1：队列列表最小高度 140——放大页卡片多，控制条要在默认窗口免滚动可见
+        self.queueScroll = self._make_scroll(140)
+        self.queueScroll.setWidget(self.listWidget)
+        # v0.9.1：队列区吃掉页面全部剩余高度——窗口再高控制条也贴着可视区底部，
+        # 窗口刚好放下全部内容时无需滚动即可点到「开始 / 暂停 / 清空」
+        qvb.addWidget(self.queueScroll, 1)
+        # Adj2：队列自动跟随当前处理任务
+        self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
+        ctrl = QHBoxLayout()
+        self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
+        self.startBtn.clicked.connect(self._on_start)
+        self.pauseBtn = ghost_btn(tr("convert.pause"), icon=FIF.PAUSE)
+        self.pauseBtn.clicked.connect(self._on_pause)
+        self.clearBtn = ghost_btn(tr("convert.clear"), icon=FIF.DELETE)
+        self.clearBtn.clicked.connect(self._on_clear)
+        # v0.9 UI 重构：主按钮不再占满整行（与转换/压缩页一致）
+        ctrl.addWidget(self.startBtn)
+        ctrl.addStretch(1)
+        ctrl.addWidget(self.pauseBtn)
+        ctrl.addWidget(self.clearBtn)
+        qvb.addLayout(ctrl)
+        self.vbox.addWidget(qcard, 1)
+
+        # =====================================================================
         # 放大设置卡片（：引擎驱动的动态参数面板）
         # =====================================================================
         setc, setvb, self.tSettings = self._make_card("upscale.settings.title")
@@ -644,41 +674,15 @@ class UpscaleInterface(InterfaceBase):
         self._apply_output_mode()
         self.vbox.addWidget(setc)
 
-        # =====================================================================
-        # 队列卡片
-        # =====================================================================
-        qcard, qvb, self.tQueue = self._make_card("upscale.queue.title", "upscale.queue.hint")
-        self.listWidget = UpscaleListWidget(self)
-        self.listWidget.removeRequested.connect(self._on_remove)
-        self.listWidget.compareRequested.connect(self._on_compare)
-        self.queueScroll = self._make_scroll(280)
-        self.queueScroll.setWidget(self.listWidget)
-        qvb.addWidget(self.queueScroll)
-        # Adj2：队列自动跟随当前处理任务
-        self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
-        ctrl = QHBoxLayout()
-        self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
-        self.startBtn.clicked.connect(self._on_start)
-        self.pauseBtn = ghost_btn(tr("convert.pause"), icon=FIF.PAUSE)
-        self.pauseBtn.clicked.connect(self._on_pause)
-        self.clearBtn = ghost_btn(tr("convert.clear"), icon=FIF.DELETE)
-        self.clearBtn.clicked.connect(self._on_clear)
-        # v0.9 UI 重构：主按钮不再占满整行（与转换/压缩页一致）
-        ctrl.addWidget(self.startBtn)
-        ctrl.addStretch(1)
-        ctrl.addWidget(self.pauseBtn)
-        ctrl.addWidget(self.clearBtn)
-        qvb.addLayout(ctrl)
-        # 引擎扫描必须放在队列控制按钮之后：_update_controls 依赖 startBtn 等
+        # 引擎扫描必须放在队列控制按钮与「放大模型」下拉之后：
+        # _update_controls 依赖 startBtn，模型下拉回填依赖 modelCombo
         self.reload_engines()
-        self.vbox.addWidget(qcard)
 
         # =====================================================================
         # 前后对比组件
         # =====================================================================
 
         self._update_controls()
-        self.vbox.addStretch(1)
         self._collapse_ready = True
         self.retheme()
 

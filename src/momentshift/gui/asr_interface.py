@@ -611,7 +611,7 @@ class AudioTranscribeInterface(InterfaceBase):
         # v0.8.8 Bug2：整体照搬「放大队列」结构（QueueListBase + 行卡片），
         # 不再使用通用 QueueListWidget 的适配层
         self._queueList = AsrListWidget()
-        self._queueList.setMinimumHeight(120)
+        self._queueList.setMinimumHeight(150)
         self._queueList.removeRequested.connect(self._remove_by_id)
         qvb.addWidget(self._queueList)
 
@@ -639,7 +639,7 @@ class AudioTranscribeInterface(InterfaceBase):
         # =====================================================================
         rcard, rvb, self.tCmd = self._make_card("asr.cmd.title")
         self.cmdEdit = self._make_log_edit(tr("asr.cmd.ready"))
-        self.cmdEdit.setMinimumHeight(170)
+        self.cmdEdit.setMinimumHeight(120)
         rvb.addWidget(self.cmdEdit)
         self.vbox.addWidget(rcard)
 

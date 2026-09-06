@@ -480,9 +480,11 @@ class CompressInterface(InterfaceBase):
         qcard, qvb, self.tQueue = self._make_card("compress.queue.title")
         self.listWidget = CompressListWidget(self)
         self.listWidget.removeRequested.connect(self._on_remove)
-        self.queueScroll = self._make_scroll(280)
+        self.queueScroll = self._make_scroll()
         self.queueScroll.setWidget(self.listWidget)
-        qvb.addWidget(self.queueScroll)
+        # v0.9.1：队列区吃掉页面全部剩余高度——窗口再高控制条也贴着可视区底部，
+        # 窗口刚好放下全部内容时无需滚动即可点到「开始 / 暂停 / 清空」
+        qvb.addWidget(self.queueScroll, 1)
         # Adj2：队列自动跟随当前处理任务
         self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
         ctrl = QHBoxLayout()
@@ -498,10 +500,9 @@ class CompressInterface(InterfaceBase):
         ctrl.addWidget(self.pauseBtn)
         ctrl.addWidget(self.clearBtn)
         qvb.addLayout(ctrl)
-        self.vbox.addWidget(qcard)
+        self.vbox.addWidget(qcard, 1)
 
         self._update_controls()
-        self.vbox.addStretch(1)
         self._collapse_ready = True
         self.retheme()
 

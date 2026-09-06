@@ -474,7 +474,8 @@ class CollapsibleCard(ThemedCard):
 
         self._bar = QWidget()
         hb = QHBoxLayout(self._bar)
-        hb.setContentsMargins(CARD_MARGIN, 10, 6, 10)
+        # v0.9.1 紧凑化：标题栏上下 10 → 8（默认窗口下主页面免滚动）
+        hb.setContentsMargins(CARD_MARGIN, 8, 6, 8)
         hb.setSpacing(8)
 
         self.titleLabel = StrongBodyLabel(title)
@@ -492,7 +493,7 @@ class CollapsibleCard(ThemedCard):
 
         self._body = QWidget()
         self._body_layout = QVBoxLayout(self._body)
-        self._body_layout.setContentsMargins(CARD_MARGIN, 0, CARD_MARGIN, 14)
+        self._body_layout.setContentsMargins(CARD_MARGIN, 0, CARD_MARGIN, 12)
         self._body_layout.setSpacing(10)
 
         self._body.setStyleSheet(tokens.input_qss("QLineEdit", tokens.RADIUS_SM))

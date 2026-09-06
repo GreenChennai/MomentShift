@@ -65,12 +65,14 @@ class DropArea(ThemedCard):
         self.inner = QWidget(self)
         self.inner.setObjectName("dropInner")
         vb = QVBoxLayout(self.inner)
-        vb.setContentsMargins(18, 22, 18, 22)
-        vb.setSpacing(10)
+        # v0.9.1 紧凑化：默认窗口（820x760）下四个主页面要免滚动，拖拽区是
+        # 页面上最大的单体组件，内边距/图标/行距全面收一档（62px 徽标 → 46px）。
+        vb.setContentsMargins(14, 12, 14, 12)
+        vb.setSpacing(6)
         vb.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.iconBadge = QLabel(self)
-        self.iconBadge.setFixedSize(62, 62)
+        self.iconBadge.setFixedSize(46, 46)
         self.iconBadge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.iconBadge.setMask(QRegion(self.iconBadge.rect(), QRegion.RegionType.Ellipse))
         vb.addWidget(self.iconBadge, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -92,7 +94,7 @@ class DropArea(ThemedCard):
         vb.addWidget(self.chipsWrap, alignment=Qt.AlignmentFlag.AlignCenter)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(8, 8, 8, 6)
         layout.addWidget(self.inner)
 
         # --- 次级动作行：虚线区下方的居中透明按钮（如「添加文件夹」）---
@@ -178,8 +180,8 @@ class DropArea(ThemedCard):
         return animations.blend_color(surface().name(), ACCENT_HEX, 0.14)
 
     def retheme(self):
-        self.iconBadge.setPixmap(FIF.FOLDER_ADD.icon(QColor(ACCENT_HEX)).pixmap(30, 30))
-        self.iconBadge.setStyleSheet(f"background: {self._accent_tint()}; border-radius: 31px;")
+        self.iconBadge.setPixmap(FIF.FOLDER_ADD.icon(QColor(ACCENT_HEX)).pixmap(24, 24))
+        self.iconBadge.setStyleSheet(f"background: {self._accent_tint()}; border-radius: 23px;")
         self._render_chips(self._parse_formats(self._formats))
         self._apply_style()
         self._position_button()

@@ -123,9 +123,11 @@ class ConvertInterface(InterfaceBase):
         self.queueList = QueueListWidget(self)
         self.queueList.removeRequested.connect(self.manager.remove)
         self.queueList.retryRequested.connect(self.manager.retry)
-        self.queueScroll = self._make_scroll(280)
+        self.queueScroll = self._make_scroll()
         self.queueScroll.setWidget(self.queueList)
-        qvb.addWidget(self.queueScroll)
+        # v0.9.1：队列区吃掉页面全部剩余高度——窗口再高控制条也贴着可视区底部，
+        # 窗口刚好放下全部内容时无需滚动即可点到「开始 / 暂停 / 清空」
+        qvb.addWidget(self.queueScroll, 1)
         # Adj2：队列自动跟随当前处理任务
         self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
         self.manager.task_started.connect(self._follow_running)
@@ -145,7 +147,7 @@ class ConvertInterface(InterfaceBase):
         ctrl.addWidget(self.pauseBtn)
         ctrl.addWidget(self.clearBtn)
         qvb.addLayout(ctrl)
-        self.vbox.addWidget(qcard)
+        self.vbox.addWidget(qcard, 1)
 
         # =====================================================================
         # 连接 ConversionManager 信号
@@ -161,7 +163,6 @@ class ConvertInterface(InterfaceBase):
         self.manager.state_changed.connect(self._on_state_changed)
 
         self._update_controls()
-        self.vbox.addStretch(1)
         self._collapse_ready = True
         self.retheme()
 

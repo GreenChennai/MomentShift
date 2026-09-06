@@ -246,8 +246,8 @@ class EmptyState(QWidget):
         super().__init__(parent)
         self.setStyleSheet("background: transparent;")
         vb = QVBoxLayout(self)
-        vb.setContentsMargins(0, 14, 0, 8)
-        vb.setSpacing(6)
+        vb.setContentsMargins(0, 12, 0, 10)
+        vb.setSpacing(8)
         vb.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         self.iconBadge = QLabel(self)
@@ -273,6 +273,10 @@ class EmptyState(QWidget):
 
         if icon is not None:
             self.setIcon(icon)
+        # v0.9.1 修复：把自身 sizeHint 钉成最小高度。父布局空间不足时
+        # QVBoxLayout 会把无最小高度的标签压缩/叠绘到图标上（ASR 转写队列
+        # 空态「队列为空」叠在麦克风图标上的根因）；钉死后父布局只能长高。
+        self.setMinimumHeight(self.sizeHint().height())
 
     def setIcon(self, icon) -> None:
         """更换空态图标并按当前主题色重绘。"""
@@ -566,8 +570,9 @@ class InterfaceBase(ScrollArea):
         self.setWidget(self.view)
 
         self.vbox = QVBoxLayout(self.view)
-        self.vbox.setContentsMargins(16, 14, 16, 14)
-        self.vbox.setSpacing(12)
+        # v0.9.1 紧凑化：820x760 默认窗口下主页面免滚动，页边距/卡片间距收一档
+        self.vbox.setContentsMargins(14, 10, 14, 10)
+        self.vbox.setSpacing(10)
 
         # 标题头：大标题（20px）+ 副标题。旧版的绿色短下划线在视觉上像误置的
         # 链接下划线，UI 重构（2026-09）移除；层级改由字号/字重/留白承担。
@@ -578,7 +583,7 @@ class InterfaceBase(ScrollArea):
         self._header_row.setSpacing(10)
         hb = QVBoxLayout(self.header)
         hb.setContentsMargins(0, 0, 0, 0)
-        hb.setSpacing(4)
+        hb.setSpacing(2)
         self.titleLabel = TitleLabel(title)
         title_font = self.titleLabel.font()
         title_font.setPixelSize(tokens.FONT_TITLE_LG)
@@ -590,7 +595,6 @@ class InterfaceBase(ScrollArea):
         if subtitle:
             self.subLabel = CaptionLabel(subtitle)
             hb.addWidget(self.subLabel)
-        hb.addSpacing(4)
         self.vbox.addWidget(self.header)
 
         InterfaceBase.retheme(self)
@@ -619,7 +623,7 @@ class InterfaceBase(ScrollArea):
         self.register_collapsible(card)
         return card, card.body, card.titleLabel
 
-    def _make_scroll(self, min_height: int = 280) -> QScrollArea:
+    def _make_scroll(self, min_height: int = 170) -> QScrollArea:
         s = QScrollArea()
         s.setWidgetResizable(True)
         s.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
