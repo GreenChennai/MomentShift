@@ -33,7 +33,6 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QSizePolicy,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -192,12 +191,13 @@ class _FunasrModelRow(QWidget):
         btns2.addStretch(1)
         vb.addLayout(btns2)
 
-        # 进度条（下载中显示）
+        # 进度条（下载中显示）。模型下载属 AI 能力表面，填充用 AI 青而非品牌绿
+        # （v0.9 UI 重构：AI 语义色用于 AI 表面的强调与进度）。
         self.prog = QProgressBar()
         self.prog.setRange(0, 100)
         self.prog.setFixedHeight(3)
         self.prog.setTextVisible(False)
-        self.prog.setStyleSheet(tokens.progress_qss("transparent", tokens.ACCENT, 1))
+        self.prog.setStyleSheet(tokens.progress_qss("transparent", tokens.AI_ACCENT, 1))
         self.prog.hide()
         vb.addWidget(self.prog)
 
@@ -460,7 +460,7 @@ class AsrListWidget(QueueListBase):
 
     removeRequested = Signal(str)
 
-    _empty_key = "asr.queue.empty"
+    _empty_icon = FIF.MICROPHONE
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -474,6 +474,8 @@ class AsrListWidget(QueueListBase):
         self.statTotal.setText(tr("asr.queue.stats.total", n=total))
         self.statDone.setText(tr("asr.queue.stats.done", n=done))
         self.statErr.setText(tr("asr.queue.stats.error", n=failed))
+        # 统计圆点与状态胶囊同源：等待灰 / 完成绿 / 失败红
+        self._set_stat_dots([tokens.PENDING, tokens.SUCCESS, tokens.DANGER])
 
     def add_item(self, item_id: str, src: str):
         if item_id in self.items:
@@ -495,8 +497,13 @@ class AsrListWidget(QueueListBase):
             w.set_progress(pct)
 
     def retranslate(self):
-        """语言切换：统计栏 + 空态文案 + 行内耗时/状态文案。"""
-        self.emptyHint.setText(tr(self._empty_key))
+        """语言切换：空态 + 统计 + 行内耗时/状态文案。
+
+        Notes:
+            不走 ``super().retranslate()``：基类会对每行调 ``w.retranslate()``，
+            而 :class:`AsrItemWidget` 没有 retranslate（行内件在下面手动回填）。
+        """
+        self.emptyHint.set_text(tr("queue.empty.title"), tr("queue.empty.hint"))
         self._update_stats()
         for w in self.items.values():
             w.pill.set_status(w._status)
@@ -511,6 +518,13 @@ class AudioTranscribeInterface(InterfaceBase):
 
     def __init__(self, parent=None):
         super().__init__("Asr", tr("nav.asr"), tr("asr.subtitle"), parent)
+
+        # 页头「AI」徽标（v0.9 UI 重构）：与放大页同一语言，AI 能力表面在标题行
+        # 右侧挂一枚青色 AI 小徽标。
+        aiBadge = QLabel("AI")
+        aiBadge.setStyleSheet(tokens.ai_badge_qss())
+        self._header_row.addWidget(aiBadge, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self._queue: list[dict] = []  # 转写队列：[{path, status}]，status=waiting/processing/done/failed
         self._queue_pos = -1  # 当前处理索引；-1 = 未开始
         self._worker: AsrTranscribeWorker | None = None
@@ -521,19 +535,15 @@ class AudioTranscribeInterface(InterfaceBase):
         fe.ensure_model_dirs()
 
         # =====================================================================
-        # 1. 添加文件卡片（拖拽区 + 选择文件按钮 + 文件计数）
+        # 1. 添加文件卡片（拖拽区 + 内嵌「选择文件夹」次级动作）
         # =====================================================================
         card, vb, self.tInput = self._make_card("asr.input.title")
         self.dropArea = DropArea(self)
         self.dropArea.filesDropped.connect(self._on_files)
         self.dropArea.clicked.connect(self._pick_files)
+        # v0.9 UI 重构：与其他页一致，文件夹选择收进拖拽卡作为次级动作
+        self.dropArea.set_action(tr("asr.add.folder"), self._pick_folder)
         vb.addWidget(self.dropArea)
-
-        tools = QHBoxLayout()
-        self.addFileBtn = primary_btn(tr("asr.add.folder"), icon=FIF.FOLDER_ADD)
-        self.addFileBtn.clicked.connect(self._pick_folder)
-        tools.addWidget(self.addFileBtn)
-        vb.addLayout(tools)
         self.vbox.addWidget(card)
 
         # =====================================================================
@@ -574,10 +584,10 @@ class AudioTranscribeInterface(InterfaceBase):
 
         for cat in ("main", "optional"):
             groups[cat].sort(key=_sort_key)
-            # v0.8.14 #1：分组标题放大到标题字号 + 主题色 #238636 + 居中
+            # v0.9 UI 重构：分组标题从「18px 主色居中」降为「13px 加粗正文色左对齐」。
+            # 组标题是导航性文字，不应与页面主标题抢层级，主色留给状态与动作。
             header = CaptionLabel(tr(f"asr.model.group.{cat}"))
-            apply_text(header, tokens.ACCENT, size=tokens.FONT_TITLE, weight=600, transparent=True)
-            header.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            apply_text(header, tokens.TEXT_STRONG, size=tokens.FONT_BODY, weight=600, transparent=True)
             header.setContentsMargins(0, 8, 0, 4)
             mvb.addWidget(header)
             for row in groups[cat]:
@@ -601,7 +611,7 @@ class AudioTranscribeInterface(InterfaceBase):
         # v0.8.8 Bug2：整体照搬「放大队列」结构（QueueListBase + 行卡片），
         # 不再使用通用 QueueListWidget 的适配层
         self._queueList = AsrListWidget()
-        self._queueList.setMinimumHeight(120)
+        self._queueList.setMinimumHeight(150)
         self._queueList.removeRequested.connect(self._remove_by_id)
         qvb.addWidget(self._queueList)
 
@@ -615,7 +625,9 @@ class AudioTranscribeInterface(InterfaceBase):
         self.removeBtn.clicked.connect(self._remove_finished)
         self.clearBtn = ghost_btn(tr("asr.queue.clear"), icon=FIF.BROOM)
         self.clearBtn.clicked.connect(self._clear_queue)
-        qctrl.addWidget(self.startBtn, 1)
+        # v0.9 UI 重构：与转换/压缩/放大页一致，主按钮居左、次级按钮靠右
+        qctrl.addWidget(self.startBtn)
+        qctrl.addStretch(1)
         qctrl.addWidget(self.stopBtn)
         qctrl.addWidget(self.removeBtn)
         qctrl.addWidget(self.clearBtn)
@@ -627,7 +639,7 @@ class AudioTranscribeInterface(InterfaceBase):
         # =====================================================================
         rcard, rvb, self.tCmd = self._make_card("asr.cmd.title")
         self.cmdEdit = self._make_log_edit(tr("asr.cmd.ready"))
-        self.cmdEdit.setMinimumHeight(170)
+        self.cmdEdit.setMinimumHeight(120)
         rvb.addWidget(self.cmdEdit)
         self.vbox.addWidget(rcard)
 
@@ -1539,7 +1551,7 @@ class AudioTranscribeInterface(InterfaceBase):
         self.dropArea.retranslate(
             tr("asr.drop.title"), tr("asr.drop.hint"), tr("asr.drop.formats")
         )
-        self.addFileBtn.setText(tr("asr.add.folder"))
+        self.dropArea.actionBtn.setText(tr("asr.add.folder"))
         self.startBtn.setText(tr("asr.queue.start"))
         self.stopBtn.setText(tr("asr.queue.stop"))
         self.removeBtn.setText(tr("asr.queue.remove"))

@@ -112,6 +112,12 @@ class Config(QConfig):
     # 系统托盘：关闭窗口时最小化到托盘而不是退出进程
     closeToTray = ConfigItem("UI", "CloseToTray", True)
 
+    # 窗口几何记忆（2026-09 UI 重构）：尺寸存 "宽x高"，最大化单独存布尔。
+    # 位置不持久化——居中出现对工具类窗口更稳，多显示器插拔也不会把窗口
+    # 恢复到屏幕外。空串 = 从未保存过，用 tokens.WINDOW_DEFAULT_* 默认值。
+    windowGeometry = ConfigItem("UI", "WindowGeometry", "")
+    windowMaximized = ConfigItem("UI", "WindowMaximized", False)
+
     # 快速调用：Windows 右键菜单集成，默认全关，由用户显式开启
     quickLaunchEnabled = ConfigItem("QuickLaunch", "Enabled", False)
     quickLaunchBindMenu = ConfigItem("QuickLaunch", "BindMenu", True)

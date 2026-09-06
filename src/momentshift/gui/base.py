@@ -30,7 +30,8 @@ import time
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFileDialog, QHBoxLayout, QScrollArea
+from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QScrollArea
 from qfluentwidgets import (
     CaptionLabel,
     ComboBox,
@@ -38,16 +39,14 @@ from qfluentwidgets import (
     TitleLabel,
 )
 
-from ..core.qt_compat import QFrame, QVBoxLayout, QWidget
+from ..core.qt_compat import QVBoxLayout, QWidget
 from ..i18n.translator import tr
 from . import animations, tokens
 from .theme import (
     WINDOW_BG,
     CollapsibleCard,
     ThemedCard,
-    accent_name,
     apply_text,
-    muted_text,
     scrollbar_qss,
 )
 
@@ -195,45 +194,122 @@ def build_detail_label() -> CaptionLabel:
 def build_stats_bar(count: int = 3) -> tuple[QWidget, list[CaptionLabel]]:
     """建立队列顶部的统计栏（总数 / 进行中 / 失败 之类的并排小字）。
 
+    每个统计项由「6px 语义色圆点 + 数字文案」组成，圆点颜色与队列行的
+    状态胶囊同源（等待灰 / 运行蓝 / 失败红……），扫一眼即可对上；
+    颜色由各队列的 ``_update_stats`` 经 :meth:`QueueListBase._set_stat_dots` 设置。
+
     Args:
         count: 统计项个数。
 
     Returns:
         ``(统计栏容器, [统计标签, ...])``；文案由调用方自行填。
+        圆点标签列表挂在 ``容器.dots`` 上。
     """
     bar = QWidget()
     hb = QHBoxLayout(bar)
     hb.setContentsMargins(2, 0, 2, 0)
     hb.setSpacing(14)
     labels: list[CaptionLabel] = []
+    dots: list[QLabel] = []
     for _ in range(count):
+        cell = QWidget()
+        cell.setStyleSheet("background: transparent;")
+        cb = QHBoxLayout(cell)
+        cb.setContentsMargins(0, 0, 0, 0)
+        cb.setSpacing(6)
+        dot = QLabel()
+        dot.setFixedSize(6, 6)
+        dot.setStyleSheet(tokens.dot_qss(tokens.PENDING, radius=3))
+        cb.addWidget(dot)
+        dots.append(dot)
         lbl = CaptionLabel()
         # v0.8.10 Bug4：必须 transparent=True——QLabel 设 color 不给透明背景时
         # Qt 会铺默认白底，表现为「共 0 项 完成 0 失败 0」文字后一块 #FFFFFF
         apply_text(lbl, tokens.TEXT_BLACK, weight=600, transparent=True)
-        hb.addWidget(lbl)
+        cb.addWidget(lbl)
+        hb.addWidget(cell)
         labels.append(lbl)
     hb.addStretch(1)
+    bar.dots = dots
     return bar, labels
 
 
-def build_list_body(empty_text: str) -> tuple[QWidget, QVBoxLayout, CaptionLabel]:
-    """建立队列的行容器与（始终隐藏的）空态提示。
+class EmptyState(QWidget):
+    """队列空态组件：淡底圆形图标 + 标题 + 引导文案，水平居中。
+
+    v0.9 UI 重构恢复空态展示（此前「队列为空」文案被产品隐藏，列表只剩一片
+    空白，首次使用者得不到任何指引）。图标用 FluentIcon 渲染进品牌淡底圆，
+    不引入任何图片资源；文案走 ``queue.empty.*``，四种队列共用。
+    """
+
+    def __init__(self, icon=None, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent;")
+        vb = QVBoxLayout(self)
+        vb.setContentsMargins(0, 12, 0, 10)
+        vb.setSpacing(8)
+        vb.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        self.iconBadge = QLabel(self)
+        self.iconBadge.setFixedSize(52, 52)
+        self.iconBadge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.iconBadge.setStyleSheet(
+            f"background: {tokens.ACCENT_SOFT}; border-radius: 26px;"
+        )
+        self._icon = icon
+        vb.addWidget(self.iconBadge, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        self.titleLabel = CaptionLabel()
+        apply_text(self.titleLabel, tokens.TEXT_SECONDARY, size=tokens.FONT_BODY,
+                   weight=600, transparent=True)
+        self.titleLabel.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        vb.addWidget(self.titleLabel)
+
+        self.hintLabel = CaptionLabel()
+        apply_text(self.hintLabel, tokens.TEXT_MUTED, size=tokens.FONT_CAPTION,
+                   transparent=True)
+        self.hintLabel.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        vb.addWidget(self.hintLabel)
+
+        if icon is not None:
+            self.setIcon(icon)
+        # v0.9.1 修复：把自身 sizeHint 钉成最小高度。父布局空间不足时
+        # QVBoxLayout 会把无最小高度的标签压缩/叠绘到图标上（ASR 转写队列
+        # 空态「队列为空」叠在麦克风图标上的根因）；钉死后父布局只能长高。
+        self.setMinimumHeight(self.sizeHint().height())
+
+    def setIcon(self, icon) -> None:
+        """更换空态图标并按当前主题色重绘。"""
+        self._icon = icon
+        if icon is None:
+            return
+        self.iconBadge.setPixmap(
+            icon.icon(QColor(tokens.ACCENT_HOVER)).pixmap(24, 24)
+        )
+
+    def set_text(self, title: str, hint: str) -> None:
+        self.titleLabel.setText(title)
+        self.hintLabel.setText(hint)
+        self.setToolTip("")
+
+
+def build_list_body(empty_text: str) -> tuple[QWidget, QVBoxLayout, EmptyState]:
+    """建立队列的行容器与空态组件。
 
     Args:
-        empty_text: 空态提示文案。
+        empty_text: 空态标题文案（兼容旧签名；标题/引导由 ``EmptyState.set_text``
+            在 ``retranslate`` 时统一回填）。
 
     Returns:
-        ``(行容器, 行容器布局, 空态提示标签)``。行容器布局末尾已放好弹簧，
+        ``(行容器, 行容器布局, 空态组件)``。行容器布局末尾已放好弹簧，
         新行应插到 ``count() - 1`` 位置，否则会被顶到弹簧下方。
+        空态组件插在弹簧之前、行列表之后，由 ``QueueListBase._refresh_empty``
+        按列表是否为空切换显隐。
 
     Notes:
-        空态文案是产品上主动去掉的，但控件保留着（便于将来恢复），
-        因此这里建好即隐藏 —— 否则列表顶部会留一段空白。
-
-        这里刻意**不**设 objectName：三处历史实现里只有转换队列设了
-        ``queueEmpty``，而该 objectName 会进入 QSS 快照的键名。B4 是纯结构重构，
-        必须保证快照零增删，所以由需要它的那一处调用方自己补上。
+        v0.9 UI 重构：空态从「恒隐藏的 CaptionLabel」升级为可见的
+        :class:`EmptyState`。objectName 沿用转换队列历史上的 ``queueEmpty``
+        约定由调用方设置（进 QSS 快照键名）。
     """
     holder = QWidget()
     layout = QVBoxLayout(holder)
@@ -241,11 +317,12 @@ def build_list_body(empty_text: str) -> tuple[QWidget, QVBoxLayout, CaptionLabel
     layout.setSpacing(8)
     layout.addStretch(1)
 
-    hint = CaptionLabel(empty_text)
-    hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    apply_text(hint, muted_text(), extra="padding: 24px 0;")
-    hint.setVisible(False)
-    return holder, layout, hint
+    empty = EmptyState()
+    empty.setObjectName("queueEmpty")
+    empty.set_text(empty_text, "")
+    empty.setVisible(False)
+    layout.insertWidget(layout.count() - 1, empty)
+    return holder, layout, empty
 
 
 class QueueListBase(QWidget):
@@ -256,10 +333,10 @@ class QueueListBase(QWidget):
     留给子类。
 
     子类约定：
-    - 类属性 ``_empty_key``：空态文案的翻译键，``retranslate`` 会用它回填。
-    - 类属性 ``_empty_object_name``：空态标签的 objectName，默认不设。
-    - 类属性 ``_stat_count``：统计栏标签个数。
-    - 必须实现 ``_update_stats()``：把文案写进 ``self._statLabels``。
+    - 类属性 ``_empty_icon``：空态图标（qfluentwidgets ``FluentIcon`` 成员），
+      ``None`` 表示不显示图标。
+    - 必须实现 ``_update_stats()``：把文案写进 ``self._statLabels``，
+      并可用 :meth:`_set_stat_dots` 给统计圆点上语义色。
     - 自行实现 ``add_item(...)``（签名各页不同），内部调 ``_attach_row``。
 
     动效（v0.8.0 B3）：行的进出是本项目频次最高的视觉变化，也是唯一会让用户
@@ -270,12 +347,12 @@ class QueueListBase(QWidget):
     Attributes:
         items: ``{行 key: 行控件}``，key 是 task.id 或压缩/放大的 item_id。
         statsBar / _statLabels: 顶部统计栏容器与其中的标签。
+        _statDots: 统计栏的语义色圆点（与 ``_statLabels`` 一一对应）。
         listWidget / listLayout: 行容器及其布局（末尾恒有一个弹簧）。
-        emptyHint: 空态提示（产品上已隐藏，控件保留）。
+        emptyHint: 空态组件（:class:`EmptyState`，随列表是否为空显隐）。
     """
 
-    _empty_key: str = ""
-    _empty_object_name: str = ""
+    _empty_icon = None
     _stat_count: int = 3
 
     def __init__(self, parent=None):
@@ -290,14 +367,25 @@ class QueueListBase(QWidget):
         vb.setSpacing(8)
 
         self.statsBar, self._statLabels = build_stats_bar(self._stat_count)
+        self._statDots: list[QLabel] = list(getattr(self.statsBar, "dots", []))
         vb.addWidget(self.statsBar)
 
-        self.listWidget, self.listLayout, self.emptyHint = build_list_body(tr(self._empty_key))
+        self.listWidget, self.listLayout, self.emptyHint = build_list_body(
+            tr("queue.empty.title")
+        )
+        if self._empty_icon is not None:
+            self.emptyHint.setIcon(self._empty_icon)
         vb.addWidget(self.listWidget, 1)
-        if self._empty_object_name:
-            self.emptyHint.setObjectName(self._empty_object_name)
-        vb.addWidget(self.emptyHint)
         self._refresh_empty()
+
+    def _set_stat_dots(self, colors: list[str]) -> None:
+        """给统计栏圆点上语义色，与 ``_statLabels`` 一一对应。
+
+        Args:
+            colors: 颜色令牌列表；超出的圆点保持原样。
+        """
+        for dot, color in zip(self._statDots, colors):
+            dot.setStyleSheet(tokens.dot_qss(color, radius=3))
 
     # -- 行动效预算 -----------------------------------------------------
     def _anim_budget_allows(self) -> bool:
@@ -361,17 +449,14 @@ class QueueListBase(QWidget):
         )
 
     def _refresh_empty(self) -> None:
-        """维持空态提示的隐藏状态。
+        """空态↔内容切换：列表为空时展示引导组件，有任务时隐藏。
 
         Notes:
-            「队列为空」文案是产品上主动去掉的，但控件本身保留着，
-            始终隐藏才不会在列表顶部留下一段空白。
-
-            也正因为它恒为隐藏，这里**没有**接「空态↔内容」淡入淡出：
-            现实中根本不存在这个视觉切换，给一个永不显示的控件加动效
-            只会凭空多出一份开销和一处将来会骗人的注释。
+            v0.9 UI 重构恢复空态（此前产品上刻意隐藏）。首次使用者面对
+            一片空白得不到任何指引；现在空态给出图标 + 「拖入文件」提示，
+            与输入卡的拖拽区形成动作呼应。
         """
-        self.emptyHint.setVisible(False)
+        self.emptyHint.setVisible(not self.items)
 
     def remove_item(self, key: str) -> None:
         """移除一行；key 不存在时静默忽略。
@@ -466,7 +551,7 @@ class QueueListBase(QWidget):
         """语言切换后回填所有行、空态文案与统计文案。"""
         for w in self.items.values():
             w.retranslate()
-        self.emptyHint.setText(tr(self._empty_key))
+        self.emptyHint.set_text(tr("queue.empty.title"), tr("queue.empty.hint"))
         self._update_stats()
 
     def _update_stats(self) -> None:
@@ -485,10 +570,12 @@ class InterfaceBase(ScrollArea):
         self.setWidget(self.view)
 
         self.vbox = QVBoxLayout(self.view)
-        self.vbox.setContentsMargins(16, 14, 16, 14)
-        self.vbox.setSpacing(12)
+        # v0.9.1 紧凑化：820x760 默认窗口下主页面免滚动，页边距/卡片间距收一档
+        self.vbox.setContentsMargins(14, 10, 14, 10)
+        self.vbox.setSpacing(10)
 
-        # 标题头
+        # 标题头：大标题（20px）+ 副标题。旧版的绿色短下划线在视觉上像误置的
+        # 链接下划线，UI 重构（2026-09）移除；层级改由字号/字重/留白承担。
         self.header = QWidget()
         # 标题行：标题 + 可选右侧状态
         self._header_row = QHBoxLayout()
@@ -496,21 +583,18 @@ class InterfaceBase(ScrollArea):
         self._header_row.setSpacing(10)
         hb = QVBoxLayout(self.header)
         hb.setContentsMargins(0, 0, 0, 0)
-        hb.setSpacing(4)
+        hb.setSpacing(2)
         self.titleLabel = TitleLabel(title)
+        title_font = self.titleLabel.font()
+        title_font.setPixelSize(tokens.FONT_TITLE_LG)
+        title_font.setWeight(QFont.Weight.DemiBold)
+        self.titleLabel.setFont(title_font)
         self._header_row.addWidget(self.titleLabel, 1)
         self._header_row.addStretch()
         hb.addLayout(self._header_row)
         if subtitle:
             self.subLabel = CaptionLabel(subtitle)
             hb.addWidget(self.subLabel)
-        self.accentRule = QFrame()
-        self.accentRule.setFrameShape(QFrame.Shape.HLine)
-        self.accentRule.setFixedHeight(3)
-        self.accentRule.setFixedWidth(38)
-        self._style_accent()
-        hb.addWidget(self.accentRule)
-        hb.addSpacing(4)
         self.vbox.addWidget(self.header)
 
         InterfaceBase.retheme(self)
@@ -529,11 +613,6 @@ class InterfaceBase(ScrollArea):
         expanded = [c for c in self._collapsibles if c.isVisible() and not c.isCollapsed()]
         return len(expanded) > 1
 
-    def _style_accent(self):
-        self.accentRule.setStyleSheet(
-            f"QFrame{{ background: {accent_name()}; border: none; border-radius: 2px; }}"
-        )
-
     # 共享 UI 组件构建器
     def _make_card(self, title_key, subtitle_key=None, collapsed=False):
         from ..i18n.translator import tr
@@ -544,7 +623,7 @@ class InterfaceBase(ScrollArea):
         self.register_collapsible(card)
         return card, card.body, card.titleLabel
 
-    def _make_scroll(self, min_height: int = 280) -> QScrollArea:
+    def _make_scroll(self, min_height: int = 170) -> QScrollArea:
         s = QScrollArea()
         s.setWidgetResizable(True)
         s.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -628,7 +707,6 @@ class InterfaceBase(ScrollArea):
             self.viewport().setStyleSheet(f"background-color: {bg.name()}; border: none;")
         for card in self.findChildren(ThemedCard):
             card.retheme()
-        self._style_accent()
 
     def retranslate(self, title=None, subtitle=None):
         if title is not None:

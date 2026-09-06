@@ -45,9 +45,9 @@ from qfluentwidgets import (
 
 from ..core import engines as eng_mod
 from ..core.config import cfg
+from ..core.ffmpeg_progress import format_eta
 from ..core.logger import get_logger
 from ..core.output_path import unique_output_path
-from ..core.ffmpeg_progress import format_eta
 from ..core.qt_compat import QApplication, Signal
 from ..core.task_pool import PoolItem, ProgressCb, TaskPool, TaskState
 from ..i18n.translator import tr
@@ -453,7 +453,7 @@ class UpscaleListWidget(QueueListBase):
     removeRequested = Signal(str)
     compareRequested = Signal(str)
 
-    _empty_key = "upscale.queue.empty"
+    _empty_icon = FIF.ZOOM_IN
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -467,6 +467,8 @@ class UpscaleListWidget(QueueListBase):
         self.statTotal.setText(tr("upscale.queue.stats.total", n=total))
         self.statDone.setText(tr("upscale.queue.stats.done", n=done))
         self.statErr.setText(tr("upscale.queue.stats.error", n=failed))
+        # 统计圆点与状态胶囊同源：等待灰 / 完成绿 / 失败红
+        self._set_stat_dots([tokens.PENDING, tokens.SUCCESS, tokens.DANGER])
 
     def add_item(self, item_id: str, src: str, out: str = ""):
         if item_id in self.items:
@@ -508,6 +510,13 @@ class UpscaleInterface(InterfaceBase):
     def __init__(self, parent=None):
         super().__init__("Upscale", tr("nav.upscale"), tr("upscale.tagline"), parent)
 
+        # 页头「AI」徽标（v0.9 UI 重构）：放大页是 AI 能力表面，在标题行右侧挂
+        # 一枚青色 AI 小徽标——与转换页 FFmpeg 状态胶囊同一位置，AI 语义色
+        # 每页只出现一次，不逐卡重复。
+        aiBadge = QLabel("AI")
+        aiBadge.setStyleSheet(tokens.ai_badge_qss())
+        self._header_row.addWidget(aiBadge, 0, Qt.AlignmentFlag.AlignVCenter)
+
         # 队列引擎。max_workers 传方法本身，好让设置页改「最大线程数」后下一轮
         # 调度立即生效（放大侧上限比压缩低，见 _max_threads）。
         self._pool = TaskPool(
@@ -536,18 +545,15 @@ class UpscaleInterface(InterfaceBase):
         self._folder = cfg.upscaleFolder.value or ""
 
         # =====================================================================
-        # 输入卡片
+        # 输入卡片（拖拽区 + 内嵌「添加文件夹」次级动作）
         # =====================================================================
         card, vb, self.tInput = self._make_card("upscale.input.title")
         self.dropArea = DropArea(self)
         self.dropArea.filesDropped.connect(self._on_files)
         self.dropArea.clicked.connect(self._pick_files)
+        # v0.9 UI 重构：与转换/压缩页一致，「添加文件夹」收进拖拽卡作为次级动作
+        self.dropArea.set_action(tr("upscale.add_folder"), self._pick_folder)
         vb.addWidget(self.dropArea)
-        tools = QHBoxLayout()
-        self.addFolderBtn = primary_btn(tr("upscale.add_folder"), icon=FIF.FOLDER_ADD)
-        self.addFolderBtn.clicked.connect(self._pick_folder)
-        tools.addWidget(self.addFolderBtn)
-        vb.addLayout(tools)
         self.vbox.addWidget(card)
         self._inputCard = card
 
@@ -559,6 +565,36 @@ class UpscaleInterface(InterfaceBase):
 
         self.enginesCard = EnginesCard(self, on_changed=self._on_engines_changed)
         self.vbox.addWidget(self.enginesCard)
+
+        # =====================================================================
+        # 队列卡片
+        # =====================================================================
+        qcard, qvb, self.tQueue = self._make_card("upscale.queue.title", "upscale.queue.hint")
+        self.listWidget = UpscaleListWidget(self)
+        self.listWidget.removeRequested.connect(self._on_remove)
+        self.listWidget.compareRequested.connect(self._on_compare)
+        # v0.9.1：队列列表最小高度 140——放大页卡片多，控制条要在默认窗口免滚动可见
+        self.queueScroll = self._make_scroll(140)
+        self.queueScroll.setWidget(self.listWidget)
+        # v0.9.1：队列区吃掉页面全部剩余高度——窗口再高控制条也贴着可视区底部，
+        # 窗口刚好放下全部内容时无需滚动即可点到「开始 / 暂停 / 清空」
+        qvb.addWidget(self.queueScroll, 1)
+        # Adj2：队列自动跟随当前处理任务
+        self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
+        ctrl = QHBoxLayout()
+        self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
+        self.startBtn.clicked.connect(self._on_start)
+        self.pauseBtn = ghost_btn(tr("convert.pause"), icon=FIF.PAUSE)
+        self.pauseBtn.clicked.connect(self._on_pause)
+        self.clearBtn = ghost_btn(tr("convert.clear"), icon=FIF.DELETE)
+        self.clearBtn.clicked.connect(self._on_clear)
+        # v0.9 UI 重构：主按钮不再占满整行（与转换/压缩页一致）
+        ctrl.addWidget(self.startBtn)
+        ctrl.addStretch(1)
+        ctrl.addWidget(self.pauseBtn)
+        ctrl.addWidget(self.clearBtn)
+        qvb.addLayout(ctrl)
+        self.vbox.addWidget(qcard, 1)
 
         # =====================================================================
         # 放大设置卡片（：引擎驱动的动态参数面板）
@@ -638,39 +674,15 @@ class UpscaleInterface(InterfaceBase):
         self._apply_output_mode()
         self.vbox.addWidget(setc)
 
-        # =====================================================================
-        # 队列卡片
-        # =====================================================================
-        qcard, qvb, self.tQueue = self._make_card("upscale.queue.title", "upscale.queue.hint")
-        self.listWidget = UpscaleListWidget(self)
-        self.listWidget.removeRequested.connect(self._on_remove)
-        self.listWidget.compareRequested.connect(self._on_compare)
-        self.queueScroll = self._make_scroll(280)
-        self.queueScroll.setWidget(self.listWidget)
-        qvb.addWidget(self.queueScroll)
-        # Adj2：队列自动跟随当前处理任务
-        self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
-        ctrl = QHBoxLayout()
-        self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
-        self.startBtn.clicked.connect(self._on_start)
-        self.pauseBtn = ghost_btn(tr("convert.pause"), icon=FIF.PAUSE)
-        self.pauseBtn.clicked.connect(self._on_pause)
-        self.clearBtn = ghost_btn(tr("convert.clear"), icon=FIF.DELETE)
-        self.clearBtn.clicked.connect(self._on_clear)
-        ctrl.addWidget(self.startBtn, 1)
-        ctrl.addWidget(self.pauseBtn)
-        ctrl.addWidget(self.clearBtn)
-        qvb.addLayout(ctrl)
-        # 引擎扫描必须放在队列控制按钮之后：_update_controls 依赖 startBtn 等
+        # 引擎扫描必须放在队列控制按钮与「放大模型」下拉之后：
+        # _update_controls 依赖 startBtn，模型下拉回填依赖 modelCombo
         self.reload_engines()
-        self.vbox.addWidget(qcard)
 
         # =====================================================================
         # 前后对比组件
         # =====================================================================
 
         self._update_controls()
-        self.vbox.addStretch(1)
         self._collapse_ready = True
         self.retheme()
 
@@ -1020,7 +1032,7 @@ class UpscaleInterface(InterfaceBase):
         self.dropArea.retranslate(
             tr("upscale.drop.title"), tr("upscale.drop.hint"), tr("upscale.drop.formats")
         )
-        self.addFolderBtn.setText(tr("upscale.add_folder"))
+        self.dropArea.actionBtn.setText(tr("upscale.add_folder"))
         self.noEngineHint.setText(tr("upscale.engine.none_hint"))
         self.detectBtn.setText(tr("upscale.engine.detect"))
         # v0.8.1 Bug4-②：field_row 行标签同步语言（此前标签是拿不到引用的局部变量）

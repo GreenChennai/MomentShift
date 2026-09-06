@@ -20,8 +20,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QMessageBox,
-    QVBoxLayout,
-    QWidget,
 )
 from qfluentwidgets import (
     CaptionLabel,
@@ -42,7 +40,6 @@ from .convert_setup_dialog import ConvertSetupDialog
 from .drop_area import DropArea
 from .queue_widget import QueueListWidget, ScrollAutoFollow
 from .theme import (
-    apply_text,
     field_row,
     ghost_btn,
     primary_btn,
@@ -68,35 +65,25 @@ class ConvertInterface(InterfaceBase):
         # mouseReleaseEvent，此标志确保只有第一次点击真正打开文件选择器
         self._picking = False
 
-        # FFmpeg 状态指示器（：加标签文字，右对齐胶囊）
-        ff_wrap = QWidget()
-        ff_v = QVBoxLayout(ff_wrap)
-        ff_v.setContentsMargins(0, 0, 0, 0)
-        ff_v.setSpacing(3)
-        self._ff_label = CaptionLabel(tr("convert.ffmpeg_status"))
-        apply_text(self._ff_label, tokens.TEXT_BLACK, size=tokens.FONT_CAPTION)
-        self._ff_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        # FFmpeg 状态胶囊（v0.9 UI 重构：并入标题行右侧、单行呈现。旧版在胶囊上
+        # 方再加一行「FFmpeg 状态」小标签，语境重复；胶囊文案自带 FFmpeg 前缀
+        # （i18n 值形如 "  ✓ 已就绪"），单胶囊即可自解释。
         self._ff_status = CaptionLabel("")
-        self._ff_status.setFixedHeight(22)
-        ff_v.addWidget(self._ff_label)
-        ff_v.addWidget(self._ff_status)
-        self._header_row.addWidget(ff_wrap)
+        self._ff_status.setFixedHeight(24)
+        self._header_row.addWidget(self._ff_status, 0, Qt.AlignmentFlag.AlignVCenter)
         self._refresh_ff_status()
 
         # =====================================================================
-        # 输入卡片（拖拽区 + 添加文件夹按钮）
+        # 输入卡片（拖拽区 + 内嵌「添加文件夹」次级动作）
         # =====================================================================
         card, vb, self.tInput = self._make_card("convert.input.title")
         self.dropArea = DropArea(self)
         self.dropArea.filesDropped.connect(self._open_setup)
         self.dropArea.clicked.connect(self._pick_files)
+        # v0.9 UI 重构：「添加文件夹」从拖拽卡外的全宽主色按钮收进卡片底部，
+        # 作为次级动作（拖拽区点击 = 选文件）。业务回调不变。
+        self.dropArea.set_action(tr("convert.add.folder"), self._pick_folder)
         vb.addWidget(self.dropArea)
-
-        tools = QHBoxLayout()
-        self.addFolderBtn = primary_btn(tr("convert.add.folder"), icon=FIF.FOLDER_ADD)
-        self.addFolderBtn.clicked.connect(self._pick_folder)
-        tools.addWidget(self.addFolderBtn)
-        vb.addLayout(tools)
         self.vbox.addWidget(card)
         self._inputCard = card
 
@@ -136,14 +123,18 @@ class ConvertInterface(InterfaceBase):
         self.queueList = QueueListWidget(self)
         self.queueList.removeRequested.connect(self.manager.remove)
         self.queueList.retryRequested.connect(self.manager.retry)
-        self.queueScroll = self._make_scroll(280)
+        self.queueScroll = self._make_scroll()
         self.queueScroll.setWidget(self.queueList)
-        qvb.addWidget(self.queueScroll)
+        # v0.9.1：队列区吃掉页面全部剩余高度——窗口再高控制条也贴着可视区底部，
+        # 窗口刚好放下全部内容时无需滚动即可点到「开始 / 暂停 / 清空」
+        qvb.addWidget(self.queueScroll, 1)
         # Adj2：队列自动跟随当前处理任务
         self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
         self.manager.task_started.connect(self._follow_running)
 
-        # 队列控制按钮
+        # 队列控制按钮（v0.9 UI 重构：主按钮「开始」不再拉伸占满整行——
+        # 禁用态下一条灰板压在页脚是队列空态时最重的视觉噪音；改为主按钮居左、
+        # 次级按钮靠右，禁用时只剩一小枚灰色胶囊）
         ctrl = QHBoxLayout()
         self.startBtn = primary_btn(tr("convert.start"), icon=FIF.PLAY)
         self.startBtn.clicked.connect(self._on_start)
@@ -151,11 +142,12 @@ class ConvertInterface(InterfaceBase):
         self.pauseBtn.clicked.connect(self._on_pause)
         self.clearBtn = ghost_btn(tr("convert.clear"), icon=FIF.DELETE)
         self.clearBtn.clicked.connect(self._on_clear)
-        ctrl.addWidget(self.startBtn, 1)
+        ctrl.addWidget(self.startBtn)
+        ctrl.addStretch(1)
         ctrl.addWidget(self.pauseBtn)
         ctrl.addWidget(self.clearBtn)
         qvb.addLayout(ctrl)
-        self.vbox.addWidget(qcard)
+        self.vbox.addWidget(qcard, 1)
 
         # =====================================================================
         # 连接 ConversionManager 信号
@@ -171,7 +163,6 @@ class ConvertInterface(InterfaceBase):
         self.manager.state_changed.connect(self._on_state_changed)
 
         self._update_controls()
-        self.vbox.addStretch(1)
         self._collapse_ready = True
         self.retheme()
 
@@ -274,10 +265,10 @@ class ConvertInterface(InterfaceBase):
         """
         ready = self.manager.has_ffmpeg
         if ready:
-            text = tr("convert.ffmpeg.ready")
+            text = f"FFmpeg{tr('convert.ffmpeg.ready')}"
             fg, bg, border = tokens.ACCENT_HOVER, tokens.ACCENT_SOFT, tokens.ACCENT_SOFT_STRONG
         else:
-            text = tr("convert.ffmpeg.missing")
+            text = f"FFmpeg{tr('convert.ffmpeg.missing')}"
             fg, bg, border = tokens.DANGER_STRONG, tokens.DANGER_SOFT, tokens.DANGER_SOFT_STRONG
         self._ff_status.setText(text)
         self._ff_status.setStyleSheet(tokens.status_hint_qss(fg, bg, border))
@@ -381,7 +372,7 @@ class ConvertInterface(InterfaceBase):
         self.dropArea.retranslate(
             tr("convert.drop.title"), tr("convert.drop.hint"), tr("convert.drop.formats")
         )
-        self.addFolderBtn.setText(tr("convert.add.folder"))
+        self.dropArea.actionBtn.setText(tr("convert.add.folder"))
         self.outputModeRow.fieldLabel.setText(tr("convert.output.mode"))
         self.suffixRow.fieldLabel.setText(tr("convert.output.suffix"))
         self.folderRow.fieldLabel.setText(tr("convert.output.folder"))

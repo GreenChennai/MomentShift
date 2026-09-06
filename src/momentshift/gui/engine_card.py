@@ -50,8 +50,8 @@ from ..core.qt_compat import QDesktopServices, QThreadPool, QUrl
 from ..i18n.translator import tr
 from . import animations, tokens
 from .theme import (
-    ArrowToggle,
     CARD_MARGIN,
+    ArrowToggle,
     ThemedCard,
     accent_color,
     apply_text,
@@ -82,11 +82,17 @@ def open_folder(path: str) -> None:
 
 
 def algo_badge(text: str, parent=None) -> QLabel:
-    """算法名徽标（与 ext_badge 同一视觉语言）。"""
+    """算法名徽标（与 ext_badge 同一视觉语言，但走 AI 青系）。
+
+    v0.9 UI 重构：算法名（RealESRGAN / RIFE 等）是 AI 能力身份标识，
+    用 AI 语义色而非品牌绿，与队列徽标（文件后缀，品牌绿）在颜色上分工。
+    """
     lbl = QLabel(text, parent)
     lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
     lbl.setStyleSheet(
-        tokens.ext_badge_qss(accent_color().name(), size=tokens.FONT_MICRO, padding="2px 6px")
+        f"color: {tokens.AI_TINT_TEXT}; background: {tokens.AI_SOFT_STRONG};"
+        f" border-radius: {tokens.RADIUS_XS}px; padding: 2px 6px;"
+        f" font-weight: 700; font-size: {tokens.FONT_MICRO}px;"
     )
     return lbl
 
@@ -182,7 +188,7 @@ class EngineRow(QWidget):
         self.prog.setRange(0, 100)
         self.prog.setFixedHeight(3)
         self.prog.setTextVisible(False)
-        self.prog.setStyleSheet(tokens.progress_qss("transparent", accent_color().name(), 1))
+        self.prog.setStyleSheet(tokens.progress_qss("transparent", tokens.AI_ACCENT, 1))
         self.prog.hide()
         vb.addWidget(self.prog)
 

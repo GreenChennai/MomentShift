@@ -29,18 +29,17 @@ import copy
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QLineEdit,
-    QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import (
-    SwitchButton,
+    FluentIcon as FIF,
 )
 from qfluentwidgets import (
-    FluentIcon as FIF,
+    SwitchButton,
 )
 
 from ..core import compressor
@@ -48,10 +47,17 @@ from ..core.config import cfg
 from ..core.logger import get_logger
 from ..core.output_path import unique_output_path
 from ..core.presets import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS
-from ..core.qt_compat import QThreadPool, Signal
+from ..core.qt_compat import Signal
 from ..core.task_pool import PoolItem, ProgressCb, TaskPool, TaskState
 from ..i18n.translator import tr
-from .base import InterfaceBase, QueueListBase, build_detail_label, build_row_header, build_row_layout
+from . import tokens
+from .base import (
+    InterfaceBase,
+    QueueListBase,
+    build_detail_label,
+    build_row_header,
+    build_row_layout,
+)
 from .compress_task_panel import compress_kind, settings_mode, settings_opts, settings_quality
 from .drop_area import DropArea
 from .queue_widget import (
@@ -66,12 +72,10 @@ from .queue_widget import (
 )
 from .theme import (
     ThemedCard,
-    apply_text,
     ext_badge,
     field_row,
     ghost_btn,
     icon_btn,
-    muted_text,
     primary_btn,
 )
 
@@ -348,7 +352,7 @@ class CompressListWidget(QueueListBase):
 
     removeRequested = Signal(str)
 
-    _empty_key = "compress.queue.empty"
+    _empty_icon = FIF.ZIP_FOLDER
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -361,6 +365,8 @@ class CompressListWidget(QueueListBase):
         self.statTotal.setText(tr("compress.queue.stats.total", n=total))
         self.statDone.setText(tr("compress.queue.stats.done", n=done))
         self.statErr.setText(tr("compress.queue.stats.error", n=failed))
+        # 统计圆点与状态胶囊同源：等待灰 / 完成绿 / 失败红
+        self._set_stat_dots([tokens.PENDING, tokens.SUCCESS, tokens.DANGER])
 
     def add_item(self, item_id: str, src: str, selected: str = "auto", target: str = "same"):
         if item_id in self.items:
@@ -429,18 +435,16 @@ class CompressInterface(InterfaceBase):
         self._folder = cfg.compressFolder.value or ""
 
         # =====================================================================
-        # 输入卡片
+        # 输入卡片（拖拽区 + 内嵌「添加文件夹」次级动作 + 按类型路由策略芯片）
         # =====================================================================
         card, vb, self.tInput = self._make_card("compress.input.title")
         self.dropArea = DropArea(self)
         self.dropArea.filesDropped.connect(self._open_setup)
         self.dropArea.clicked.connect(self._pick_files)
+        # v0.9 UI 重构：与转换页一致，「添加文件夹」收进拖拽卡作为次级动作
+        self.dropArea.set_action(tr("compress.add.folder"), self._pick_folder)
         vb.addWidget(self.dropArea)
-        tools = QHBoxLayout()
-        self.addFolderBtn = primary_btn(tr("compress.add.folder"), icon=FIF.FOLDER_ADD)
-        self.addFolderBtn.clicked.connect(self._pick_folder)
-        tools.addWidget(self.addFolderBtn)
-        vb.addLayout(tools)
+        vb.addWidget(self._build_strategy_strip())
         self.vbox.addWidget(card)
         self._inputCard = card
 
@@ -476,9 +480,11 @@ class CompressInterface(InterfaceBase):
         qcard, qvb, self.tQueue = self._make_card("compress.queue.title")
         self.listWidget = CompressListWidget(self)
         self.listWidget.removeRequested.connect(self._on_remove)
-        self.queueScroll = self._make_scroll(280)
+        self.queueScroll = self._make_scroll()
         self.queueScroll.setWidget(self.listWidget)
-        qvb.addWidget(self.queueScroll)
+        # v0.9.1：队列区吃掉页面全部剩余高度——窗口再高控制条也贴着可视区底部，
+        # 窗口刚好放下全部内容时无需滚动即可点到「开始 / 暂停 / 清空」
+        qvb.addWidget(self.queueScroll, 1)
         # Adj2：队列自动跟随当前处理任务
         self._queue_auto_follow = ScrollAutoFollow(self.queueScroll)
         ctrl = QHBoxLayout()
@@ -488,20 +494,51 @@ class CompressInterface(InterfaceBase):
         self.pauseBtn.clicked.connect(self._on_pause)
         self.clearBtn = ghost_btn(tr("compress.clear"), icon=FIF.DELETE)
         self.clearBtn.clicked.connect(self._on_clear)
-        ctrl.addWidget(self.startBtn, 1)
+        # v0.9 UI 重构：主按钮不再占满整行（与转换页一致）
+        ctrl.addWidget(self.startBtn)
+        ctrl.addStretch(1)
         ctrl.addWidget(self.pauseBtn)
         ctrl.addWidget(self.clearBtn)
         qvb.addLayout(ctrl)
-        self.vbox.addWidget(qcard)
+        self.vbox.addWidget(qcard, 1)
 
         self._update_controls()
-        self.vbox.addStretch(1)
         self._collapse_ready = True
         self.retheme()
 
     # =========================================================================
     # 输入处理（V0.8.18：按文件类型分别弹「创建压缩任务」窗口）
     # =========================================================================
+
+    def _build_strategy_strip(self) -> QWidget:
+        """按类型路由的压缩策略芯片行（v0.9 UI 重构，Q8-A 差异化）。
+
+        转换页与压缩页的骨架本就同源，历史上两页几乎同屏。压缩页的核心心智是
+        「按文件类型路由到不同后端」，把它显性化成一行淡底芯片：PNG/JPG/GIF/
+        音视频各自的默认引擎一目了然，也让压缩页不再是转换页的视觉复制品。
+        纯静态信息展示，不承载任何交互与业务。
+        """
+        wrap = QWidget()
+        wrap.setStyleSheet("background: transparent;")
+        hb = QHBoxLayout(wrap)
+        hb.setContentsMargins(2, 0, 2, 0)
+        hb.setSpacing(8)
+        hb.addStretch(1)
+        self._strategyChips: dict[str, QLabel] = {}
+        for key in (
+            "compress.strategy.png",
+            "compress.strategy.jpg",
+            "compress.strategy.gif",
+            "compress.strategy.av",
+        ):
+            chip = QLabel(tr(key))
+            chip.setStyleSheet(
+                tokens.soft_chip_qss(tokens.ACCENT_HOVER, tokens.ACCENT_SOFT)
+            )
+            hb.addWidget(chip)
+            self._strategyChips[key] = chip
+        hb.addStretch(1)
+        return wrap
 
     def _open_setup(self, paths: list[str]):
         """展开路径 → 按文件类型分组 → 每类单独打开创建压缩任务弹窗。
@@ -815,7 +852,9 @@ class CompressInterface(InterfaceBase):
         self.dropArea.retranslate(
             tr("compress.drop.title"), tr("compress.drop.hint"), tr("compress.drop.formats")
         )
-        self.addFolderBtn.setText(tr("compress.add.folder"))
+        self.dropArea.actionBtn.setText(tr("compress.add.folder"))
+        for key, chip in self._strategyChips.items():
+            chip.setText(tr(key))
         self.outputModeRow.fieldLabel.setText(tr("compress.output.mode"))
         self.suffixRow.fieldLabel.setText(tr("compress.output.suffix"))
         self.folderRow.fieldLabel.setText(tr("compress.output.folder"))
