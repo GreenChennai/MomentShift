@@ -330,7 +330,10 @@ class AsrServer:
                 pass  # 非 16k/多声道 → 转码
         ffmpeg = find_ffmpeg("") or "ffmpeg"
         out = tmpdir / "norm.wav"
-        cmd = build_extract_audio_cmd(ffmpeg, str(src), str(out))
+        # build_extract_audio_cmd 按契约只返回 ffmpeg 参数（不含二进制），
+        # 执行前必须把二进制拼在头部——此前直接 run 参数列表，视频直传
+        # 归一化必然失败（与 asr_worker 506 行的正确用法一致）。
+        cmd = [ffmpeg, *build_extract_audio_cmd(ffmpeg, str(src), str(out))]
         import subprocess
 
         proc = subprocess.run(cmd, capture_output=True, timeout=600)
@@ -379,7 +382,8 @@ class AsrServer:
         parts: list[str] = []
         for i, (start, end) in enumerate(ranges):
             seg = tmpdir / f"seg_{i}.wav"
-            cmd = build_segment_cut_cmd(ffmpeg, str(wav), str(seg), start, end)
+            # 同 _normalize_wav：参数列表按契约不含二进制，执行前补头部
+            cmd = [ffmpeg, *build_segment_cut_cmd(ffmpeg, str(wav), str(seg), start, end)]
             import subprocess
 
             proc = subprocess.run(cmd, capture_output=True, timeout=300)
