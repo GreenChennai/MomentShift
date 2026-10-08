@@ -1,0 +1,14 @@
+# .mailmap —— 修正提交作者身份映射(本仓库只有一位维护者)
+#
+# 背景:commit 1678e16 的 author/committer 写成了 `Velon <velon@users.noreply.github.com>`,
+# 而这个邮箱已被 GitHub 账号 `VELON`(id 5415282)认领,于是 GitHub 把该提交显示成
+# 第三方作者。这是早期某次 Agent 提交时用错 git 身份造成的,与本仓库维护者无关。
+#
+# 为什么用 .mailmap 而不是改写历史:该提交在 master 上还有 105 个后代,改写要重算
+# 106 个 SHA、废掉 3 个提交签名、还会牵连 feature/ui-redesign 分支,代价与收益完全
+# 不成比例。.mailmap 是 GitHub 官方支持的身份映射机制:零 SHA 变更、零签名影响,
+# 展示与贡献者统计立刻归位。
+#
+# 语法:Proper_Name <proper@email>  Commit_Name <commit@email>
+# 查看效果:git log --format="%aN"(%an 是**原始**作者名,不看 mailmap)
+GreenChennai <luvse@foxmail.com> Velon <velon@users.noreply.github.com>
